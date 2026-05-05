@@ -1,0 +1,4167 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>台股損益試算與庫存管理</title>
+    <meta name="description" content="高質感的台股買賣損益試算與即時庫存追蹤工具。">
+
+    <!-- PWA Meta Tags -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="台股管理">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="msapplication-navbutton-color" content="#0f172a">
+    <meta name="msapplication-starturl" content="./index.html">
+
+    <!-- Apple Touch Icons -->
+    <link rel="apple-touch-icon" sizes="152x152" href="icons/icon-152.png">
+    <link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png">
+    <link rel="apple-touch-icon" sizes="512x512" href="icons/icon-512.png">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-96.png">
+
+    <!-- Apple Splash Screens (iPhone/iPad) -->
+    <meta name="apple-touch-startup-image" content="icons/icon-512.png">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Outfit:wght@400;600;800&display=swap"
+        rel="stylesheet">
+    <style>
+:root {
+    --bg-color: #0f172a;
+    --panel-bg: rgba(30, 41, 59, 0.7);
+    --panel-border: rgba(255, 255, 255, 0.1);
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --input-bg: rgba(15, 23, 42, 0.6);
+    --input-border: rgba(255, 255, 255, 0.15);
+    --input-focus: #3b82f6;
+    --profit-color: #ef4444; /* 紅漲 */
+    --loss-color: #10b981;   /* 綠跌 */
+    --neutral-color: #f8fafc;
+    --btn-primary: #3b82f6;
+    --btn-primary-hover: #2563eb;
+    --btn-secondary: rgba(255, 255, 255, 0.1);
+    --btn-secondary-hover: rgba(255, 255, 255, 0.2);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Outfit', 'Noto Sans TC', sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-primary);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    /* overflow-x: hidden; */ /* Allow scrolling if needed */
+    padding: 40px 20px;
+}
+
+/* Background animated shapes */
+.bg-shapes {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    overflow: hidden;
+}
+
+.shape {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.5;
+    animation: float 20s infinite alternate ease-in-out;
+}
+
+.shape-1 {
+    width: 500px;
+    height: 500px;
+    background: #3b82f6; 
+    top: -100px;
+    left: -100px;
+    animation-duration: 25s;
+}
+
+.shape-2 {
+    width: 400px;
+    height: 400px;
+    background: #8b5cf6; 
+    bottom: -50px;
+    right: 20%;
+    animation-delay: -5s;
+}
+
+.shape-3 {
+    width: 300px;
+    height: 300px;
+    background: #10b981; 
+    top: 40%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    animation-duration: 30s;
+    opacity: 0.2;
+}
+
+@keyframes float {
+    0% { transform: translate(0, 0) scale(1); }
+    100% { transform: translate(50px, 30px) scale(1.1); }
+}
+
+/* Layout */
+.layout-wrapper {
+    display: flex;
+    gap: 30px;
+    width: 100%;
+    max-width: 1200px;
+    align-items: flex-start;
+}
+
+@media (max-width: 900px) {
+    .layout-wrapper {
+        flex-direction: column;
+        align-items: center;
+    }
+}
+
+/* Common Container */
+.glass-panel {
+    background: var(--panel-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--panel-border);
+    border-radius: 24px;
+    padding: 30px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 20px rgba(255,255,255,0.05) inset;
+    width: 100%;
+}
+
+.calculator-panel {
+    flex: 1;
+    max-width: 500px;
+}
+
+.inventory-panel {
+    flex: 1.5;
+    display: flex;
+    flex-direction: column;
+    min-height: 600px;
+}
+
+@media (max-width: 900px) {
+    .inventory-panel {
+        min-height: auto;
+    }
+}
+
+/* Typography & Headers */
+header h1, header h2 {
+    font-size: 26px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, #fff, #94a3b8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+header p {
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.calculator-panel header {
+    text-align: center;
+    margin-bottom: 24px;
+}
+
+.inventory-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+/* Inputs */
+.input-section, .settings-section {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.input-group {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.grid-half {
+    width: calc(50% - 8px);
+}
+
+label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 12px;
+    transition: all 0.2s ease;
+}
+
+.input-wrapper:focus-within {
+    border-color: var(--input-focus);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.currency, .unit {
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 14px;
+    padding: 0 12px;
+    user-select: none;
+}
+
+input[type="number"], input[type="text"], input[type="date"], select {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-size: 16px;
+    font-weight: 600;
+    padding: 12px;
+    font-family: inherit;
+    outline: none;
+    appearance: none;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.input-wrapper input {
+    padding-left: 0;
+}
+.input-wrapper input:first-child {
+    padding-left: 12px;
+}
+
+select {
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+select:focus {
+    border-color: var(--input-focus);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+select option {
+    background-color: var(--bg-color);
+    color: var(--text-primary);
+}
+
+.divider {
+    height: 1px;
+    background: var(--panel-border);
+    margin: 20px 0;
+}
+
+/* Results - Calculator */
+.result-section {
+    margin-top: 24px;
+    margin-bottom: 24px;
+}
+
+.result-card {
+    background: linear-gradient(145deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.01) 100%);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.result-item { display: flex; flex-direction: column; }
+.result-item.net-profit { flex: 1; }
+.result-item.return-rate {
+    text-align: right;
+    border-left: 1px solid var(--panel-border);
+    padding-left: 16px;
+}
+.result-item .label { font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; }
+.result-item .value { font-size: 28px; font-weight: 800; transition: color 0.3s ease; }
+.result-item.return-rate .value { font-size: 20px; }
+
+.is-profit { color: var(--profit-color) !important; text-shadow: 0 0 10px rgba(239, 68, 68, 0.3); }
+.is-loss { color: var(--loss-color) !important; text-shadow: 0 0 10px rgba(16, 185, 129, 0.3); }
+.is-neutral { color: var(--neutral-color) !important; }
+
+.result-details { display: flex; flex-direction: column; gap: 10px; }
+.detail-row { display: flex; justify-content: space-between; font-size: 14px; color: var(--text-secondary); }
+.detail-row span:last-child { color: var(--text-primary); font-weight: 600; }
+.highlight-row { margin-top: 8px; padding-top: 10px; border-top: 1px dashed var(--panel-border); font-size: 15px; }
+
+/* Buttons */
+.btn {
+    width: 100%;
+    padding: 14px;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s ease;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    font-family: inherit;
+}
+
+.primary-btn {
+    background: var(--btn-primary);
+    color: white;
+    box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+}
+
+.primary-btn:hover { background: var(--btn-primary-hover); transform: translateY(-2px); }
+.primary-btn:active { transform: translateY(0); }
+
+.secondary-btn {
+    background: var(--btn-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--panel-border);
+    width: auto;
+    padding: 8px 16px;
+    font-size: 13px;
+    border-radius: 8px;
+}
+.secondary-btn:hover { background: var(--btn-secondary-hover); }
+
+/* Inventory Dashboard */
+.inventory-dashboard {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.dashboard-card {
+    flex: 1;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+}
+
+.dashboard-card .label { font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; }
+.dashboard-card .value { font-size: 24px; font-weight: 800; }
+.dashboard-card .value-input {
+    font-size: 24px;
+    font-weight: 800;
+    padding: 0;
+    color: var(--text-primary);
+    height: auto;
+    width: 100%;
+    border: none;
+    background: transparent;
+    outline: none;
+    font-family: inherit;
+}
+.dashboard-card .value-prefix,
+.dashboard-card .value-unified { font-size: 24px; font-weight: 800; }
+.dashboard-card .value-prefix.compact,
+.dashboard-card .value-input.compact {
+    font-size: 16px;
+}
+#totalAssetValue,
+#stTotalProfit { font-size: 24px; }
+
+/* Inventory List */
+.inventory-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    flex-grow: 1;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.inventory-list::-webkit-scrollbar { width: 6px; }
+.inventory-list::-webkit-scrollbar-track { background: transparent; }
+.inventory-list::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 10px; }
+
+.inventory-item {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    padding: 16px;
+    transition: transform 0.2s, background 0.2s;
+    position: relative;
+}
+
+.inventory-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.inv-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    align-items: center;
+}
+
+.inv-title { font-size: 20px; font-weight: 600; color: #fff; }
+.inv-shares { font-size: 14px; color: var(--text-secondary); }
+
+.inv-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1.2fr;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.inv-stat { display: flex; flex-direction: column; gap: 2px; }
+.inv-stat span:first-child, .inv-stat label { font-size: 13px; color: var(--text-secondary); margin: 0; }
+.inv-stat span:last-child { font-size: 20px; font-weight: 600; color: var(--text-primary); }
+
+.input-stat label { margin: 0; font-size: 13px; color: var(--text-secondary); }
+.input-stat input {
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-size: 20px;
+    font-weight: 600;
+    padding: 0;
+    border-radius: 4px;
+    width: 100%;
+    margin-top: 0;
+}
+.input-stat input:focus { border-color: var(--btn-primary); background: rgba(255,255,255,0.1); }
+
+.inv-price-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    grid-column: span 2;
+    background: rgba(0,0,0,0.2);
+    padding: 8px 12px;
+    border-radius: 8px;
+}
+.inv-price-input label { margin: 0; color: #fff; }
+.inv-price-input input {
+    width: 80px;
+    padding: 4px 8px;
+    font-size: 15px;
+    background: rgba(255,255,255,0.1);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+}
+.inv-price-input input:focus { border-color: var(--btn-primary); }
+
+.inv-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-top: 1px solid var(--panel-border);
+    padding-top: 12px;
+    margin-top: 4px;
+}
+
+.inv-result { display: flex; flex-direction: column; }
+.inv-result-val { font-size: 20px; font-weight: 800; }
+.inv-result-rate { font-size: 14px; font-weight: 600; margin-top: 2px; }
+
+.btn-delete, .btn-delete-st {
+    background: transparent;
+    color: var(--loss-color);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-delete:hover, .btn-delete-st:hover { background: rgba(16, 185, 129, 0.1); }
+
+.empty-msg {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 40px 20px;
+    font-weight: 600;
+}
+
+/* Modal Styling */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(8px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s, visibility 0.3s;
+}
+
+.modal-overlay.active {
+    opacity: 1;
+    visibility: visible;
+}
+
+.modal-content {
+    max-width: 900px;
+    width: 95%;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 30px;
+    position: relative;
+    transform: translateY(20px);
+    transition: transform 0.3s ease;
+    background: var(--panel-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--panel-border);
+    border-radius: 24px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 20px rgba(255,255,255,0.05) inset;
+}
+
+.modal-overlay.active .modal-content {
+    transform: translateY(0);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    border-bottom: 1px solid var(--panel-border);
+    padding-bottom: 16px;
+}
+
+.modal-header h2 {
+    margin: 0;
+}
+
+.close-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 28px;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+.close-btn:hover {
+    color: var(--text-primary);
+}
+
+.compound-layout {
+    display: flex;
+    gap: 30px;
+}
+
+.compound-inputs {
+    flex: 0 0 280px;
+    min-width: 260px;
+    max-width: 280px;
+}
+
+.compound-chart-wrapper {
+    flex: 1;
+    min-width: 0;
+    background: rgba(0,0,0,0.2);
+    border-radius: 16px;
+    padding: 16px;
+    border: 1px solid var(--panel-border);
+    position: relative;
+    min-height: 340px;
+}
+
+@media (max-width: 768px) {
+    .compound-layout {
+        flex-direction: column;
+    }
+}
+
+.slider {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 6px;
+    background: rgba(255,255,255,0.1);
+    outline: none;
+    border-radius: 4px;
+}
+
+.slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--btn-primary);
+    cursor: pointer;
+    transition: transform 0.1s;
+}
+.slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+}
+
+.highlight-card {
+    background: linear-gradient(145deg, rgba(59, 130, 246, 0.2) 0%, rgba(59, 130, 246, 0.05) 100%);
+    border-color: rgba(59, 130, 246, 0.4);
+}
+.highlight-card .value {
+    font-size: 32px;
+}
+
+.compound-subresults {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.header-action-btn {
+    background: rgba(148, 163, 184, 0.2);
+    color: #e2e8f0;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    width: 100px;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.header-action-btn:hover {
+    background: rgba(148, 163, 184, 0.35);
+    border-color: rgba(148, 163, 184, 0.6);
+    color: #ffffff;
+}
+
+/* ==========================================================================
+   Mobile Responsive Adjustments
+   ========================================================================== */
+@media (max-width: 768px) {
+    body {
+        padding: 5px;
+    }
+    .app-header h1 {
+        font-size: 1.5rem;
+    }
+    .panel {
+        padding: 15px;
+        border-radius: 16px;
+    }
+    .dashboard-layout {
+        flex-direction: column;
+        gap: 15px;
+    }
+    .dashboard-card {
+        padding: 15px;
+    }
+    .dashboard-card .value {
+        font-size: 20px;
+    }
+    .dashboard-card .value-input,
+    .dashboard-card .value-prefix,
+    .dashboard-card .value-unified {
+        font-size: 20px;
+    }
+    .dashboard-card .value-prefix.compact,
+    .dashboard-card .value-input.compact {
+        font-size: 15px;
+    }
+    #totalAssetValue,
+    #stTotalProfit {
+        font-size: 20px;
+    }
+    
+    /* Ensure Inputs don't trigger iOS zoom */
+    input, select, button, textarea {
+        font-size: 16px !important;
+    }
+    
+    /* Inventory Item layout stack */
+    .inv-body {
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+    .inv-price-input {
+        grid-column: span 1;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* Standardize inventory font sizes on mobile */
+    .inv-stat input, .inv-stat span:last-child, .live-shares-input {
+        font-size: 20px !important;
+        font-weight: 600 !important;
+    }
+    .inv-stat .live-name-input {
+        font-size: 18px !important; /* Keep name slightly smaller */
+    }
+    
+    .inv-header {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+    
+    /* Modals */
+    .modal-content {
+        padding: 20px;
+        width: 100%;
+        height: 100%;
+        max-height: 100vh;
+        border-radius: 0;
+        transform: translateY(100%);
+    }
+    .modal-overlay.active .modal-content {
+        transform: translateY(0);
+    }
+    
+
+}
+
+
+/* ==========================================================================
+   PWA & Mobile Additions — append-only, no overrides to desktop styles
+   ========================================================================== */
+
+/* ── Mobile bottom nav (hidden on desktop) ─────────────────────────────── */
+.mobile-nav {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 500;
+    background: rgba(15, 23, 42, 0.97);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 8px 0;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+}
+.mobile-nav-inner {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+}
+.mobile-nav-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-family: inherit;
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 12px;
+    transition: all 0.2s ease;
+    min-width: 56px;
+}
+.mobile-nav-btn .nav-icon { font-size: 22px; line-height: 1; }
+.mobile-nav-btn.active { color: #60a5fa; background: rgba(59,130,246,0.15); }
+.mobile-nav-btn:active { transform: scale(0.92); }
+
+/* ── PWA install banner ─────────────────────────────────────────────────── */
+#pwaInstallBanner {
+    display: none;
+    position: fixed;
+    bottom: 80px;
+    left: 12px;
+    right: 12px;
+    z-index: 600;
+    background: linear-gradient(135deg, rgba(59,130,246,0.95), rgba(139,92,246,0.95));
+    backdrop-filter: blur(20px);
+    border-radius: 16px;
+    padding: 14px 16px;
+    border: 1px solid rgba(255,255,255,0.2);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    animation: slideUpPWA 0.4s ease-out;
+}
+@keyframes slideUpPWA {
+    from { transform: translateY(20px); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+}
+#pwaInstallBanner .banner-content { display: flex; align-items: center; gap: 12px; }
+#pwaInstallBanner .banner-icon { font-size: 28px; flex-shrink: 0; }
+#pwaInstallBanner .banner-text { flex: 1; }
+#pwaInstallBanner .banner-title { font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 2px; }
+#pwaInstallBanner .banner-sub { font-size: 12px; color: rgba(255,255,255,0.8); }
+#pwaInstallBanner .banner-actions { display: flex; gap: 8px; margin-top: 10px; }
+#pwaInstallBtn {
+    flex: 1;
+    background: rgba(255,255,255,0.25);
+    border: 1px solid rgba(255,255,255,0.4);
+    color: #fff;
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+}
+#pwaDismissBtn {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.25);
+    color: rgba(255,255,255,0.75);
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+/* ── More menu (mobile only) ────────────────────────────────────────────── */
+#mobileMoreMenu {
+    display: none;
+    position: fixed;
+    bottom: 72px;
+    left: 0; right: 0;
+    z-index: 490;
+    background: rgba(15,23,42,0.97);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid rgba(255,255,255,0.1);
+    padding: 16px;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom,0px));
+}
+
+/* ============================================================
+   MOBILE (≤ 640px) — preserves all original colours & design,
+   only adjusts layout/sizes/spacing
+   ============================================================ */
+@media (max-width: 640px) {
+
+    /* Safe area + room for fixed bottom nav */
+    body {
+        padding: env(safe-area-inset-top,0) 0 calc(72px + env(safe-area-inset-bottom,0)) 0;
+        align-items: flex-start;
+    }
+
+    .mobile-nav { display: block; }
+
+    /* Performance: hide heavy blur blobs */
+    .shape { display: none; }
+
+    /* Full-width stacked panels */
+    .layout-wrapper {
+        flex-direction: column;
+        gap: 0;
+        max-width: 100%;
+        padding: 0;
+        padding-bottom: calc(72px + env(safe-area-inset-bottom,0));
+    }
+
+    /* Panels fill the screen; JS toggles active one */
+    .calculator-panel,
+    .inventory-panel {
+        max-width: 100%;
+        border-radius: 0;
+        border-left: none;
+        border-right: none;
+        border-top: none;
+        padding: 16px;
+        display: none;
+        min-height: calc(100dvh - 72px);
+        box-shadow: none;
+    }
+    .calculator-panel.mobile-active { display: flex; flex-direction: column; }
+    .inventory-panel.mobile-active  { display: flex; flex-direction: column; }
+
+    /* Prevent iOS input zoom */
+    input, select, textarea { font-size: 16px !important; }
+
+    /* Header compact */
+    .calculator-panel header { margin-bottom: 14px; }
+    header h1, header h2 { font-size: 20px; margin-bottom: 4px; }
+    header p { font-size: 12px; }
+
+    /* Input spacing */
+    .input-section, .settings-section { gap: 12px; }
+    .input-group { gap: 6px; }
+
+    /* Result card */
+    .result-card { padding: 14px; }
+    .result-item .value { font-size: 22px; }
+    .result-item.return-rate .value { font-size: 16px; }
+
+    /* Inventory header: stack title on top, buttons in 3-col grid below */
+    .inventory-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+        margin-bottom: 14px;
+    }
+    .inventory-header > div:last-child {
+        width: 100%;
+        display: grid !important;
+        grid-template-columns: 1fr;
+        gap: 8px;
+        align-items: center;
+    }
+    #toggleViewBtn {
+        grid-column: auto;
+        width: 100%;
+        font-size: 13px;
+        padding: 10px;
+        justify-content: center;
+    }
+    .inventory-header > div:last-child > div:first-of-type {
+        display: none !important;
+    }
+    .inventory-header > div:last-child > div:last-of-type {
+        display: block !important;
+        width: 100%;
+    }
+    .inventory-header > div:last-child > div:last-of-type > :not(#refreshPricesBtn) {
+        display: none !important;
+    }
+    #refreshPricesBtn {
+        width: 100%;
+        font-size: 13px;
+        padding: 10px;
+    }
+    .header-action-btn {
+        width: 100%;
+        font-size: 11px;
+        padding: 7px 4px;
+    }
+
+    /* Dashboard cards: 2-col grid */
+    .inventory-dashboard {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 14px;
+    }
+    .inventory-dashboard > div[style*="flex-basis:100%"],
+    .inventory-dashboard > div[style*="flex-basis: 100%"] {
+        grid-column: 1 / -1;
+    }
+    .dashboard-card { padding: 12px; border-radius: 12px; }
+    .dashboard-card .label { font-size: 11px; }
+    .dashboard-card .value { font-size: 18px; }
+    .dashboard-card .value-input,
+    .dashboard-card .value-prefix,
+    .dashboard-card .value-unified { font-size: 18px; }
+    .dashboard-card .value-prefix.compact,
+    .dashboard-card .value-input.compact { font-size: 14px; }
+    #totalAssetValue,
+    #stTotalProfit { font-size: 18px; }
+    .highlight-card .value { font-size: 22px; }
+
+    /* Inventory items */
+    .inventory-item { padding: 12px; border-radius: 12px; }
+    .inv-body { grid-template-columns: 1fr 1fr; gap: 8px; }
+    .inv-title { font-size: 17px; }
+    .inv-result-val { font-size: 17px; }
+
+    /* Modals: bottom-sheet style */
+    .modal-content {
+        position: fixed !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        top: auto !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        max-height: 92vh !important;
+        border-radius: 24px 24px 0 0 !important;
+        padding: 20px 16px calc(20px + env(safe-area-inset-bottom,0)) !important;
+        transform: translateY(100%);
+        transition: transform 0.35s cubic-bezier(0.32,0.72,0,1);
+    }
+    .modal-overlay.active .modal-content { transform: translateY(0); }
+    .modal-content::before {
+        content: '';
+        display: block;
+        width: 40px; height: 4px;
+        background: rgba(255,255,255,0.25);
+        border-radius: 2px;
+        margin: 0 auto 16px;
+    }
+    .modal-header { margin-bottom: 14px; padding-bottom: 12px; }
+    .modal-header h2 { font-size: 18px; }
+    .modal-body { overflow-x: auto; }
+    .history-table { min-width: 500px; }
+
+    /* Compound modal */
+    .compound-layout { flex-direction: column; gap: 16px; }
+    .compound-chart-wrapper { min-height: 220px; }
+    /* Ensure compound modal content is fully scrollable on mobile */
+    #compoundModal .modal-content {
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+    }
+    #compoundModal .compound-layout {
+        overflow-y: auto;
+    }
+
+
+
+    /* Buttons */
+    .btn { padding: 12px; font-size: 14px; border-radius: 10px; }
+    .divider { margin: 12px 0; }
+    .result-section { margin-top: 14px; margin-bottom: 14px; }
+
+    /* Dashboard Card Responsive Fixes */
+    @media (max-width: 480px) {
+        .card-inner-split {
+            flex-direction: column !important;
+            gap: 10px !important;
+        }
+        .card-inner-split > div {
+            width: 100% !important;
+        }
+        .card-inner-split .value {
+            font-size: 18px !important;
+        }
+        .card-inner-split div[style*="width:1px"] {
+            width: 100% !important;
+            height: 1px !important;
+            margin: 4px 0 !important;
+        }
+
+        .dividend-grid, .realized-grid {
+            flex-direction: column !important;
+            gap: 10px !important;
+        }
+        .dividend-grid > div, .realized-grid > div {
+            width: 100% !important;
+        }
+        .dividend-grid .label, .realized-grid .label {
+            font-size: 12px !important;
+        }
+        .dividend-grid .value-input, .realized-grid .value-input {
+            font-size: 18px !important;
+        }
+    }
+}
+
+/* ── Tablet (641–900px) ─────────────────────────────────────────────────── */
+@media (min-width: 641px) and (max-width: 900px) {
+    body { padding: 20px 16px; }
+    .layout-wrapper { flex-direction: column; max-width: 100%; }
+    .calculator-panel { max-width: 100%; }
+    .glass-panel { border-radius: 20px; padding: 24px; }
+    header h1, header h2 { font-size: 22px; }
+    .modal-content { max-height: 88vh; padding: 24px; }
+}
+
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="manifest" href="manifest.json">
+    
+    <!-- Service Worker Registration -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('SW registered:', reg.scope))
+            .catch(err => console.log('SW error:', err));
+        });
+      }
+    </script>
+
+</head>
+
+<body>
+    <div class="bg-shapes">
+        <div class="shape shape-1"></div>
+        <div class="shape shape-2"></div>
+        <div class="shape shape-3"></div>
+    </div>
+
+    <div class="layout-wrapper">
+        <!-- 左側：試算器 -->
+        <div class="glass-panel calculator-panel">
+            <header>
+                <h1>台股損益試算</h1>
+                <p>即時計算交易成本與淨損益</p>
+            </header>
+
+            <main>
+                <div class="input-section">
+                    <div class="input-group">
+                        <label for="stockCode">股票代號 / 名稱</label>
+                        <div class="input-wrapper">
+                            <input type="text" id="stockCode" placeholder="例如: 2330 或 2330 台積電">
+                        </div>
+                    </div>
+
+                    <div class="input-group grid-half">
+                        <label for="buyPrice">買進價格</label>
+                        <div class="input-wrapper">
+                            <span class="currency">NT$</span>
+                            <input type="number" id="buyPrice" placeholder="0.00" step="0.01" min="0">
+                        </div>
+                    </div>
+
+                    <div class="input-group grid-half">
+                        <label for="sellPrice">賣出價格</label>
+                        <div class="input-wrapper">
+                            <span class="currency">NT$</span>
+                            <input type="number" id="sellPrice" placeholder="0.00" step="0.01" min="0">
+                        </div>
+                    </div>
+
+                    <div class="input-group highlight-group grid-half">
+                        <label for="buyShares">買進股數</label>
+                        <div class="input-wrapper">
+                            <input type="number" id="buyShares" value="1000" step="1" min="0">
+                            <span class="unit">股</span>
+                        </div>
+                    </div>
+
+                    <div class="input-group highlight-group grid-half">
+                        <label for="sellShares">賣出股數</label>
+                        <div class="input-wrapper">
+                            <input type="number" id="sellShares" value="1000" step="1" min="0">
+                            <span class="unit">股</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="settings-section">
+                    <div class="input-group">
+                        <label for="stockType">股票類別</label>
+                        <select id="stockType">
+                            <option value="0.003">一般股票 (0.3%)</option>
+                            <option value="0.001">ETF (0.1%)</option>
+                            <option value="0.0015">現股當沖 (0.15%)</option>
+                        </select>
+                    </div>
+
+                    <div class="input-group grid-half">
+                        <label for="discount">券商折扣</label>
+                        <div class="input-wrapper">
+                            <input type="number" id="discount" value="1.7" step="0.1" min="0" max="10">
+                            <span class="unit">折</span>
+                        </div>
+                    </div>
+
+                    <div class="input-group grid-half">
+                        <label for="minFee">低消手續費</label>
+                        <div class="input-wrapper">
+                            <span class="currency">NT$</span>
+                            <input type="number" id="minFee" value="1" step="1" min="0">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="result-section">
+                    <div class="result-card primary-result">
+                        <div class="result-item net-profit">
+                            <span class="label">預估已實現損益</span>
+                            <span class="value" id="netProfit">0</span>
+                        </div>
+                        <div class="result-item return-rate">
+                            <span class="label">報酬率</span>
+                            <span class="value" id="returnRate">0.00%</span>
+                        </div>
+                    </div>
+
+                    <div class="result-details">
+                        <div class="detail-row">
+                            <span>買進手續費</span>
+                            <span id="buyFeeVal">0</span>
+                        </div>
+                        <div class="detail-row">
+                            <span>賣出手續費</span>
+                            <span id="sellFeeVal">0</span>
+                        </div>
+                        <div class="detail-row">
+                            <span>證券交易稅</span>
+                            <span id="taxVal">0</span>
+                        </div>
+                        <div class="detail-row highlight-row">
+                            <span>買進總成本</span>
+                            <span id="totalCostVal">0</span>
+                        </div>
+                        <div class="detail-row highlight-row">
+                            <span>賣出總收入</span>
+                            <span id="totalRevenueVal">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display:flex; gap:10px;">
+                    <button id="addInventoryBtn" class="btn primary-btn" style="flex:1; padding:12px;">加到長期庫存</button>
+                    <button id="addShortTermBtn" class="btn primary-btn" style="flex:1; padding:12px; background:#8b5cf6;">加到短期操作</button>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:12px;">
+                    <button id="undoBtn" class="btn secondary-btn" style="flex:1;" disabled>↩ 復原</button>
+                    <button id="redoBtn" class="btn secondary-btn" style="flex:1;" disabled>重做 ↪</button>
+                </div>
+            </main>
+        </div>
+
+        <!-- 右側：庫存看板 -->
+        <div class="glass-panel inventory-panel">
+            <header class="inventory-header">
+                <div>
+                    <h2>即時庫存</h2>
+                    <p id="portfolioDate" style="margin-bottom:2px;">您的個人投資組合</p>
+                    <p id="portfolioClock" style="font-size:14px; color:var(--text-secondary);">&nbsp;</p>
+                    <p id="lastPriceUpdate" style="font-size:12px; color:#7dd3fc; opacity:0.8; margin-top:4px;">最後更新: --:--</p>
+                    <div style="margin-top:4px;">
+                        <p style="font-size:14px; color:var(--text-secondary); margin:0; display:flex; align-items:center;">
+                            <select id="citySelector" style="background:transparent; border:none; color:#f8fafc; font-size:14px; padding:0; margin:0; outline:none; cursor:pointer; font-weight:bold; font-family:inherit; -webkit-appearance:none; appearance:none; width:4.5em;">
+                                <option value="彰化,24.08,120.54">彰化市</option>
+                                <option value="臺北,25.04,121.51">臺北市</option>
+                                <option value="新北,25.01,121.46">新北市</option>
+                                <option value="桃園,24.99,121.31">桃園市</option>
+                                <option value="新竹,24.81,120.97">新竹市</option>
+                                <option value="苗栗,24.56,120.82">苗栗縣</option>
+                                <option value="臺中,24.14,120.67">臺中市</option>
+                                <option value="南投,23.91,120.69">南投縣</option>
+                                <option value="斗六,23.71,120.54">雲林縣</option>
+                                <option value="嘉義,23.48,120.45">嘉義市</option>
+                                <option value="臺南,22.99,120.21">臺南市</option>
+                                <option value="高雄,22.62,120.31">高雄市</option>
+                                <option value="屏東,22.67,120.49">屏東縣</option>
+                                <option value="基隆,25.13,121.74">基隆市</option>
+                                <option value="宜蘭,24.75,121.75">宜蘭縣</option>
+                                <option value="花蓮,23.98,121.61">花蓮縣</option>
+                                <option value="臺東,22.75,121.15">臺東縣</option>
+                                <option value="澎湖,23.57,119.57">澎湖縣</option>
+                                <option value="金門,24.43,118.37">金門縣</option>
+                                <option value="馬祖,26.16,119.95">連江縣</option>
+                            </select>
+                            <span id="portfolioWeatherMain" style="margin:0; padding:0;">載入中...</span>
+                        </p>
+                        <p id="portfolioWeatherAQI" style="font-size:14px; color:var(--text-secondary); margin-top:1px;"></p>
+                    </div>
+                </div>
+                <div style="display:flex; gap:10px; align-items:center;">
+                    <button id="toggleViewBtn" class="btn secondary-btn" style="background:rgba(139, 92, 246, 0.2); border-color:rgba(139, 92, 246, 0.5); color:#c4b5fd;">⇄ 切換至短期操作</button>
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        <button id="openBPBtn" class="header-action-btn" style="background:rgba(239, 68, 68, 0.15); color:#fca5a5; border-color:rgba(239, 68, 68, 0.3);">🩸 血壓記錄</button>
+                        <button id="openAnalysisBtn" class="header-action-btn" style="background:rgba(59, 130, 246, 0.15); color:#93c5fd; border-color:rgba(59, 130, 246, 0.3);">🔍 股票分析</button>
+                    </div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+                        <button id="openCompoundBtn" class="header-action-btn" style="background:rgba(245, 158, 11, 0.15); color:#fcd34d; border-color:rgba(245, 158, 11, 0.3);">📈 複利試算</button>
+                        <button id="refreshPricesBtn" class="header-action-btn" title="從外部網路抓取最新底價" style="background:rgba(14, 165, 233, 0.15); color:#7dd3fc; border-color:rgba(14, 165, 233, 0.3);">↻ 更新股價</button>
+                        <button id="openAccountingBtn" class="header-action-btn" style="background:rgba(16, 185, 129, 0.15); color:#6ee7b7; border-color:rgba(16, 185, 129, 0.3);">📒 日常記帳</button>
+                        <button id="openHistoryStatsBtn" class="header-action-btn" style="background:rgba(217, 70, 239, 0.15); color:#f0abfc; border-color:rgba(217, 70, 239, 0.3);">📊 歷史統計</button>
+                    </div>
+                </div>
+            </header>
+
+            <div id="longTermView" style="display:flex; flex-direction:column; flex-grow:1; flex-shrink:1; min-height:0;">
+                <div class="inventory-dashboard" style="flex-wrap: wrap;">
+                <div class="dashboard-card">
+                    <span class="label">總庫存市值</span>
+                    <span class="value" id="totalMarketValue">0</span>
+                    <span id="marketValueAssetRate"
+                        style="font-size:14px; font-weight:700; margin-top:2px; color:var(--text-secondary);">0.00%</span>
+                </div>
+                    <div class="dashboard-card">
+                        <span class="label">現金水位</span>
+                        <div style="display:flex; align-items:center;">
+                        <span class="value-prefix" style="margin-right:4px;">$</span>
+                        <input type="number" id="cashInput" value="0" min="0" step="1"
+                            class="value-input">
+                    </div>
+                    <span id="cashAssetRate"
+                        style="font-size:14px; font-weight:700; margin-top:2px; color:var(--text-secondary);">0.00%</span>
+                </div>
+                <div class="dashboard-card highlight-card">
+                    <span class="label">淨總資產</span>
+                    <span class="value" id="totalAssetValue" style="color:#60a5fa;">0</span>
+                </div>
+                <div style="display:flex; gap:10px; flex-basis:100%; margin-top:4px; flex-wrap:wrap;">
+                    <!-- 左卡: 總未實現損益 (左) | 總付出成本 (右) -->
+                    <div class="dashboard-card" style="flex:1; min-width:150px;">
+                        <div class="card-inner-split" style="display:flex; gap:8px;">
+                            <div style="flex:1; display:flex; flex-direction:column;">
+                                <span class="label">總未實現損益</span>
+                                <span class="value" id="totalInventoryProfit" style="margin:2px 0;">0</span>
+                                <span id="totalInventoryProfitRate" style="font-size:14px; font-weight:700;">0.00%</span>
+                            </div>
+                            <div style="width:1px; background:rgba(255,255,255,0.1); margin:2px 0;"></div>
+                            <div style="flex:1; display:flex; flex-direction:column;">
+                                <span class="label">總付出成本</span>
+                                <span class="value" id="totalInventoryCost" style="margin:2px 0;">0</span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 右卡: 領息三欄 (上) + 當年度/總投資並排 (下) -->
+                    <div class="dashboard-card" style="flex:1; min-width:180px; display:flex; flex-direction:column; gap:6px;">
+                        <div class="dividend-grid" style="display:flex; gap:6px;">
+                            <div style="flex:1;">
+                                <span class="label">年度總領配息</span>
+                                <div style="display:flex; align-items:center;">
+                                    <span class="value-prefix compact" style="margin-right:2px; font-size:11px;">$</span>
+                                    <input type="text" id="totalDividendVal" class="value-input compact" style="width:100%; font-size:16px;" value="0" inputmode="numeric">
+                                </div>
+                            </div>
+                            <div style="flex:1;">
+                                <span class="label">可抵扣稅額</span>
+                                <div style="display:flex; align-items:center;">
+                                    <span class="value-prefix compact" style="margin-right:2px; font-size:11px;">$</span>
+                                    <input type="text" id="dividendTaxOffsetVal" class="value-input compact" style="width:100%; font-size:16px;" value="0" inputmode="numeric">
+                                </div>
+                            </div>
+                            <div style="flex:1;">
+                                <span class="label">合計</span>
+                                <div style="display:flex; align-items:center;">
+                                    <span class="value-prefix compact" style="margin-right:2px; font-size:11px;">$</span>
+                                    <input type="text" id="dividendTotalBenefitVal" class="value-input compact" style="width:100%; font-size:16px;" value="0" inputmode="numeric">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="realized-grid" style="border-top:1px dashed rgba(255,255,255,0.1); padding-top:5px; display:flex; gap:6px;">
+                            <div style="flex:1;">
+                                <span class="label">當年度已實現損益</span>
+                                <div style="display:flex; align-items:center;">
+                                    <span class="value-prefix compact" style="margin-right:2px; font-size:11px;">$</span>
+                                    <input type="number" id="yearlyRealizedInput" value="0" step="1" class="value-input compact" style="width:100%; font-size:16px;">
+                                </div>
+                            </div>
+                            <div style="flex:1;">
+                                <span class="label">總投資已實現損益</span>
+                                <div style="display:flex; align-items:center;">
+                                    <span class="value-prefix compact" style="margin-right:2px; font-size:11px;">$</span>
+                                    <input type="number" id="totalRealizedInput" value="0" step="1" class="value-input compact" style="width:100%; font-size:16px;">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="inventory-list" id="inventoryList">
+                <!-- 庫存項目會經由 JS 動態生成 -->
+            </div>
+
+            <div id="emptyInventoryMsg" class="empty-msg">
+                尚未加入任何庫存<br><span style="font-size:12px;opacity:0.6;">在左側計算完畢後，點擊「加到我的庫存」</span>
+            </div>
+            </div>
+
+
+            <!-- 短期操作視圖 -->
+            <div id="shortTermView" style="display:none; flex-direction:column; flex-grow:1; flex-shrink:1; min-height:0;">
+                <div class="inventory-dashboard" style="flex-wrap: wrap;">
+                    <div class="dashboard-card" style="flex-basis:100%;">
+                        <span class="label">短期操作本金</span>
+                        <div style="display:flex; align-items:center;">
+                            <span class="value-prefix" style="margin-right:4px;">$</span>
+                            <input type="number" id="shortTermCapitalInput" value="0" min="0" step="1"
+                                class="value-input">
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:16px; flex-basis:100%; flex-wrap:wrap; margin-top:4px;">
+                        <div class="dashboard-card" style="flex:1;">
+                            <span class="label">總付出成本</span>
+                            <span class="value" id="stTotalCost">0</span>
+                        </div>
+                        <div class="dashboard-card" style="flex:1;">
+                            <span class="label">短期已實現損益</span>
+                            <div style="display:flex; align-items:center;">
+                                <span class="value-prefix" style="margin-right:4px;">$</span>
+                                <input type="number" id="stRealizedInput" value="0" step="1"
+                                    class="value-input">
+                            </div>
+                        </div>
+                        <div class="dashboard-card" style="flex:1;">
+                            <span class="label">剩餘可動用資金</span>
+                            <span class="value" id="stRemainingFunds" style="color:#60a5fa;">0</span>
+                        </div>
+                    </div>
+                    <div class="dashboard-card highlight-card" style="flex-basis:100%; margin-top:16px;">
+                        <span class="label">短期總未實現損益</span>
+                        <div style="display:flex; align-items:baseline; gap:12px;">
+                            <span class="value" id="stTotalProfit">0</span>
+                            <span id="stTotalProfitRate" style="font-size:16px; font-weight:700;">0.00%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="inventory-list" id="shortTermList">
+                    <!-- 短期庫存項目動態生成 -->
+                </div>
+
+                <div id="stEmptyMsg" class="empty-msg">
+                    您的短期操作區目前為空<br><span style="font-size:12px;opacity:0.6;">在左側計算完畢後，點擊「加到短期操作」</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 複利計算機 Modal -->
+    <div id="compoundModal" class="modal-overlay">
+        <div class="modal-content" style="max-width:900px;">
+            <div class="modal-header">
+                <h2>📈 複利試算</h2>
+                <button id="closeModalBtn" class="close-btn">&times;</button>
+            </div>
+            <div class="compound-layout">
+                <!-- 左側輸入區 -->
+                <div class="compound-inputs input-section">
+                    <div class="input-group">
+                        <label>初始本金</label>
+                        <div class="input-wrapper">
+                            <span class="currency">NT$</span>
+                            <input type="number" id="cpPrincipal" value="0" min="0" step="1">
+                        </div>
+                    </div>
+                    <div class="input-group">
+                        <label>每年定期投入</label>
+                        <div class="input-wrapper">
+                            <span class="currency">NT$</span>
+                            <input type="number" id="cpAnnualAdd" value="0" min="0" step="1">
+                        </div>
+                    </div>
+                    <div class="input-group">
+                        <label>預期年化報酬率</label>
+                        <div class="input-wrapper">
+                            <input type="number" id="cpRate" value="5" min="0" max="100" step="0.1">
+                            <span class="unit">%</span>
+                        </div>
+                    </div>
+                    <div class="input-group" style="margin-top: 10px;">
+                        <label style="display:flex; justify-content:space-between;">
+                            <span>複利年限</span>
+                            <span id="cpYearsLabel"
+                                style="color:var(--btn-primary); font-weight:800; font-size:16px;">10 年</span>
+                        </label>
+                        <input type="range" id="cpYears" min="1" max="50" value="10" class="slider">
+                    </div>
+
+                    <div class="divider"></div>
+
+                    <div class="dashboard-card highlight-card" style="margin-bottom:10px;">
+                        <span class="label">期末終值預估</span>
+                        <span class="value is-profit" id="cpFinalValue">0</span>
+                    </div>
+                    <div class="compound-subresults">
+                        <div class="detail-row">
+                            <span>總投入本金</span>
+                            <span id="cpTotalInvested">0</span>
+                        </div>
+                        <div class="detail-row">
+                            <span>複利滾存純利息</span>
+                            <span id="cpTotalInterest" class="is-profit">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右側圖表區 -->
+                <div class="compound-chart-wrapper">
+                    <canvas id="compoundChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 記帳 Modal -->
+    <div class="modal-overlay" id="accountingModal">
+        <div class="modal-content" style="max-width: 800px; height: 85vh; display: flex; flex-direction: column;">
+            <div class="modal-header">
+                <h2>📒 生活開銷記帳</h2>
+                <button class="close-btn" id="closeAccountingBtn">&times;</button>
+            </div>
+            <div class="modal-body" style="flex: 1; overflow-y: auto; padding: 0 24px 24px 24px;">
+                <!-- 月份切換與結算儀表板 -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; background: rgba(255,255,255,0.05); padding: 15px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
+                    <button id="prevMonthBtn" class="btn secondary-btn" style="padding: 5px 15px;">◄</button>
+                    <div style="text-align: center;">
+                        <span id="currentMonthLabel" style="font-size: 20px; font-weight: bold; color: var(--text-primary);">2026 / 04</span>
+                    </div>
+                    <button id="nextMonthBtn" class="btn secondary-btn" style="padding: 5px 15px;">►</button>
+                </div>
+                
+                <div class="inventory-dashboard" style="margin-bottom: 24px; gap:12px;">
+                    <div class="dashboard-card" style="flex:1;">
+                        <span class="label">當月總收入</span>
+                        <span class="value" id="accTotalIncome" style="color: #4ade80;">0</span>
+                    </div>
+                    <div class="dashboard-card" style="flex:1;">
+                        <span class="label">當月總支出</span>
+                        <span class="value" id="accTotalExpense" style="color: #f87171;">0</span>
+                    </div>
+                    <div class="dashboard-card highlight-card" style="flex:1;">
+                        <span class="label">當月結餘</span>
+                        <span class="value" id="accBalance">0</span>
+                    </div>
+                </div>
+
+                <div class="inventory-dashboard" style="margin-bottom: 24px; gap:12px;">
+                    <div class="dashboard-card" style="flex:1; background:rgba(16, 185, 129, 0.05); border:1px dashed rgba(16, 185, 129, 0.2);">
+                        <span class="label">年度總收入</span>
+                        <span class="value" id="accYearlyIncome" style="color: #4ade80;">0</span>
+                    </div>
+                    <div class="dashboard-card" style="flex:1; background:rgba(239, 68, 68, 0.05); border:1px dashed rgba(239, 68, 68, 0.2);">
+                        <span class="label">年度總支出</span>
+                        <span class="value" id="accYearlyExpense" style="color: #f87171;">0</span>
+                    </div>
+                    <div class="dashboard-card highlight-card" style="flex:1; background:rgba(59, 130, 246, 0.1);">
+                        <span class="label">年度結餘</span>
+                        <span class="value" id="accYearlyBalance">0</span>
+                    </div>
+                </div>
+
+                <!-- 新增紀錄表單 -->
+                <div class="glass-panel" style="padding: 20px; margin-bottom: 24px; border-radius: 12px; background: rgba(0,0,0,0.2);">
+                    <h3 style="margin-bottom: 12px; font-size: 16px; color:var(--text-secondary);">新增收支紀錄</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; align-items: end;">
+                        <div class="input-group" style="margin-bottom: 0;">
+                            <label>日期</label>
+                            <div class="input-wrapper">
+                                <input type="date" id="accDate">
+                            </div>
+                        </div>
+                        <div class="input-group" style="margin-bottom: 0;">
+                            <label>收支類型</label>
+                            <select id="accType">
+                                <option value="expense">支出 (-)</option>
+                                <option value="income">收入 (+)</option>
+                            </select>
+                        </div>
+                        <div class="input-group" style="margin-bottom: 0;">
+                            <label>分類</label>
+                            <select id="accCategory">
+                                <option value="餐飲">餐飲</option>
+                                <option value="交通">交通</option>
+                                <option value="居住">居住</option>
+                                <option value="娛樂">娛樂</option>
+                                <option value="購物">購物</option>
+                                <option value="生活">生活</option>
+                                <option value="保險">保險</option>
+                                <option value="衣物">衣物</option>
+                                <option value="聚餐">聚餐</option>
+                                <option value="其他">其他</option>
+                            </select>
+                        </div>
+                        <div class="input-group" style="margin-bottom: 0;">
+                            <label>金額</label>
+                            <div class="input-wrapper">
+                                <input type="number" id="accAmount" placeholder="0" min="0" step="1">
+                            </div>
+                        </div>
+                        <div class="input-group" style="margin-bottom: 0; grid-column: span 2;">
+                            <label>備註說明</label>
+                            <div class="input-wrapper">
+                                <input type="text" id="accNote" placeholder="例如：買菜、晚餐...">
+                            </div>
+                        </div>
+                        <div style="grid-column: span 1;">
+                            <button id="addAccBtn" class="btn primary-btn" style="width: 100%; padding: 12px 0;">+ 新增</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 明細列表 -->
+                <h3 style="margin-bottom: 12px; font-size: 16px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;">明細清單</h3>
+                <div style="background: rgba(0,0,0,0.1); border-radius: 8px;">
+                    <table class="history-table" style="width: 100%; text-align: left; border-collapse: collapse; font-size: 14px;">
+                        <thead>
+                            <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: var(--text-secondary);">
+                                <th style="padding: 12px 10px;">日期</th>
+                                <th style="padding: 12px 10px;">分類</th>
+                                <th style="padding: 12px 10px;">備註</th>
+                                <th style="padding: 12px 10px; text-align: right;">金額</th>
+                                <th style="padding: 12px 10px; text-align: center; width: 60px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="accTableBody">
+                            <!-- 動態生成 -->
+                        </tbody>
+                    </table>
+                    <div id="accEmptyMsg" style="text-align:center; padding:30px; color:var(--text-secondary); display:none;">
+                        這個月還沒有任何記帳紀錄喔！
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 股票分析搜尋 Modal -->
+    <div class="modal-overlay" id="standaloneAnalysisSearchModal">
+        <div class="modal-content" style="max-width: 500px; text-align: center;">
+            <div class="modal-header">
+                <h2>🔍 股票大數據分析</h2>
+                <button class="close-btn" id="closeAnalysisSearchBtn">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 10px 0;">
+                <p style="color:var(--text-secondary); margin-bottom:20px; font-size:14px;">輸入股票代號或名稱，即刻獲取 AI 診斷報告</p>
+                
+                <div class="input-group" style="margin-bottom:20px;">
+                    <div class="input-wrapper" style="background:rgba(0,0,0,0.3); border-color:rgba(255,255,255,0.1);">
+                        <input type="text" id="analysisSearchInput" placeholder="例如: 2330 或 台積電" style="text-align:center; font-size:18px; letter-spacing:1px;">
+                    </div>
+                </div>
+                
+                <button id="startAnalysisBtn" class="btn primary-btn" style="width:100%; height:50px; font-size:16px;">🚀 開始分析</button>
+                
+                <div id="analysisSearchHistory" style="margin-top:24px; text-align:left;">
+                    <h4 style="font-size:12px; color:var(--text-secondary); margin-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px;">熱門搜尋</h4>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                        <span class="history-tag" onclick="document.getElementById('analysisSearchInput').value='2330'; document.getElementById('startAnalysisBtn').click()">2330 台積電</span>
+                        <span class="history-tag" onclick="document.getElementById('analysisSearchInput').value='2454'; document.getElementById('startAnalysisBtn').click()">2454 聯發科</span>
+                        <span class="history-tag" onclick="document.getElementById('analysisSearchInput').value='2317'; document.getElementById('startAnalysisBtn').click()">2317 鴻海</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <style>
+        .history-tag {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .history-tag:hover {
+            background: rgba(59, 130, 246, 0.2);
+            color: #fff;
+            border-color: #3b82f6;
+        }
+    </style>
+
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 🩸 血壓記錄 Modal -->
+    <div class="modal-overlay" id="bpModal">
+        <div class="modal-content" style="max-width: 900px; display:flex; flex-direction:row; gap:20px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:300px;">
+                <div class="modal-header">
+                    <h2>🩸 新增血壓與脈搏記錄</h2>
+                    <button class="close-btn" id="closeBPModalBtn">&times;</button>
+                </div>
+                <div class="glass-panel" style="padding:20px;">
+                    <div class="input-group">
+                        <label>測量日期</label>
+                        <input type="date" id="bpDate" class="input-field" style="background:rgba(0,0,0,0.3); color:inherit;">
+                    </div>
+                    <div class="input-group">
+                        <label>測量時間</label>
+                        <input type="time" id="bpTime" class="input-field" style="background:rgba(0,0,0,0.3); color:inherit;">
+                    </div>
+                    <div style="display:flex; gap:10px;">
+                        <div class="input-group" style="flex:1;">
+                            <label>收縮壓 (SYS)</label>
+                            <input type="number" id="bpSys" class="input-field" placeholder="120" style="background:rgba(0,0,0,0.3);">
+                        </div>
+                        <div class="input-group" style="flex:1;">
+                            <label>舒張壓 (DIA)</label>
+                            <input type="number" id="bpDia" class="input-field" placeholder="80" style="background:rgba(0,0,0,0.3);">
+                        </div>
+                        <div class="input-group" style="flex:1;">
+                            <label>脈搏 (Pulse)</label>
+                            <input type="number" id="bpPulse" class="input-field" placeholder="70" style="background:rgba(0,0,0,0.3);">
+                        </div>
+                    </div>
+                    <button id="addBPBtn" class="btn primary-btn" style="width:100%; margin-top:10px; background:rgba(239, 68, 68, 0.2); border-color:rgba(239, 68, 68, 0.4); color:#fca5a5;">儲存紀錄</button>
+                </div>
+                
+                <h3 style="margin-top:20px; color:#fca5a5;">智能統計範圍平均數</h3>
+                <div style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">
+                    <div class="dashboard-card" style="display:flex; justify-content:space-between;">
+                        <span class="label">今日平均</span><span class="value" id="bpStatDaily" style="font-size:20px;">-- / --</span>
+                    </div>
+                    <div class="dashboard-card" style="display:flex; justify-content:space-between;">
+                        <span class="label">近 7 日平均</span><span class="value" id="bpStatWeekly" style="font-size:20px;">-- / --</span>
+                    </div>
+                    <div class="dashboard-card" style="display:flex; justify-content:space-between;">
+                        <span class="label">近 30 日平均</span><span class="value" id="bpStatMonthly" style="font-size:20px;">-- / --</span>
+                    </div>
+                    <div class="dashboard-card" style="display:flex; justify-content:space-between;">
+                        <span class="label">全部歷史平均</span><span class="value" id="bpStatAll" style="font-size:20px;">-- / --</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="flex:1; min-width:300px; display:flex; flex-direction:column; margin-top:20px;">
+                <h3 style="color:#6ee7b7; margin-bottom:10px;">歷史紀錄看版</h3>
+                <div style="max-height: 500px; overflow-y: auto; background:rgba(0,0,0,0.2); border-radius:12px; padding:10px;">
+                    <table class="history-table" style="width: 100%; text-align: left; border-collapse: collapse;">
+                        <thead>
+                            <tr style="border-bottom: 2px solid rgba(255,255,255,0.1);">
+                                <th style="padding: 10px; color: var(--text-secondary);">時間</th>
+                                <th style="padding: 10px; color: var(--text-secondary);">血壓 (收/舒)</th>
+                                <th style="padding: 10px; color: var(--text-secondary);">脈搏</th>
+                                <th style="padding: 10px; color: var(--text-secondary);">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="bpTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 歷史統計 Modal -->
+    <div class="modal-overlay" id="historyModal">
+        <div class="modal-content" style="max-width: 960px;">
+            <div class="modal-header">
+                <h2>📈 每日歷史統計</h2>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button id="historySnapshotBtn" class="btn secondary-btn" style="padding:6px 14px; font-size:13px; background:rgba(52,211,153,0.15); border-color:rgba(52,211,153,0.4); color:#6ee7b7;" title="更新今日損益與市值統計">🔄 立即更新</button>
+                    <button class="close-btn" id="closeHistoryModalBtn">&times;</button>
+                </div>
+            </div>
+            <p style="font-size:12px; color:#94a3b8; margin:-8px 0 12px; padding:0 2px;">點擊任意數字欄位可直接修改，修改後自動儲存。</p>
+            <div class="modal-body" style="overflow-x: auto; max-height: 60vh;">
+                <table class="history-table" style="width: 100%; text-align: right; border-collapse: collapse;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid rgba(255,255,255,0.1);">
+                            <th style="padding: 10px; text-align: left; color: var(--text-secondary); white-space:nowrap;">交易日期</th>
+                            <th style="padding: 10px; color: var(--text-secondary); white-space:nowrap;">總付出成本</th>
+                            <th style="padding: 10px; color: var(--text-secondary); white-space:nowrap;">總庫存市值</th>
+                            <th style="padding: 10px; color: var(--text-secondary); white-space:nowrap;">總未實現損益</th>
+                            <th style="padding: 10px; color: var(--text-secondary); white-space:nowrap;">與前日增減</th>
+                            <th style="padding: 10px; color: var(--text-secondary); white-space:nowrap;">總淨資產</th>
+                            <th style="padding: 10px; color: var(--text-secondary); white-space:nowrap;">2330收盤</th>
+                            <th style="padding: 10px; color: var(--text-secondary); white-space:nowrap;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyTableBody">
+                        <!-- 資料由 JS 動態生成 -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+
+
+
+    <!-- PWA Install Banner -->
+    <div id="pwaInstallBanner" style="display:none;">
+        <div class="banner-content">
+            <div class="banner-icon">📲</div>
+            <div class="banner-text">
+                <div class="banner-title">安裝台股管理 App</div>
+                <div class="banner-sub">加入主畫面，離線也能使用</div>
+            </div>
+        </div>
+        <div class="banner-actions">
+            <button id="pwaInstallBtn">📥 立即安裝</button>
+            <button id="pwaDismissBtn">稍後再說</button>
+        </div>
+    </div>
+
+    <!-- Mobile Bottom Navigation -->
+    <nav class="mobile-nav" id="mobileNav">
+        <div class="mobile-nav-inner">
+            <button class="mobile-nav-btn active" id="navCalc" onclick="switchMobileTab('calc')">
+                <span class="nav-icon">🧮</span>
+                <span>試算</span>
+            </button>
+            <button class="mobile-nav-btn" id="navInventory" onclick="switchMobileTab('inventory')">
+                <span class="nav-icon">📊</span>
+                <span>庫存</span>
+            </button>
+            <button class="mobile-nav-btn" id="navBP" onclick="document.getElementById('openBPBtn').click()">
+                <span class="nav-icon">🩸</span>
+                <span>血壓</span>
+            </button>
+            <button class="mobile-nav-btn" id="navAnalysis" onclick="document.getElementById('openAnalysisBtn').click()">
+                <span class="nav-icon">🔍</span>
+                <span>分析</span>
+            </button>
+            <button class="mobile-nav-btn" id="navMore" onclick="showMobileMore()">
+                <span class="nav-icon">⋯</span>
+                <span>更多</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Mobile More Menu -->
+    <div id="mobileMoreMenu" style="display:none; position:fixed; bottom:72px; left:0; right:0; z-index:490; background:rgba(15,23,42,0.97); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); border-top:1px solid rgba(255,255,255,0.1); padding:16px; padding-bottom:calc(16px + env(safe-area-inset-bottom,0px));">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <button class="header-action-btn" onclick="document.getElementById('openCompoundBtn').click(); hideMobileMore();" style="background:rgba(245,158,11,0.15); color:#fcd34d; border-color:rgba(245,158,11,0.3); width:100%; font-size:14px; padding:12px;">📈 複利試算</button>
+            <button class="header-action-btn" onclick="document.getElementById('refreshPricesBtn').click(); hideMobileMore();" style="background:rgba(14,165,233,0.15); color:#7dd3fc; border-color:rgba(14,165,233,0.3); width:100%; font-size:14px; padding:12px;">↻ 更新股價</button>
+            <button class="header-action-btn" onclick="document.getElementById('openAccountingBtn').click(); hideMobileMore();" style="background:rgba(16,185,129,0.15); color:#6ee7b7; border-color:rgba(16,185,129,0.3); width:100%; font-size:14px; padding:12px;">📒 日常記帳</button>
+            <button class="header-action-btn" onclick="document.getElementById('openHistoryStatsBtn').click(); hideMobileMore();" style="background:rgba(217,70,239,0.15); color:#f0abfc; border-color:rgba(217,70,239,0.3); width:100%; font-size:14px; padding:12px;">📊 歷史統計</button>
+        </div>
+        <button onclick="hideMobileMore()" style="width:100%; margin-top:12px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:var(--text-secondary); border-radius:10px; padding:10px; font-size:14px; font-family:inherit; cursor:pointer;">關閉</button>
+    </div>
+
+    <script>
+document.addEventListener('DOMContentLoaded', () => {
+    // --- Global Override for Commas ---
+    const _parseFloat = window.parseFloat;
+    window.parseFloat = function(val) {
+        if (typeof val === 'string') return _parseFloat(val.replace(/,/g, ''));
+        return _parseFloat(val);
+    };
+    const _parseInt = window.parseInt;
+    window.parseInt = function(val, radix) {
+        if (typeof val === 'string') return _parseInt(val.replace(/,/g, ''), radix);
+        return _parseInt(val, radix);
+    };
+
+    function attachFormatter(input) {
+        if (input.type === 'number' && !['discount', 'cpRate', 'cpYears'].includes(input.id)) {
+            input.type = 'text';
+            input.inputMode = 'decimal';
+            input.addEventListener('blur', (e) => {
+                let v = e.target.value ? e.target.value.toString() : '';
+                if(v.trim() !== '') {
+                    let n = parseFloat(v);
+                    if(!isNaN(n)) e.target.value = n.toLocaleString('en-US', v.includes('.') ? {minimumFractionDigits: 2, maximumFractionDigits: 4} : undefined);
+                }
+            });
+            input.addEventListener('focus', (e) => {
+                if (e.target.value) e.target.value = e.target.value.toString().replace(/,/g, '');
+            });
+            if (input.value) {
+                let n = parseFloat(input.value);
+                if (!isNaN(n)) input.value = n.toLocaleString('en-US', input.value.toString().includes('.') ? {minimumFractionDigits: 2, maximumFractionDigits: 4} : undefined);
+            }
+        }
+    }
+
+    document.querySelectorAll('input[type="number"]').forEach(attachFormatter);
+    const observer = new MutationObserver(mutations => {
+        mutations.forEach(m => m.addedNodes.forEach(node => {
+            if (node.nodeType === 1) {
+                if (node.tagName === 'INPUT') attachFormatter(node);
+                else node.querySelectorAll('input[type="number"]').forEach(attachFormatter);
+            }
+        }));
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // --- Calculator Elements ---
+    const stockCodeInput = document.getElementById('stockCode');
+    const buyPriceInput = document.getElementById('buyPrice');
+    const sellPriceInput = document.getElementById('sellPrice');
+    const buySharesInput = document.getElementById('buyShares');
+    const sellSharesInput = document.getElementById('sellShares');
+    const stockTypeSelect = document.getElementById('stockType');
+    const discountInput = document.getElementById('discount');
+    const minFeeInput = document.getElementById('minFee');
+
+    const netProfitEl = document.getElementById('netProfit');
+    const returnRateEl = document.getElementById('returnRate');
+    const buyFeeValEl = document.getElementById('buyFeeVal');
+    const sellFeeValEl = document.getElementById('sellFeeVal');
+    const taxValEl = document.getElementById('taxVal');
+    const totalCostValEl = document.getElementById('totalCostVal');
+    const totalRevenueValEl = document.getElementById('totalRevenueVal');
+
+    // --- Inventory Elements ---
+    const addInventoryBtn = document.getElementById('addInventoryBtn');
+    const addShortTermBtn = document.getElementById('addShortTermBtn');
+    const toggleViewBtn = document.getElementById('toggleViewBtn');
+    const longTermView = document.getElementById('longTermView');
+    const shortTermView = document.getElementById('shortTermView');
+    const dashboardTitleEl = document.querySelector('.inventory-header h2');
+    const refreshPricesBtn = document.getElementById('refreshPricesBtn');
+    const inventoryListEl = document.getElementById('inventoryList');
+    const emptyMsgEl = document.getElementById('emptyInventoryMsg');
+    const dashboardTotalValueEl = document.getElementById('totalMarketValue');
+    const dashboardTotalProfitEl = document.getElementById('totalInventoryProfit');
+    const cashInputEl = document.getElementById('cashInput');
+    const yearlyRealizedInputEl = document.getElementById('yearlyRealizedInput');
+    const totalRealizedInputEl = document.getElementById('totalRealizedInput');
+
+    const shortTermCapitalInput = document.getElementById('shortTermCapitalInput');
+    const stRealizedInput = document.getElementById('stRealizedInput');
+    const stTotalCostEl = document.getElementById('stTotalCost');
+    const stRemainingFundsEl = document.getElementById('stRemainingFunds');
+    const stTotalProfitEl = document.getElementById('stTotalProfit');
+    const stTotalProfitRateEl = document.getElementById('stTotalProfitRate');
+    const shortTermListEl = document.getElementById('shortTermList');
+    const stEmptyMsgEl = document.getElementById('stEmptyMsg');
+    const historyModal = document.getElementById('historyModal');
+    const openHistoryStatsBtn = document.getElementById('openHistoryStatsBtn');
+    const closeHistoryModalBtn = document.getElementById('closeHistoryModalBtn');
+    const historyTableBody = document.getElementById('historyTableBody');
+    let dailyStats = [];
+    try {
+        const savedStats = localStorage.getItem('twStockDailyStats');
+        if (savedStats) dailyStats = JSON.parse(savedStats);
+    } catch(e) {}
+
+    const accountingModal = document.getElementById('accountingModal');
+    const openAccountingBtn = document.getElementById('openAccountingBtn');
+    const closeAccountingBtn = document.getElementById('closeAccountingBtn');
+    const prevMonthBtn = document.getElementById('prevMonthBtn');
+    const nextMonthBtn = document.getElementById('nextMonthBtn');
+    const currentMonthLabel = document.getElementById('currentMonthLabel');
+    const accTotalIncomeEl = document.getElementById('accTotalIncome');
+    const accTotalExpenseEl = document.getElementById('accTotalExpense');
+    const accBalanceEl = document.getElementById('accBalance');
+    const accTypeInput = document.getElementById('accType');
+    const accDateInput = document.getElementById('accDate');
+    const accCategoryInput = document.getElementById('accCategory');
+    const accAmountInput = document.getElementById('accAmount');
+    const accNoteInput = document.getElementById('accNote');
+    const addAccBtn = document.getElementById('addAccBtn');
+    const accTableBody = document.getElementById('accTableBody');
+    const accEmptyMsg = document.getElementById('accEmptyMsg');
+
+    let accountingData = [];
+    try {
+        const savedAcc = localStorage.getItem('twStockAccounting');
+        if (savedAcc) accountingData = JSON.parse(savedAcc);
+    } catch(e) {}
+    
+    let currentAccDate = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Taipei"}));
+
+    const FEE_RATE = 0.001425; // 0.1425%
+    let inventory = [];
+    let shortTermInventory = [];
+    let currentView = 'longTerm';
+
+    // --- History / Undo / Redo ---
+    let historyStack = [];
+    let redoStack = [];
+    const undoBtn = document.getElementById('undoBtn');
+    const redoBtn = document.getElementById('redoBtn');
+
+    function getCurrentState() {
+        return {
+            inventory: JSON.parse(JSON.stringify(inventory)),
+            shortTermInventory: JSON.parse(JSON.stringify(shortTermInventory)),
+            cash: localStorage.getItem('twStockCash') || '0',
+            yearly: localStorage.getItem('twStockYearlyRealized') || '0',
+            total: localStorage.getItem('twStockTotalRealized') || '0',
+            stCapital: localStorage.getItem('twStockShortTermCapital') || '0',
+            stRealized: localStorage.getItem('twStockShortTermRealized') || '0'
+        };
+    }
+
+    function recordState() {
+        historyStack.push(getCurrentState());
+        if (historyStack.length > 50) historyStack.shift();
+        redoStack = [];
+        updateHistoryButtons();
+    }
+
+    function applyState(state) {
+        inventory = JSON.parse(JSON.stringify(state.inventory));
+        shortTermInventory = JSON.parse(JSON.stringify(state.shortTermInventory));
+        
+        if (cashInputEl) { cashInputEl.value = state.cash; cashInputEl.dispatchEvent(new Event('blur')); }
+        if (yearlyRealizedInputEl) {
+            yearlyRealizedInputEl.value = state.yearly;
+            yearlyRealizedInputEl.dispatchEvent(new Event('blur'));
+            updateInputColor(yearlyRealizedInputEl);
+        }
+        if (totalRealizedInputEl) {
+            totalRealizedInputEl.value = state.total;
+            totalRealizedInputEl.dispatchEvent(new Event('blur'));
+            updateInputColor(totalRealizedInputEl);
+        }
+        if (shortTermCapitalInput) { shortTermCapitalInput.value = state.stCapital; shortTermCapitalInput.dispatchEvent(new Event('blur')); }
+        if (stRealizedInput) {
+             stRealizedInput.value = state.stRealized;
+             stRealizedInput.dispatchEvent(new Event('blur'));
+             updateInputColor(stRealizedInput);
+        }
+        
+        saveInventory();
+        saveShortTermInventory();
+        
+        if (cashInputEl) localStorage.setItem('twStockCash', state.cash);
+        if (yearlyRealizedInputEl) localStorage.setItem('twStockYearlyRealized', state.yearly);
+        if (totalRealizedInputEl) localStorage.setItem('twStockTotalRealized', state.total);
+        if (shortTermCapitalInput) localStorage.setItem('twStockShortTermCapital', state.stCapital);
+        if (stRealizedInput) localStorage.setItem('twStockShortTermRealized', state.stRealized);
+        
+        renderInventory();
+        renderShortTermInventory();
+    }
+
+    function triggerUndo() {
+        if (historyStack.length === 0) return;
+        redoStack.push(getCurrentState());
+        const previousState = historyStack.pop();
+        applyState(previousState);
+        updateHistoryButtons();
+    }
+
+    function triggerRedo() {
+        if (redoStack.length === 0) return;
+        historyStack.push(getCurrentState());
+        const nextState = redoStack.pop();
+        applyState(nextState);
+        updateHistoryButtons();
+    }
+
+    function updateHistoryButtons() {
+        if (undoBtn) undoBtn.disabled = historyStack.length === 0;
+        if (redoBtn) redoBtn.disabled = redoStack.length === 0;
+    }
+
+    if (undoBtn) undoBtn.addEventListener('click', triggerUndo);
+    if (redoBtn) redoBtn.addEventListener('click', triggerRedo);
+    // --- Utility Functions ---
+    function formatCurrency(num, keepDecimals = false) {
+        if (keepDecimals) {
+            return Number(num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+        }
+        return Math.round(num).toLocaleString('en-US');
+    }
+
+    function updateColorClass(element, value) {
+        element.classList.remove('is-profit', 'is-loss', 'is-neutral');
+        if (value > 0) {
+            element.classList.add('is-profit');
+        } else if (value < 0) {
+            element.classList.add('is-loss');
+        } else {
+            element.classList.add('is-neutral');
+        }
+    }
+
+    function updateInputColor(inputEl) {
+        if (!inputEl) return;
+        const val = parseFloat(inputEl.value) || 0;
+        inputEl.style.color = val > 0 ? '#ef4444' : (val < 0 ? '#10b981' : '#f8fafc');
+        inputEl.style.textShadow = val !== 0 ? (val > 0 ? '0 0 10px rgba(239, 68, 68, 0.3)' : '0 0 10px rgba(16, 185, 129, 0.3)') : 'none';
+    }
+
+    // --- 1. Calculator Logic ---
+    function calculate() {
+        const buyPrice = parseFloat(buyPriceInput.value) || 0;
+        const sellPrice = parseFloat(sellPriceInput.value) || 0;
+        const buyShares = parseInt(buySharesInput.value) || 0;
+        const sellShares = parseInt(sellSharesInput.value) || 0;
+        const taxRate = parseFloat(stockTypeSelect.value) || 0.003;
+        const discountMultiplier = (parseFloat(discountInput.value) || 0) / 10;
+        const minFee = parseInt(minFeeInput.value) || 0;
+
+        if (buyPrice <= 0 && sellPrice <= 0) {
+            resetDisplay();
+            return null; // Return null so we know not to add to inventory
+        }
+
+        let buyFee = 0;
+        let totalCost = 0;
+        if (buyPrice > 0 && buyShares > 0) {
+            buyFee = Math.max(Math.floor(buyPrice * buyShares * FEE_RATE * discountMultiplier), minFee);
+            totalCost = Math.floor(buyPrice * buyShares) + buyFee;
+        }
+
+        let sellFee = 0;
+        let tax = 0;
+        let totalRevenue = 0;
+        if (sellPrice > 0 && sellShares > 0) {
+            sellFee = Math.max(Math.floor(sellPrice * sellShares * FEE_RATE * discountMultiplier), minFee);
+            tax = Math.floor(sellPrice * sellShares * taxRate);
+            totalRevenue = Math.floor(sellPrice * sellShares) - sellFee - tax;
+        }
+
+        let netProfit = 0;
+        let returnRate = 0;
+        let realizedCost = 0;
+        
+        if (buyPrice > 0 && sellPrice > 0 && buyShares > 0 && sellShares > 0) {
+            let averageUnitCost = totalCost / buyShares;
+            realizedCost = averageUnitCost * sellShares;
+            netProfit = totalRevenue - realizedCost;
+            returnRate = (netProfit / realizedCost) * 100;
+        } else if (buyPrice > 0 && buyShares > 0 && sellShares === 0) {
+            totalRevenue = 0;
+            netProfit = 0 - buyFee;
+            returnRate = 0;
+        } else if (sellPrice > 0 && sellShares > 0 && buyShares === 0) {
+            totalCost = 0;
+            netProfit = totalRevenue;
+            returnRate = 0;
+        }
+
+        buyFeeValEl.textContent = formatCurrency(buyFee);
+        sellFeeValEl.textContent = formatCurrency(sellFee);
+        taxValEl.textContent = formatCurrency(tax);
+        totalCostValEl.textContent = formatCurrency(totalCost);
+        totalRevenueValEl.textContent = formatCurrency(totalRevenue);
+
+        const profitPrefix = netProfit > 0 ? '+' : '';
+        netProfitEl.textContent = profitPrefix + formatCurrency(netProfit);
+        updateColorClass(netProfitEl, netProfit);
+
+        const ratePrefix = returnRate > 0 ? '+' : '';
+        returnRateEl.textContent = ratePrefix + returnRate.toFixed(2) + '%';
+        updateColorClass(returnRateEl, returnRate);
+
+        // Return a snapshot for inventory adding
+        return {
+            buyPrice, buyShares, totalCost, 
+            unitCost: buyShares > 0 ? totalCost / buyShares : 0,
+            taxRate, discountMultiplier, minFee
+        };
+    }
+
+    function resetDisplay() {
+        buyFeeValEl.textContent = '0';
+        sellFeeValEl.textContent = '0';
+        taxValEl.textContent = '0';
+        totalCostValEl.textContent = '0';
+        totalRevenueValEl.textContent = '0';
+        netProfitEl.textContent = '0';
+        returnRateEl.textContent = '0.00%';
+        updateColorClass(netProfitEl, 0);
+        updateColorClass(returnRateEl, 0);
+    }
+
+    const calcInputs = [buyPriceInput, sellPriceInput, buySharesInput, sellSharesInput, stockTypeSelect, discountInput, minFeeInput];
+    calcInputs.forEach(input => input.addEventListener('input', calculate));
+
+    // --- 2. Inventory Logic ---
+
+    function loadInventory() {
+        const saved = localStorage.getItem('twStockInventory');
+        if (saved) inventory = JSON.parse(saved);
+        
+        const savedShort = localStorage.getItem('twStockShortTermInventory');
+        if (savedShort) shortTermInventory = JSON.parse(savedShort);
+
+        // Retroactively enforce correct tax rates based on type
+        [inventory, shortTermInventory].forEach(list => {
+            list.forEach(item => {
+                if (item.type === 'etf') {
+                    item.taxRate = 0.001;
+                } else {
+                    item.taxRate = 0.003;
+                }
+            });
+        });
+
+        const savedCash = localStorage.getItem('twStockCash');
+        if (savedCash && cashInputEl) { cashInputEl.value = savedCash; cashInputEl.dispatchEvent(new Event('blur')); }
+
+        const savedYearly = localStorage.getItem('twStockYearlyRealized');
+        if (savedYearly && yearlyRealizedInputEl) {
+            yearlyRealizedInputEl.value = savedYearly;
+            yearlyRealizedInputEl.dispatchEvent(new Event('blur'));
+            updateInputColor(yearlyRealizedInputEl);
+        }
+
+        const savedTotal = localStorage.getItem('twStockTotalRealized');
+        if (savedTotal && totalRealizedInputEl) {
+            totalRealizedInputEl.value = savedTotal;
+            totalRealizedInputEl.dispatchEvent(new Event('blur'));
+            updateInputColor(totalRealizedInputEl);
+        }
+
+        const totalDividendValEl = document.getElementById('totalDividendVal');
+        const dividendTaxOffsetValEl = document.getElementById('dividendTaxOffsetVal');
+        const dividendTotalBenefitValEl = document.getElementById('dividendTotalBenefitVal');
+        
+        function formatDividendInput(el, rawVal) {
+            const num = parseInt(String(rawVal).replace(/,/g, ''), 10);
+            el.value = isNaN(num) ? '0' : num.toLocaleString('zh-TW');
+        }
+
+        if(totalDividendValEl && localStorage.getItem('twStockTotalDividend')) {
+            formatDividendInput(totalDividendValEl, localStorage.getItem('twStockTotalDividend'));
+        }
+        if(dividendTaxOffsetValEl && localStorage.getItem('twStockDividendTaxOffset')) {
+            formatDividendInput(dividendTaxOffsetValEl, localStorage.getItem('twStockDividendTaxOffset'));
+        }
+        if(dividendTotalBenefitValEl && localStorage.getItem('twStockDividendTotalBenefit')) {
+            formatDividendInput(dividendTotalBenefitValEl, localStorage.getItem('twStockDividendTotalBenefit'));
+        }
+
+        const savedCapital = localStorage.getItem('twStockShortTermCapital');
+        if (savedCapital && shortTermCapitalInput) {
+            shortTermCapitalInput.value = savedCapital;
+            shortTermCapitalInput.dispatchEvent(new Event('blur'));
+        }
+
+        const savedStReal = localStorage.getItem('twStockShortTermRealized');
+        if (savedStReal && stRealizedInput) {
+            stRealizedInput.value = savedStReal;
+            stRealizedInput.dispatchEvent(new Event('blur'));
+        }
+
+        renderInventory();
+        renderShortTermInventory();
+    }
+
+    function saveInventory() {
+        localStorage.setItem('twStockInventory', JSON.stringify(inventory));
+    }
+
+    function saveShortTermInventory() {
+        localStorage.setItem('twStockShortTermInventory', JSON.stringify(shortTermInventory));
+    }
+
+    function addToInventory() {
+        const snapshot = calculate();
+        if (!snapshot || snapshot.buyShares <= 0) {
+            alert('請先填寫有效的「買進價格」與「買進股數」！');
+            return;
+        }
+
+        const rawInput = stockCodeInput.value.trim() || '未命名股票';
+        let code = rawInput;
+        let name = '';
+        
+        if (rawInput !== '未命名股票') {
+            const match = rawInput.match(/^([a-zA-Z0-9]+)([\s_-]*)(.*)$/);
+            if (match) {
+                code = match[1];
+                name = match[3];
+            }
+        }
+
+        const existingItem = inventory.find(i => i.code === code && code !== '未命名股票');
+
+        recordState();
+
+        if (existingItem) {
+            existingItem.shares += snapshot.buyShares;
+            existingItem.totalCost += snapshot.totalCost;
+            if (existingItem.shares > 0) {
+                existingItem.unitCost = existingItem.totalCost / existingItem.shares;
+            }
+            if (name && !existingItem.name) {
+                existingItem.name = name;
+            }
+        } else {
+            const newItem = {
+                id: Date.now().toString(),
+                code: code,
+                name: name,
+                shares: snapshot.buyShares,
+                buyPrice: snapshot.buyPrice,
+                totalCost: snapshot.totalCost,
+                unitCost: snapshot.unitCost,
+                taxRate: snapshot.taxRate,
+                discountMultiplier: snapshot.discountMultiplier,
+                minFee: snapshot.minFee,
+                currentPrice: snapshot.buyPrice, // Default to buy price initially
+                dividend: 0 // New field for yearly dividend
+            };
+            inventory.push(newItem);
+        }
+
+        saveInventory();
+        renderInventory();
+        
+        // Clear stock code after adding (optional UX)
+        stockCodeInput.value = '';
+    }
+
+    function addToShortTermInventory() {
+        const snapshot = calculate();
+        if (!snapshot || snapshot.buyShares <= 0) {
+            alert('請先填寫有效的「買進價格」與「買進股數」！');
+            return;
+        }
+
+        const rawInput = stockCodeInput.value.trim() || '未命名股票';
+        let code = rawInput;
+        let name = '';
+        
+        if (rawInput !== '未命名股票') {
+            const match = rawInput.match(/^([a-zA-Z0-9]+)([\s_-]*)(.*)$/);
+            if (match) {
+                code = match[1];
+                name = match[3];
+            }
+        }
+
+        const existingItem = shortTermInventory.find(i => i.code === code && code !== '未命名股票');
+
+        recordState();
+
+        if (existingItem) {
+            existingItem.shares += snapshot.buyShares;
+            existingItem.totalCost += snapshot.totalCost;
+            if (existingItem.shares > 0) {
+                existingItem.unitCost = existingItem.totalCost / existingItem.shares;
+            }
+            if (name && !existingItem.name) {
+                existingItem.name = name;
+            }
+        } else {
+            const newItem = {
+                id: Date.now().toString() + '_st',
+                code: code,
+                name: name,
+                shares: snapshot.buyShares,
+                buyPrice: snapshot.buyPrice,
+                totalCost: snapshot.totalCost,
+                unitCost: snapshot.unitCost,
+                taxRate: snapshot.taxRate,
+                discountMultiplier: snapshot.discountMultiplier,
+                minFee: snapshot.minFee,
+                currentPrice: snapshot.buyPrice,
+                dividend: 0
+            };
+            shortTermInventory.push(newItem);
+        }
+
+        saveShortTermInventory();
+        renderShortTermInventory();
+        
+        stockCodeInput.value = '';
+    }
+
+    function deleteInventory(id, isShortTerm = false) {
+        recordState();
+        if (isShortTerm) {
+            shortTermInventory = shortTermInventory.filter(item => item.id !== id);
+            saveShortTermInventory();
+            renderShortTermInventory();
+        } else {
+            inventory = inventory.filter(item => item.id !== id);
+            saveInventory();
+            renderInventory();
+        }
+    }
+
+    function updateItemPrice(id, newPrice, isShortTerm = false) {
+        const targetList = isShortTerm ? shortTermInventory : inventory;
+        const item = targetList.find(i => i.id === id);
+        if (item && item.currentPrice !== parseFloat(newPrice)) {
+            recordState();
+            item.currentPrice = parseFloat(newPrice) || 0;
+            if (isShortTerm) {
+                saveShortTermInventory();
+                renderShortTermInventory();
+            } else {
+                saveInventory();
+                renderInventory();
+            }
+        }
+    }
+
+    function updateItemCost(id, newCost, isShortTerm = false) {
+        const targetList = isShortTerm ? shortTermInventory : inventory;
+        const item = targetList.find(i => i.id === id);
+        if (item && item.totalCost !== parseFloat(newCost)) {
+            recordState();
+            item.totalCost = parseFloat(newCost) || 0;
+            if (item.shares > 0) item.unitCost = item.totalCost / item.shares;
+            if (isShortTerm) {
+                saveShortTermInventory();
+                renderShortTermInventory();
+            } else {
+                saveInventory();
+                renderInventory();
+            }
+        }
+    }
+
+    // --- Network helper for CORS Proxies ---
+    async function fetchWithProxy(targetUrl, isJson = false) {
+        const proxies = [
+            // allorigins - supports null origin, wraps in {contents:...}
+            { url: (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, allorigins: true },
+            // allorigins raw - direct content
+            { url: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, allorigins: false },
+            // corsproxy.io
+            { url: (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`, allorigins: false },
+            // thingproxy
+            { url: (u) => `https://thingproxy.freeboard.io/fetch/${u}`, allorigins: false },
+            // codetabs (有流量限制)
+            { url: (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`, allorigins: false },
+        ];
+
+        for (let proxy of proxies) {
+            const proxyUrl = proxy.url(targetUrl);
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒 timeout
+                const res = await fetch(proxyUrl, { signal: controller.signal });
+                clearTimeout(timeoutId);
+
+                if (res.ok) {
+                    if (proxy.allorigins) {
+                        const data = await res.json();
+                        if (data && data.contents && data.contents.length > 10) {
+                            return isJson ? JSON.parse(data.contents) : data.contents;
+                        }
+                    } else {
+                        const text = await res.text();
+                        // 過濾掉明顯的錯誤回應
+                        if (text && text.length > 10 && !text.startsWith('Edge:') && !text.startsWith('Error')) {
+                            return isJson ? JSON.parse(text) : text;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn(`Proxy failed: ${proxyUrl}`, e.message);
+            }
+        }
+        throw new Error('All CORS proxies failed for: ' + targetUrl);
+    }
+
+    // --- Real-time Stock Price via Reliable Fallbacks ---
+    async function refreshPrices() {
+        const lastUpdateEl = document.getElementById('lastPriceUpdate');
+        refreshPricesBtn.textContent = '抓取中...';
+        refreshPricesBtn.disabled = true;
+
+        let anySuccess = false;
+        let allItems = [...inventory, ...shortTermInventory];
+
+        function validatePrice(raw) {
+            if (raw === null || raw === undefined || raw === '' || raw === '-') return null;
+            const cleaned = String(raw).replace(/,/g, '').replace(/\s/g, '').trim();
+            const num = parseFloat(cleaned);
+            if (isNaN(num) || num <= 0 || num > 100000000) return null;
+            return num;
+        }
+
+        // --- Step 1: Bulk Fetch from Official OpenData (Fastest) ---
+        let marketDataMap = {};
+        
+        try {
+            const [twseRes, tpexRes] = await Promise.all([
+                fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL').catch(() => null),
+                fetch('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes').catch(() => null)
+            ]);
+
+            if (twseRes && twseRes.ok) {
+                const data = await twseRes.json();
+                data.forEach(dt => {
+                    const p = validatePrice(dt.ClosingPrice);
+                    if (p !== null) marketDataMap[dt.Code] = p;
+                });
+            }
+            if (tpexRes && tpexRes.ok) {
+                const data = await tpexRes.json();
+                data.forEach(dt => {
+                    const p = validatePrice(dt.Close);
+                    if (p !== null && dt.SecuritiesCompanyCode) marketDataMap[dt.SecuritiesCompanyCode] = p;
+                });
+            }
+        } catch (e) {
+            console.warn('[Bulk Fetch] Error:', e);
+        }
+
+        // --- Step 2: Handle Fallbacks in Parallel (FinMind) ---
+        const pendingItems = allItems.filter(item => {
+            const rawSymbol = item.code.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
+            if (marketDataMap[rawSymbol]) {
+                if (!anySuccess) recordState();
+                item.currentPrice = marketDataMap[rawSymbol];
+                anySuccess = true;
+                return false;
+            }
+            return true;
+        });
+
+        if (pendingItems.length > 0) {
+            console.log(`[Refresh] ${pendingItems.length} items missing from bulk list, trying FinMind...`);
+            
+            const fetchFinMind = async (item) => {
+                const rawSymbol = item.code.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
+                const today = new Date().toISOString().split('T')[0];
+                const yesterday = new Date(Date.now() - 86400000 * 3).toISOString().split('T')[0]; // Look back 3 days
+                const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${rawSymbol}&start_date=${yesterday}`;
+                
+                try {
+                    const res = await fetchWithProxy(url, true);
+                    if (res && res.data && res.data.length > 0) {
+                        const latest = res.data[res.data.length - 1];
+                        const price = validatePrice(latest.close || latest.Close);
+                        if (price !== null) {
+                            if (!anySuccess) recordState();
+                            item.currentPrice = price;
+                            anySuccess = true;
+                            return true;
+                        }
+                    }
+                } catch (err) {
+                    console.warn(`[FinMind] ${rawSymbol} failed:`, err.message);
+                }
+                return false;
+            };
+
+            // Execute fallbacks in parallel with a concurrency limit if needed, 
+            // but for few items Promise.all is fine.
+            await Promise.all(pendingItems.map(item => fetchFinMind(item)));
+        }
+
+        if (anySuccess) {
+            saveInventory();
+            saveShortTermInventory();
+            renderInventory();
+            renderShortTermInventory();
+            await logDailyStats();
+            
+            // Update timestamp
+            const now = new Date();
+            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+            if (lastUpdateEl) lastUpdateEl.textContent = `最後更新: ${timeStr}`;
+
+            window.dispatchEvent(new CustomEvent('stockPricesUpdated', { 
+                detail: { inventory: [...inventory, ...shortTermInventory] } 
+            }));
+        }
+
+        refreshPricesBtn.textContent = '↻ 更新股價';
+        refreshPricesBtn.disabled = false;
+        
+        if (!anySuccess && allItems.length > 0) {
+            alert('抓取完成：目前無法取得最新現價，請檢查網路或稍後再試。');
+        }
+    }
+
+    // --- Render Inventory (Long Term) ---
+    function renderInventory() {
+        if (inventory.length === 0) {
+            inventoryListEl.innerHTML = '';
+            emptyMsgEl.style.display = 'block';
+            dashboardTotalValueEl.textContent = '0';
+            dashboardTotalProfitEl.textContent = '0';
+            updateColorClass(dashboardTotalProfitEl, 0);
+            const rateEl = document.getElementById('totalInventoryProfitRate');
+            if(rateEl) { rateEl.textContent = '0.00%'; updateColorClass(rateEl, 0); }
+            return;
+        }
+
+        emptyMsgEl.style.display = 'none';
+        inventoryListEl.innerHTML = '';
+
+        let totalMarketVal = 0;
+        let totalCostAll = 0;
+        let totalDividendAll = 0;
+
+        // First pass: accumulate totals
+        inventory.forEach(item => {
+            item.dividend = parseFloat(item.dividend) || 0;
+            totalDividendAll += item.dividend;
+            
+            let sellFee = 0;
+            let tax = 0;
+            let totalRevenue = 0; // expected revenue
+            
+            if (item.currentPrice > 0) {
+                sellFee = Math.max(Math.floor(item.currentPrice * item.shares * FEE_RATE * item.discountMultiplier), item.minFee);
+                tax = Math.floor(item.currentPrice * item.shares * item.taxRate);
+                totalRevenue = Math.floor(item.currentPrice * item.shares) - sellFee - tax;
+            }
+            
+            item._tempRevenue = totalRevenue;
+            totalMarketVal += totalRevenue;
+            totalCostAll += item.totalCost;
+        });
+
+        // Sort inventory by market value (descending) before rendering
+        inventory.sort((a, b) => b._tempRevenue - a._tempRevenue);
+
+        const cashBalance = parseFloat(cashInputEl.value) || 0;
+        const totalAsset = totalMarketVal + cashBalance;
+
+        // Second pass: Render each card
+        inventory.forEach(item => {
+            let totalRevenue = item._tempRevenue;
+
+            // Let's refine profit if currentPrice is valid
+            const currentProfit = (item.currentPrice > 0) ? (totalRevenue - item.totalCost) : 0;
+            const currentReturnRate = (item.totalCost > 0) ? (currentProfit / item.totalCost * 100) : 0;
+            
+            const stockRatio = totalMarketVal > 0 ? (totalRevenue / totalMarketVal * 100) : 0;
+            const assetRatio = totalAsset > 0 ? (totalRevenue / totalAsset * 100) : 0;
+
+            const card = document.createElement('div');
+            card.className = 'inventory-item';
+            
+            const profitStr = (currentProfit > 0 ? '+' : '') + formatCurrency(currentProfit);
+            const rateStr = (currentReturnRate > 0 ? '+' : '') + currentReturnRate.toFixed(2) + '%';
+            
+            const profitClass = currentProfit > 0 ? 'is-profit' : (currentProfit < 0 ? 'is-loss' : 'is-neutral');
+
+            card.innerHTML = `
+                <div class="inv-header">
+                    <span class="inv-title" style="display:flex; align-items:center;">
+                        ${item.code}
+                        <input type="text" data-id="${item.id}" class="live-name-input" value="${item.name || ''}" placeholder="點此輸入名稱" style="font-size:18px; font-weight:500; opacity:0.9; margin-left:8px; background:transparent; border:none; color:var(--text-primary); width:130px; outline:none; padding:2px 0;">
+                    </span>
+                    <span class="inv-shares" style="display:flex; align-items:center; gap:4px;">
+                        <input type="number" step="1" min="0" data-id="${item.id}" class="live-shares-input" value="${item.shares}" style="font-size:20px; font-family:inherit; font-weight:600; color:var(--text-primary); text-align:right; width:90px; background:transparent; border:none; outline:none;">
+                        股
+                    </span>
+                </div>
+                <div class="inv-body" style="grid-template-columns: 1fr 1fr 1.2fr;">
+                    <div class="inv-stat">
+                        <span style="color:var(--text-secondary);">現在價格</span>
+                        <div style="display:flex; align-items:center;">
+                            <span style="color:#60a5fa; font-weight:600; font-size:20px;">$</span>
+                            <input type="number" step="0.01" min="0" value="${item.currentPrice}" data-id="${item.id}" class="live-price-input" style="font-size:20px; font-weight:600; width:100%; background:transparent; border:none; color:#60a5fa; outline:none; padding:0;" title="即時股價">
+                        </div>
+                    </div>
+                    <div class="inv-stat">
+                        <span>股票市值</span>
+                        <div style="display:flex; align-items:center;">
+                            <span style="font-size:20px; font-weight:600; color:#f8fafc; margin-right:2px;">$</span>
+                            <span style="font-size:20px; font-weight:600; color:#f8fafc;">${formatCurrency(totalRevenue)}</span>
+                        </div>
+                    </div>
+                    <div class="inv-stat input-stat">
+                        <label>已領配息總額</label>
+                        <div style="display:flex; align-items:center;">
+                            <span style="margin-right:2px; font-size:20px; font-weight:600; color:var(--text-primary);">$</span>
+                            <input type="number" step="1" min="0" value="${item.dividend}" data-id="${item.id}" class="live-dividend-input" style="outline:none;">
+                        </div>
+                    </div>
+                    <div class="inv-stat">
+                        <span>平均成本</span>
+                        <div style="display:flex; align-items:center;">
+                            <span style="font-size:20px; font-weight:600; color:var(--text-primary); margin-right:2px;">$</span>
+                            <span style="font-size:20px; font-weight:600; color:var(--text-primary);">${formatCurrency(item.unitCost, true)}</span>
+                        </div>
+                    </div>
+                    <div class="inv-stat input-stat">
+                        <label>買進總金額</label>
+                        <div style="display:flex; align-items:center;">
+                            <span style="margin-right:2px; font-size:20px; font-weight:600; color:var(--text-primary);">$</span>
+                            <input type="number" step="1" min="0" value="${item.totalCost}" data-id="${item.id}" class="live-cost-input" style="outline:none;">
+                        </div>
+                    </div>
+                </div>
+                <div class="inv-footer">
+                    <div class="inv-result">
+                        <span class="inv-result-val ${profitClass}">${profitStr}</span>
+                        <span class="inv-result-rate ${profitClass}">${rateStr}</span>
+                        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 6px; display:flex; gap:12px;">
+                            <span>股票 ${stockRatio.toFixed(1)}%</span>
+                            <span>總資產 ${assetRatio.toFixed(1)}%</span>
+                        </div>
+                    </div>
+                    <div style="display:flex; flex-direction:row; gap:8px; align-items:center; justify-content:flex-end;">
+                        <button class="btn-analyze" data-code="${item.code}" data-name="${item.name}" data-avg-cost="${item.unitCost}" style="padding:4px 12px; font-size:12px; background:transparent; color:#60a5fa; border:1px solid rgba(96,165,250,0.4); border-radius:6px; cursor:pointer;">分析</button>
+                        <button class="btn-delete" data-id="${item.id}" style="padding:4px 12px; font-size:12px;">刪除</button>
+                    </div>
+                </div>
+            `;
+            inventoryListEl.appendChild(card);
+        });
+
+        // Update Dashboard Defaults
+        const grossProfit = totalMarketVal - totalCostAll;
+        const totalProfitRate = totalCostAll > 0 ? (grossProfit / totalCostAll * 100) : 0;
+        
+        dashboardTotalValueEl.textContent = formatCurrency(totalMarketVal);
+        
+        dashboardTotalProfitEl.textContent = (grossProfit > 0 ? '+' : '') + formatCurrency(grossProfit);
+        updateColorClass(dashboardTotalProfitEl, grossProfit);
+
+        const totalInventoryProfitRateEl = document.getElementById('totalInventoryProfitRate');
+        if (totalInventoryProfitRateEl) {
+            totalInventoryProfitRateEl.textContent = (totalProfitRate > 0 ? '+' : '') + totalProfitRate.toFixed(2) + '%';
+            updateColorClass(totalInventoryProfitRateEl, grossProfit);
+        }
+
+        const totalAssetValueEl = document.getElementById('totalAssetValue');
+        if (totalAssetValueEl) {
+            totalAssetValueEl.textContent = formatCurrency(totalAsset);
+        }
+
+        const marketValueAssetRateEl = document.getElementById('marketValueAssetRate');
+        if (marketValueAssetRateEl) {
+            const marketValueRate = totalAsset > 0 ? (totalMarketVal / totalAsset * 100) : 0;
+            marketValueAssetRateEl.textContent = marketValueRate.toFixed(2) + '%';
+        }
+
+        const cashAssetRateEl = document.getElementById('cashAssetRate');
+        if (cashAssetRateEl) {
+            const cashRate = totalAsset > 0 ? (cashBalance / totalAsset * 100) : 0;
+            cashAssetRateEl.textContent = cashRate.toFixed(2) + '%';
+        }
+
+        const totalInventoryCostEl = document.getElementById('totalInventoryCost');
+        if (totalInventoryCostEl) {
+            totalInventoryCostEl.textContent = formatCurrency(totalCostAll);
+        }
+
+        // Annual dividend inputs are now manually editable and not auto-calculated.
+
+        // Bind events to new elements
+        document.querySelectorAll('.live-price-input').forEach(input => {
+            input.addEventListener('change', async (e) => {
+                const id = e.target.getAttribute('data-id');
+                updateItemPrice(id, e.target.value);
+                // 手動改股價後也記錄今日快照
+                await logDailyStats();
+            });
+        });
+
+        document.querySelectorAll('.live-cost-input').forEach(input => {
+            input.addEventListener('change', (e) => {
+                const id = e.target.getAttribute('data-id');
+                updateItemCost(id, e.target.value);
+            });
+        });
+
+        document.querySelectorAll('.live-shares-input').forEach(input => {
+            input.addEventListener('change', (e) => {
+                const id = e.target.getAttribute('data-id');
+                const item = inventory.find(i => i.id === id);
+                if (item && item.shares !== parseInt(e.target.value)) {
+                    recordState();
+                    item.shares = parseInt(e.target.value) || 0;
+                    if (item.shares > 0) {
+                        item.unitCost = item.totalCost / item.shares;
+                    } else {
+                        item.unitCost = 0;
+                    }
+                    saveInventory();
+                    renderInventory();
+                }
+            });
+        });
+
+        document.querySelectorAll('.live-dividend-input').forEach(input => {
+            input.addEventListener('change', (e) => {
+                const id = e.target.getAttribute('data-id');
+                const item = inventory.find(i => i.id === id);
+                if (item && item.dividend !== parseFloat(e.target.value)) {
+                    recordState();
+                    item.dividend = parseFloat(e.target.value) || 0;
+                    saveInventory();
+                    renderInventory();
+                }
+            });
+        });
+
+        document.querySelectorAll('.live-name-input').forEach(input => {
+            input.addEventListener('change', (e) => {
+                const id = e.target.getAttribute('data-id');
+                const item = inventory.find(i => i.id === id);
+                const newVal = e.target.value.trim();
+                if (item && item.name !== newVal) {
+                    recordState();
+                    item.name = newVal;
+                    saveInventory();
+                    // optional: we don't even need to re-render, it's just a name
+                }
+            });
+        });
+
+        document.querySelectorAll('.btn-delete').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = e.target.getAttribute('data-id');
+                if (confirm('確定要刪除這筆庫存嗎？')) {
+                    deleteInventory(id);
+                }
+            });
+        });
+    }
+
+    // --- Render Inventory (Short Term) ---
+    function renderShortTermInventory() {
+        if (shortTermInventory.length === 0) {
+            shortTermListEl.innerHTML = '';
+            stEmptyMsgEl.style.display = 'block';
+            stTotalCostEl.textContent = '0';
+            stTotalProfitEl.textContent = '0';
+            updateColorClass(stTotalProfitEl, 0);
+            stTotalProfitRateEl.textContent = '0.00%';
+            updateColorClass(stTotalProfitRateEl, 0);
+            const capital = parseFloat(shortTermCapitalInput.value) || 0;
+            const stRealized = parseFloat(stRealizedInput.value) || 0;
+            const currentRemaining = capital + stRealized;
+            stRemainingFundsEl.textContent = formatCurrency(currentRemaining);
+            stRemainingFundsEl.style.color = currentRemaining < 0 ? '#ef4444' : '#60a5fa';
+            return;
+        }
+
+        stEmptyMsgEl.style.display = 'none';
+        shortTermListEl.innerHTML = '';
+
+        let totalCostAll = 0;
+        let totalMarketVal = 0;
+
+        shortTermInventory.forEach(item => {
+            let sellFee = 0;
+            let tax = 0;
+            let totalRevenue = 0; 
+            if (item.currentPrice > 0) {
+                sellFee = Math.max(Math.floor(item.currentPrice * item.shares * FEE_RATE * item.discountMultiplier), item.minFee);
+                tax = Math.floor(item.currentPrice * item.shares * item.taxRate);
+                totalRevenue = Math.floor(item.currentPrice * item.shares) - sellFee - tax;
+            }
+            item._tempRevenue = totalRevenue;
+            totalMarketVal += totalRevenue;
+            totalCostAll += item.totalCost;
+        });
+
+        shortTermInventory.sort((a, b) => b._tempRevenue - a._tempRevenue);
+
+        const capital = parseFloat(shortTermCapitalInput.value) || 0;
+        const stRealized = parseFloat(stRealizedInput.value) || 0;
+        const remainingFunds = capital - totalCostAll + stRealized;
+
+        shortTermInventory.forEach(item => {
+            let totalRevenue = item._tempRevenue;
+            const currentProfit = (item.currentPrice > 0) ? (totalRevenue - item.totalCost) : 0;
+            const currentReturnRate = (item.totalCost > 0) ? (currentProfit / item.totalCost * 100) : 0;
+            
+            const card = document.createElement('div');
+            card.className = 'inventory-item';
+            
+            const profitStr = (currentProfit > 0 ? '+' : '') + formatCurrency(currentProfit);
+            const rateStr = (currentReturnRate > 0 ? '+' : '') + currentReturnRate.toFixed(2) + '%';
+            const profitClass = currentProfit > 0 ? 'is-profit' : (currentProfit < 0 ? 'is-loss' : 'is-neutral');
+
+            card.innerHTML = `
+                <div class="inv-header">
+                    <span class="inv-title" style="display:flex; align-items:center;">
+                        ${item.code}
+                        <input type="text" data-id="${item.id}" class="live-name-input-st" value="${item.name || ''}" placeholder="點此輸入名稱" style="font-size:18px; font-weight:500; opacity:0.9; margin-left:8px; background:transparent; border:none; color:var(--text-primary); width:130px; outline:none; padding:2px 0;">
+                    </span>
+                    <span class="inv-shares" style="display:flex; align-items:center; gap:4px;">
+                        <input type="number" step="1" min="0" data-id="${item.id}" class="live-shares-input-st" value="${item.shares}" style="font-size:20px; font-family:inherit; font-weight:600; color:var(--text-primary); text-align:right; width:90px; background:transparent; border:none; outline:none;">
+                        股
+                    </span>
+                </div>
+                <div class="inv-body" style="grid-template-columns: 1fr 1fr 1.2fr;">
+                    <div class="inv-stat">
+                        <span style="font-size:12px; color:var(--text-secondary);">現在價格</span>
+                        <div style="display:flex; align-items:center;">
+                            <span style="color:#60a5fa; font-weight:600; font-size:18px;">$</span>
+                            <input type="number" step="0.01" min="0" value="${item.currentPrice}" data-id="${item.id}" class="live-price-input-st" style="font-size:20px; font-weight:600; width:100%; background:transparent; border:none; color:#60a5fa; outline:none; padding:0;" title="即時股價">
+                        </div>
+                    </div>
+                    <div class="inv-stat">
+                        <span style="font-size:12px; color:var(--text-secondary);">股票市值</span>
+                        <span style="font-size:20px; font-weight:600; color:#f8fafc;">$${formatCurrency(totalRevenue)}</span>
+                    </div>
+                    <div class="inv-stat"></div>
+                    <div class="inv-stat">
+                        <span style="font-size:12px; color:var(--text-secondary);">平均成本</span>
+                        <span style="font-size:18px; font-weight:500; color:var(--text-primary); margin-top:2px;">$ ${formatCurrency(item.unitCost, true)}</span>
+                    </div>
+                    <div class="inv-stat input-stat">
+                        <label>買進總金額</label>
+                        <div style="display:flex; align-items:center;">
+                            <span style="margin-right:2px; font-size:16px; color:var(--text-primary);">$</span>
+                            <input type="number" step="1" min="0" value="${item.totalCost}" data-id="${item.id}" class="live-cost-input-st" style="color:var(--text-primary); background:transparent; padding-left:0; outline:none;">
+                        </div>
+                    </div>
+                </div>
+                <div class="inv-footer">
+                    <div class="inv-result">
+                        <span class="inv-result-val ${profitClass}">${profitStr}</span>
+                        <span class="inv-result-rate ${profitClass}">${rateStr}</span>
+                    </div>
+                    <div style="display:flex; flex-direction:row; gap:8px; align-items:center; justify-content:flex-end;">
+                        <button class="btn-analyze" data-code="${item.code}" data-name="${item.name}" data-avg-cost="${item.unitCost}" style="padding:4px 12px; font-size:12px; background:transparent; color:#60a5fa; border:1px solid rgba(96,165,250,0.4); border-radius:6px; cursor:pointer;">分析</button>
+                        <button class="btn-delete-st" data-id="${item.id}" style="padding:4px 12px; font-size:12px;">刪除</button>
+                    </div>
+                </div>
+            `;
+            shortTermListEl.appendChild(card);
+        });
+
+        const grossProfit = totalMarketVal - totalCostAll;
+        const totalProfitRate = totalCostAll > 0 ? (grossProfit / totalCostAll * 100) : 0;
+        
+        stTotalCostEl.textContent = formatCurrency(totalCostAll);
+        
+        stTotalProfitEl.textContent = (grossProfit > 0 ? '+' : '') + formatCurrency(grossProfit);
+        updateColorClass(stTotalProfitEl, grossProfit);
+
+        stTotalProfitRateEl.textContent = (totalProfitRate > 0 ? '+' : '') + totalProfitRate.toFixed(2) + '%';
+        updateColorClass(stTotalProfitRateEl, grossProfit);
+
+        stRemainingFundsEl.textContent = formatCurrency(remainingFunds);
+        stRemainingFundsEl.style.color = remainingFunds < 0 ? '#ef4444' : '#60a5fa';
+
+        // Bind events
+        document.querySelectorAll('.live-price-input-st').forEach(input => {
+            input.addEventListener('change', (e) => {
+                updateItemPrice(e.target.getAttribute('data-id'), e.target.value, true);
+            });
+        });
+
+        document.querySelectorAll('.live-cost-input-st').forEach(input => {
+            input.addEventListener('change', (e) => {
+                updateItemCost(e.target.getAttribute('data-id'), e.target.value, true);
+            });
+        });
+
+        document.querySelectorAll('.live-shares-input-st').forEach(input => {
+            input.addEventListener('change', (e) => {
+                const id = e.target.getAttribute('data-id');
+                const item = shortTermInventory.find(i => i.id === id);
+                if (item && item.shares !== parseInt(e.target.value)) {
+                    recordState();
+                    item.shares = parseInt(e.target.value) || 0;
+                    if (item.shares > 0) item.unitCost = item.totalCost / item.shares;
+                    saveShortTermInventory();
+                    renderShortTermInventory();
+                }
+            });
+        });
+
+        document.querySelectorAll('.live-name-input-st').forEach(input => {
+            input.addEventListener('change', (e) => {
+                const id = e.target.getAttribute('data-id');
+                const item = shortTermInventory.find(i => i.id === id);
+                const newVal = e.target.value.trim();
+                if (item && item.name !== newVal) {
+                    recordState();
+                    item.name = newVal;
+                    saveShortTermInventory();
+                }
+            });
+        });
+
+        document.querySelectorAll('.btn-delete-st').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                if (confirm('確定要刪除這筆短線庫存嗎？')) {
+                    deleteInventory(e.target.getAttribute('data-id'), true);
+                }
+            });
+        });
+    }
+
+    // --- 3. Compound Interest Calculator ---
+    const compoundModal = document.getElementById('compoundModal');
+    const openCompoundBtn = document.getElementById('openCompoundBtn');
+    const closeModalBtn = document.getElementById('closeModalBtn');
+    
+    const cpPrincipal = document.getElementById('cpPrincipal');
+    const cpAnnualAdd = document.getElementById('cpAnnualAdd');
+    const cpRate = document.getElementById('cpRate');
+    const cpYears = document.getElementById('cpYears');
+    const cpYearsLabel = document.getElementById('cpYearsLabel');
+    
+    const cpFinalValue = document.getElementById('cpFinalValue');
+    const cpTotalInvested = document.getElementById('cpTotalInvested');
+    const cpTotalInterest = document.getElementById('cpTotalInterest');
+    
+    let compoundChartInstance = null;
+
+    function initChart() {
+        if (compoundChartInstance) return;
+        const ctx = document.getElementById('compoundChart').getContext('2d');
+        compoundChartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: '總投入本金',
+                        data: [],
+                        backgroundColor: 'rgba(59, 130, 246, 0.8)',
+                    },
+                    {
+                        label: '複利孳息',
+                        data: [],
+                        backgroundColor: 'rgba(16, 185, 129, 0.8)',
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    x: {
+                        stacked: true,
+                        ticks: { color: '#94a3b8' },
+                        grid: { display: false }
+                    },
+                    y: {
+                        stacked: true,
+                        ticks: { color: '#94a3b8' },
+                        grid: { color: 'rgba(255,255,255,0.05)' }
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#f8fafc', font: { family: 'Outfit, Noto Sans TC' } } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return context.dataset.label + ': NT$ ' + context.parsed.y.toLocaleString();
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    function calculateCompound() {
+        let principal = parseFloat(cpPrincipal.value) || 0;
+        let annualAdd = parseFloat(cpAnnualAdd.value) || 0;
+        let rate = (parseFloat(cpRate.value) || 0) / 100;
+        let years = parseInt(cpYears.value) || 10;
+        
+        cpYearsLabel.textContent = `${years} 年`;
+
+        let chartLabels = [];
+        let chartDataPrincipal = [];
+        let chartDataInterest = [];
+        
+        let currentPrincipal = principal;
+        let totalInvested = principal;
+        let totalInterest = 0;
+
+        for (let i = 1; i <= years; i++) {
+            chartLabels.push(`第 ${i} 年`);
+            
+            let interestThisYear = currentPrincipal * rate;
+            totalInterest += interestThisYear;
+            currentPrincipal += interestThisYear;
+            
+            currentPrincipal += annualAdd;
+            totalInvested += annualAdd;
+
+            chartDataPrincipal.push(totalInvested);
+            chartDataInterest.push(totalInterest);
+        }
+
+        cpFinalValue.textContent = formatCurrency(currentPrincipal);
+        cpTotalInvested.textContent = formatCurrency(totalInvested);
+        cpTotalInterest.textContent = formatCurrency(totalInterest);
+
+        if (compoundChartInstance) {
+            compoundChartInstance.data.labels = chartLabels;
+            compoundChartInstance.data.datasets[0].data = chartDataPrincipal;
+            compoundChartInstance.data.datasets[1].data = chartDataInterest;
+            compoundChartInstance.update();
+        }
+    }
+
+    openCompoundBtn.addEventListener('click', () => {
+        // Fetch strictly stock market value from inventory
+        let totalMarketVal = 0;
+        inventory.forEach(item => {
+            if (item.currentPrice > 0) {
+                let fee = Math.max(Math.floor(item.currentPrice * item.shares * FEE_RATE * item.discountMultiplier), item.minFee);
+                let tax = Math.floor(item.currentPrice * item.shares * item.taxRate);
+                totalMarketVal += Math.floor(item.currentPrice * item.shares) - fee - tax;
+            } else {
+                totalMarketVal += item.totalCost; // Fallback to cost if no price
+            }
+        });
+        
+        cpPrincipal.value = Math.floor(totalMarketVal);
+        compoundModal.classList.add('active');
+        initChart();
+        calculateCompound();
+    });
+
+    closeModalBtn.addEventListener('click', () => {
+        compoundModal.classList.remove('active');
+    });
+
+    [cpPrincipal, cpAnnualAdd, cpRate, cpYears].forEach(input => {
+        input.addEventListener('input', calculateCompound);
+    });
+
+    // Initialize Setup
+    addInventoryBtn.addEventListener('click', addToInventory);
+    addShortTermBtn.addEventListener('click', addToShortTermInventory);
+    refreshPricesBtn.addEventListener('click', refreshPrices);
+    
+    let isShortTermView = false;
+    toggleViewBtn.addEventListener('click', () => {
+        isShortTermView = !isShortTermView;
+        if (isShortTermView) {
+            longTermView.style.display = 'none';
+            shortTermView.style.display = 'flex';
+            toggleViewBtn.textContent = '⇄ 切換至長期庫存';
+            toggleViewBtn.style.color = '#93c5fd';
+            toggleViewBtn.style.background = 'rgba(59, 130, 246, 0.2)';
+            toggleViewBtn.style.borderColor = 'rgba(59, 130, 246, 0.5)';
+        } else {
+            longTermView.style.display = 'flex';
+            shortTermView.style.display = 'none';
+            toggleViewBtn.textContent = '⇄ 切換至短期操作';
+            toggleViewBtn.style.color = '#c4b5fd';
+            toggleViewBtn.style.background = 'rgba(139, 92, 246, 0.2)';
+            toggleViewBtn.style.borderColor = 'rgba(139, 92, 246, 0.5)';
+        }
+    });
+
+    if (shortTermCapitalInput) {
+        shortTermCapitalInput.addEventListener('change', (e) => {
+            recordState();
+            localStorage.setItem('twStockShortTermCapital', e.target.value);
+            renderShortTermInventory();
+        });
+    }
+
+    if (stRealizedInput) {
+        stRealizedInput.addEventListener('change', (e) => {
+            recordState();
+            localStorage.setItem('twStockShortTermRealized', e.target.value);
+            updateInputColor(stRealizedInput);
+            renderShortTermInventory();
+        });
+    }
+
+    if (cashInputEl) {
+        cashInputEl.addEventListener('change', (e) => {
+            recordState();
+            localStorage.setItem('twStockCash', e.target.value);
+            renderInventory();
+        });
+    }
+
+    if (yearlyRealizedInputEl) {
+        yearlyRealizedInputEl.addEventListener('change', (e) => {
+            recordState();
+            localStorage.setItem('twStockYearlyRealized', e.target.value);
+            updateInputColor(yearlyRealizedInputEl);
+        });
+    }
+
+    if (totalRealizedInputEl) {
+        totalRealizedInputEl.addEventListener('change', (e) => {
+            recordState();
+            localStorage.setItem('twStockTotalRealized', e.target.value);
+            updateInputColor(totalRealizedInputEl);
+        });
+    }
+
+    // --- 三欄領息輸入框：千分位格式化 ---
+    function bindDividendFormatting(el, storageKey) {
+        if (!el) return;
+        el.addEventListener('focus', () => {
+            // 聚焦時還原純數字，方便輸入
+            el.value = el.value.replace(/,/g, '');
+        });
+        el.addEventListener('blur', () => {
+            recordState();
+            const raw = parseInt(el.value.replace(/,/g, ''), 10);
+            const safeVal = isNaN(raw) ? 0 : raw;
+            el.value = safeVal.toLocaleString('zh-TW');
+            localStorage.setItem(storageKey, String(safeVal));
+        });
+    }
+    bindDividendFormatting(document.getElementById('totalDividendVal'),      'twStockTotalDividend');
+    bindDividendFormatting(document.getElementById('dividendTaxOffsetVal'),  'twStockDividendTaxOffset');
+    bindDividendFormatting(document.getElementById('dividendTotalBenefitVal'),'twStockDividendTotalBenefit');
+    
+    // --- Daily Stats Logic ---
+    async function logDailyStats() {
+        const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Taipei"}));
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        const d = String(now.getDate()).padStart(2, '0');
+        const dateStr = `${y}.${m}.${d}`;
+
+        // ── 1. 取得台積電現價（優先用庫存已更新的值）──────────────────
+        let tsmcPrice = 0;
+        const tsmcItem = inventory.find(i => i.code.trim().startsWith('2330'))
+                      || shortTermInventory.find(i => i.code.trim().startsWith('2330'));
+        if (tsmcItem && tsmcItem.currentPrice) {
+            tsmcPrice = tsmcItem.currentPrice;
+        } else {
+            try {
+                const twseRes = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
+                if (twseRes.ok) {
+                    const twseData = await twseRes.json();
+                    const target = twseData.find(x => x.Code === '2330');
+                    if (target && target.ClosingPrice) {
+                        tsmcPrice = window.parseFloat(String(target.ClosingPrice).replace(/,/g, ''));
+                    }
+                }
+            } catch(e) {}
+        }
+
+        // ── 2. 直接從庫存物件重新計算（不依賴 DOM 文字）────────────────
+        //      這樣即使股價更新後 DOM 尚未刷新，也能拿到最新數字
+        let totalCostV = 0;
+        let totalMarketV = 0;
+        inventory.forEach(item => {
+            totalCostV += item.totalCost || 0;
+            if (item.currentPrice > 0) {
+                const fee  = Math.max(Math.floor(item.currentPrice * item.shares * FEE_RATE * item.discountMultiplier), item.minFee);
+                const tax  = Math.floor(item.currentPrice * item.shares * item.taxRate);
+                const rev  = Math.floor(item.currentPrice * item.shares) - fee - tax;
+                totalMarketV += rev;
+            } else {
+                totalMarketV += item.totalCost || 0;   // 無現價時以成本代替
+            }
+        });
+        const cashBalance  = window.parseFloat(document.getElementById('cashInput')?.value || '0') || 0;
+        const totalProfitV = totalMarketV - totalCostV;
+        const totalAssetV  = totalMarketV + cashBalance;
+
+        // ── 3. 組成當日快照 ──────────────────────────────────────────────
+        const currentStat = {
+            date:        dateStr,
+            tsmcPrice:   tsmcPrice,
+            totalCost:   totalCostV,
+            totalMarket: totalMarketV,
+            totalProfit: totalProfitV,
+            totalAsset:  totalAssetV,
+            profitDiff:  0
+        };
+
+        // ── 4. 計算與前一筆的損益增減 ────────────────────────────────────
+        const exIdx = dailyStats.findIndex(s => s.date === dateStr);
+        let prevProfit = 0;
+        if (exIdx > 0) {
+            prevProfit = dailyStats[exIdx - 1].totalProfit || 0;
+        } else if (exIdx === -1 && dailyStats.length > 0) {
+            prevProfit = dailyStats[dailyStats.length - 1].totalProfit || 0;
+        }
+        currentStat.profitDiff = currentStat.totalProfit - prevProfit;
+
+        // ── 5. 寫入（同一天覆蓋舊紀錄，不同天新增）──────────────────────
+        if (exIdx >= 0) {
+            dailyStats[exIdx] = currentStat;
+        } else {
+            dailyStats.push(currentStat);
+        }
+
+        localStorage.setItem('twStockDailyStats', JSON.stringify(dailyStats));
+        if (historyModal && historyModal.classList.contains('active')) renderHistoryTable();
+    }
+
+    function renderHistoryTable() {
+        if (!historyTableBody) return;
+        historyTableBody.innerHTML = '';
+
+        // Helper: recalculate profitDiff for all rows after edit
+        function recalcDiffs() {
+            for (let i = 0; i < dailyStats.length; i++) {
+                const prev = i > 0 ? (dailyStats[i-1].totalProfit || 0) : 0;
+                dailyStats[i].profitDiff = (dailyStats[i].totalProfit || 0) - prev;
+            }
+            localStorage.setItem('twStockDailyStats', JSON.stringify(dailyStats));
+        }
+
+        // Helper: make an editable number cell
+        function makeEditCell(statIdx, field, value, colorFn, isMoney, decimals) {
+            const td = document.createElement('td');
+            td.style.cssText = 'padding:4px 6px; text-align:right;';
+
+            const display = document.createElement('span');
+            const numVal = window.parseFloat(value) || 0;
+            display.textContent = isMoney ? formatCurrency(numVal, decimals) : String(numVal);
+            if (colorFn) display.style.color = colorFn(numVal);
+            display.style.cssText += 'cursor:pointer; border-bottom:1px dashed rgba(255,255,255,0.2); padding:6px 8px; display:inline-block; min-width:70px; border-radius:4px; transition:background 0.15s;';
+            display.title = '點擊編輯';
+            display.onmouseover = () => { display.style.background = 'rgba(255,255,255,0.07)'; };
+            display.onmouseleave = () => { display.style.background = ''; };
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.inputMode = 'decimal';
+            input.value = String(numVal);
+            input.style.cssText = 'display:none; background:rgba(59,130,246,0.2); border:1px solid #3b82f6; border-radius:6px; color:#f8fafc; font-size:13px; font-weight:600; font-family:inherit; padding:5px 8px; width:90px; text-align:right; outline:none;';
+
+            function startEdit() {
+                display.style.display = 'none';
+                input.style.display = 'inline-block';
+                input.value = String(window.parseFloat(value) || 0);
+                input.select();
+                input.focus();
+            }
+            function commitEdit() {
+                const newVal = window.parseFloat(input.value) || 0;
+                dailyStats[statIdx][field] = newVal;
+                // Auto-recalculate derived fields
+                if (field === 'totalMarket' || field === 'totalCost') {
+                    dailyStats[statIdx].totalProfit = (dailyStats[statIdx].totalMarket || 0) - (dailyStats[statIdx].totalCost || 0);
+                }
+                recalcDiffs();
+                input.style.display = 'none';
+                display.style.display = 'inline-block';
+                renderHistoryTable(); // re-render to reflect all changes
+            }
+
+            display.onclick = startEdit;
+            input.onblur = commitEdit;
+            input.onkeydown = (e) => { if (e.key === 'Enter') { input.blur(); } if (e.key === 'Escape') { input.style.display='none'; display.style.display='inline-block'; } };
+
+            td.appendChild(display);
+            td.appendChild(input);
+            return td;
+        }
+
+        const reversed = [...dailyStats].map((s,i) => ({...s, _origIdx: i})).reverse();
+
+        reversed.forEach(stat => {
+            const origIdx = stat._origIdx;
+            const tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+            tr.onmouseover  = () => { tr.style.background = 'rgba(255,255,255,0.03)'; };
+            tr.onmouseleave = () => { tr.style.background = ''; };
+
+            // 日期欄（可編輯）
+            const dateTd = document.createElement('td');
+            dateTd.style.cssText = 'padding:4px 6px; text-align:left;';
+            const dateSpan = document.createElement('span');
+            dateSpan.textContent = stat.date;
+            dateSpan.style.cssText = 'cursor:pointer; border-bottom:1px dashed rgba(255,255,255,0.2); padding:6px 8px; display:inline-block; color:#f8fafc; border-radius:4px; font-size:13px; white-space:nowrap;';
+            dateSpan.title = '點擊編輯日期';
+            const dateInp = document.createElement('input');
+            dateInp.type = 'text'; dateInp.value = stat.date;
+            dateInp.style.cssText = 'display:none; background:rgba(59,130,246,0.2); border:1px solid #3b82f6; border-radius:6px; color:#f8fafc; font-size:13px; font-family:inherit; padding:5px 8px; width:100px; outline:none;';
+            dateSpan.onclick = () => { dateSpan.style.display='none'; dateInp.style.display='inline-block'; dateInp.select(); dateInp.focus(); };
+            dateInp.onblur  = () => { dailyStats[origIdx].date = dateInp.value; localStorage.setItem('twStockDailyStats', JSON.stringify(dailyStats)); dateInp.style.display='none'; dateSpan.style.display='inline-block'; renderHistoryTable(); };
+            dateInp.onkeydown = (e) => { if(e.key==='Enter') dateInp.blur(); if(e.key==='Escape'){dateInp.style.display='none';dateSpan.style.display='inline-block';} };
+            dateTd.appendChild(dateSpan); dateTd.appendChild(dateInp);
+            tr.appendChild(dateTd);
+
+            // 數字欄
+            const profitColor = v => v > 0 ? '#f87171' : (v < 0 ? '#4ade80' : 'var(--text-primary)');
+            const diffColor   = v => v > 0 ? '#f87171' : (v < 0 ? '#4ade80' : 'var(--text-primary)');
+            const blueColor   = () => '#60a5fa';
+
+            tr.appendChild(makeEditCell(origIdx, 'totalCost',   stat.totalCost,   null,        true,  false));
+            tr.appendChild(makeEditCell(origIdx, 'totalMarket', stat.totalMarket, null,        true,  false));
+            tr.appendChild(makeEditCell(origIdx, 'totalProfit', stat.totalProfit, profitColor, true,  false));
+            tr.appendChild(makeEditCell(origIdx, 'profitDiff',  stat.profitDiff,  diffColor,   true,  false));
+            tr.appendChild(makeEditCell(origIdx, 'totalAsset',  stat.totalAsset,  blueColor,   true,  false));
+            tr.appendChild(makeEditCell(origIdx, 'tsmcPrice',   stat.tsmcPrice,   null,        true,  true));
+
+            // 刪除按鈕欄
+            const delTd = document.createElement('td');
+            delTd.style.cssText = 'padding:4px 8px; text-align:center;';
+            const delBtn = document.createElement('button');
+            delBtn.textContent = '✕';
+            delBtn.title = '刪除此筆記錄';
+            delBtn.style.cssText = 'background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.3); color:#f87171; border-radius:6px; padding:3px 8px; cursor:pointer; font-size:12px; transition:background 0.15s;';
+            delBtn.onmouseover  = () => { delBtn.style.background='rgba(239,68,68,0.3)'; };
+            delBtn.onmouseleave = () => { delBtn.style.background='rgba(239,68,68,0.15)'; };
+            delBtn.onclick = () => {
+                if (confirm(`確定刪除 ${stat.date} 的記錄嗎？`)) {
+                    dailyStats.splice(origIdx, 1);
+                    recalcDiffs();
+                    renderHistoryTable();
+                }
+            };
+            delTd.appendChild(delBtn);
+            tr.appendChild(delTd);
+
+            historyTableBody.appendChild(tr);
+        });
+
+        if (dailyStats.length === 0) {
+            const tr = document.createElement('tr');
+            tr.innerHTML = '<td colspan="8" style="padding:30px; text-align:center; color:#94a3b8;">尚無歷史統計資料。按「更新股價」或「立即更新」按鈕來記錄今日數據。</td>';
+            historyTableBody.appendChild(tr);
+        }
+    }
+
+    if (openHistoryStatsBtn) {
+        openHistoryStatsBtn.addEventListener('click', async () => {
+            // 每次開啟都先執行一次快照，確保今日資料是最新的
+            await logDailyStats();
+            renderHistoryTable();
+            historyModal.classList.add('active');
+        });
+    }
+
+    // 立即快照按鈕
+    document.addEventListener('click', async (e) => {
+        if (e.target && e.target.id === 'historySnapshotBtn') {
+            const btn = e.target;
+            btn.textContent = '⏳ 更新中...';
+            btn.disabled = true;
+            await logDailyStats();
+            renderHistoryTable();
+            btn.textContent = '✅ 已更新';
+            setTimeout(() => { btn.textContent = '🔄 立即更新'; btn.disabled = false; }, 1500);
+        }
+    });
+    if (closeHistoryModalBtn) {
+        closeHistoryModalBtn.addEventListener('click', () => {
+            historyModal.classList.remove('active');
+        });
+    }
+
+    function updateDateDisplay() {
+        const dateEl = document.getElementById('portfolioDate');
+        const clockEl = document.getElementById('portfolioClock');
+        
+        const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Taipei"}));
+        
+        if (dateEl) {
+            const y = now.getFullYear();
+            const m = String(now.getMonth() + 1).padStart(2, '0');
+            const d = String(now.getDate()).padStart(2, '0');
+            const weekdays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+            const w = weekdays[now.getDay()];
+            dateEl.textContent = `${y}.${m}.${d}.${w}`;
+        }
+        
+        if (clockEl) {
+            const hh = String(now.getHours()).padStart(2, '0');
+            const mm = String(now.getMinutes()).padStart(2, '0');
+            const ss = String(now.getSeconds()).padStart(2, '0');
+            clockEl.textContent = `${hh}:${mm}:${ss}`;
+        }
+    }
+    setInterval(updateDateDisplay, 1000);
+
+    async function fetchWeather() {
+        const elMain = document.getElementById('portfolioWeatherMain');
+        const elAqi  = document.getElementById('portfolioWeatherAQI');
+        const citySelector = document.getElementById('citySelector');
+        if (!elMain || !elAqi || !citySelector) return;
+        
+        const [cityName, lat, lon] = citySelector.value.split(',');
+        
+        // --- 1. 抓取氣溫 (Open-Meteo) ---
+        let weatherStr = '更新中';
+        let temp = '--';
+        try {
+            const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&t=` + Date.now());
+            if (weatherRes.ok) {
+                const weatherData = await weatherRes.json();
+                temp = weatherData.current.temperature_2m;
+                const code = weatherData.current.weather_code;
+                weatherStr = '晴天';
+                if ([1,2,3].includes(code)) weatherStr = '多雲';
+                else if ([45,48].includes(code)) weatherStr = '霧';
+                else if ([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) weatherStr = '雨天';
+                else if ([71,73,75,77,85,86].includes(code)) weatherStr = '雪天';
+                else if ([95,96,99].includes(code)) weatherStr = '雷雨';
+            }
+        } catch(e) {}
+        elMain.innerHTML = `${weatherStr}${temp}°C`;
+
+        // --- 2. 抓取 AQI (多重備援) ---
+        let aqi = '--';
+        let aqiStatus = '待更新';
+        let success = false;
+
+        // A. 環境部 MoENV
+        try {
+            const aqiRes = await fetch(`https://data.moenv.gov.tw/api/v2/aqx_p_432?api_key=e8dd42e6-9b8b-43f8-991e-b3dee723a52d&limit=1&format=JSON&filters=sitename,EQ,${cityName}&t=` + Date.now());
+            if (aqiRes.ok) {
+                const aqiData = await aqiRes.json();
+                if (aqiData.records && aqiData.records.length > 0) {
+                    aqi = aqiData.records[0].aqi;
+                    aqiStatus = aqiData.records[0].status;
+                    success = true;
+                }
+            }
+        } catch(e) {}
+
+        // B. 如果 A 失敗，嘗試 Open-Meteo (備援 1)
+        if (!success) {
+            try {
+                const backupAqiRes = await fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&current=us_aqi&t=` + Date.now());
+                if (backupAqiRes.ok) {
+                    const backupData = await backupAqiRes.json();
+                    aqi = backupData.current.us_aqi;
+                    aqiStatus = aqi > 150 ? '不健康' : (aqi > 100 ? '敏感不佳' : (aqi > 50 ? '普通' : '良好'));
+                    success = true;
+                }
+            } catch(e) {}
+        }
+
+        // C. 如果 B 也失敗，嘗試 WAQI (備援 2)
+        if (!success) {
+            try {
+                const waqiRes = await fetch(`https://api.waqi.info/feed/geo:${lat};${lon}/?token=demo&t=` + Date.now());
+                if (waqiRes.ok) {
+                    const waqiData = await waqiRes.json();
+                    if (waqiData.status === 'ok') {
+                        aqi = waqiData.data.aqi;
+                        const v = parseInt(aqi);
+                        aqiStatus = v > 150 ? '不健康' : (v > 100 ? '敏感不佳' : (v > 50 ? '普通' : '良好'));
+                        success = true;
+                    }
+                }
+            } catch(e) {}
+        }
+
+        // --- 3. 更新 UI ---
+        const updateTime = new Date().toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
+        elAqi.innerHTML = `AQI: ${aqi} (${aqiStatus}) <span style="font-size:10px; opacity:0.6; margin-left:4px;">${updateTime}</span>`;
+        
+        if (!success) setTimeout(fetchWeather, 60000);
+    }
+
+    // Initialize Weather & City Selector
+    const citySelector = document.getElementById('citySelector');
+    if (citySelector) {
+        // 動態調整 select 寬度以適應城市名稱長度
+        function resizeCitySelector() {
+            const text = citySelector.options[citySelector.selectedIndex].text;
+            const tempSpan = document.createElement('span');
+            tempSpan.style.visibility = 'hidden';
+            tempSpan.style.position = 'absolute';
+            tempSpan.style.whiteSpace = 'nowrap';
+            tempSpan.style.font = window.getComputedStyle(citySelector).font;
+            tempSpan.textContent = text;
+            document.body.appendChild(tempSpan);
+            citySelector.style.width = (tempSpan.getBoundingClientRect().width + 2) + 'px';
+            document.body.removeChild(tempSpan);
+        }
+
+        citySelector.addEventListener('change', () => {
+            resizeCitySelector();
+            fetchWeather();
+            localStorage.setItem('twStockPreferredCity', citySelector.value);
+        });
+        
+        const savedCity = localStorage.getItem('twStockPreferredCity');
+        if (savedCity) citySelector.value = savedCity;
+        
+        // 初次加載時調整寬度
+        setTimeout(resizeCitySelector, 100);
+    }
+
+    fetchWeather();
+    setInterval(fetchWeather, 1800000); // 每 30 分鐘更新一次
+
+    // --- Accounting Logic ---
+    function formatAccDateLabel(d) {
+        return `${d.getFullYear()} / ${String(d.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    function renderAccounting() {
+        if (!accTableBody) return;
+        
+        currentMonthLabel.textContent = formatAccDateLabel(currentAccDate);
+        
+        const y = currentAccDate.getFullYear();
+        const m = currentAccDate.getMonth() + 1; // 1-12
+        
+        const currentMonthData = accountingData.filter(item => {
+            const dateObj = new Date(item.date);
+            return dateObj.getFullYear() === y && (dateObj.getMonth() + 1) === m;
+        }).sort((a, b) => new Date(b.date) - new Date(a.date) || b.id - a.id);
+
+        let totalIncome = 0;
+        let totalExpense = 0;
+        
+        let yearlyIncome = 0;
+        let yearlyExpense = 0;
+        
+        accountingData.forEach(item => {
+            if (new Date(item.date).getFullYear() === y) {
+                if(item.type === 'income') yearlyIncome += item.amount;
+                else yearlyExpense += item.amount;
+            }
+        });
+
+        accTableBody.innerHTML = '';
+        if (currentMonthData.length === 0) {
+            accEmptyMsg.style.display = 'block';
+        } else {
+            accEmptyMsg.style.display = 'none';
+            currentMonthData.forEach(item => {
+                if (item.type === 'income') totalIncome += item.amount;
+                else totalExpense += item.amount;
+                
+                const tr = document.createElement('tr');
+                tr.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+                
+                const isIncome = item.type === 'income';
+                const amountColor = isIncome ? '#4ade80' : '#f87171'; // Green for Income, Red for Expense
+                const amountPrefix = isIncome ? '+' : '-';
+                
+                tr.innerHTML = `
+                    <td style="padding: 12px 10px; color: #f8fafc;">${item.date}</td>
+                    <td style="padding: 12px 10px;"><span style="background:rgba(255,255,255,0.1); padding:4px 8px; border-radius:4px; font-size:12px;">${item.category}</span></td>
+                    <td style="padding: 12px 10px; color: var(--text-secondary); max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${item.note}">${item.note}</td>
+                    <td style="padding: 12px 10px; text-align: right; color: ${amountColor}; font-weight:bold;">${amountPrefix} ${formatCurrency(item.amount, true)}</td>
+                    <td style="padding: 12px 10px; text-align: center;">
+                        <button class="delete-btn" data-id="${item.id}" style="background:rgba(239,68,68,0.2); color:#f87171; border:none; padding:4px 8px; border-radius:4px; cursor:pointer;" title="刪除">✖</button>
+                    </td>
+                `;
+                accTableBody.appendChild(tr);
+            });
+        }
+        
+        accTotalIncomeEl.textContent = formatCurrency(totalIncome);
+        accTotalExpenseEl.textContent = formatCurrency(totalExpense);
+        
+        const balance = totalIncome - totalExpense;
+        accBalanceEl.textContent = formatCurrency(balance);
+        accBalanceEl.style.color = balance > 0 ? '#4ade80' : (balance < 0 ? '#f87171' : 'var(--text-primary)');
+
+        const accYearlyIncomeEl = document.getElementById('accYearlyIncome');
+        const accYearlyExpenseEl = document.getElementById('accYearlyExpense');
+        const accYearlyBalanceEl = document.getElementById('accYearlyBalance');
+        
+        if (accYearlyIncomeEl) accYearlyIncomeEl.textContent = formatCurrency(yearlyIncome);
+        if (accYearlyExpenseEl) accYearlyExpenseEl.textContent = formatCurrency(yearlyExpense);
+        if (accYearlyBalanceEl) {
+            const yBalance = yearlyIncome - yearlyExpense;
+            accYearlyBalanceEl.textContent = formatCurrency(yBalance);
+            accYearlyBalanceEl.style.color = yBalance > 0 ? '#4ade80' : (yBalance < 0 ? '#f87171' : 'var(--text-primary)');
+        }
+        
+        // Add delete listeners
+        accTableBody.querySelectorAll('.delete-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = window.parseInt(e.currentTarget.getAttribute('data-id'), 10);
+                if (confirm('確定要刪除這筆紀錄嗎？')) {
+                    accountingData = accountingData.filter(i => i.id !== id);
+                    localStorage.setItem('twStockAccounting', JSON.stringify(accountingData));
+                    renderAccounting();
+                }
+            });
+        });
+    }
+
+    if (openAccountingBtn) {
+        openAccountingBtn.addEventListener('click', () => {
+            if (!accDateInput.value) {
+                const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Taipei"}));
+                const y = now.getFullYear();
+                const m = String(now.getMonth() + 1).padStart(2, '0');
+                const d = String(now.getDate()).padStart(2, '0');
+                accDateInput.value = `${y}-${m}-${d}`;
+            }
+            accountingModal.classList.add('active');
+            renderAccounting();
+        });
+    }
+
+    if (accTypeInput && accCategoryInput) {
+        accTypeInput.addEventListener('change', (e) => {
+            const isInc = e.target.value === 'income';
+            const arr = isInc ? ['利息','薪資','投資','其他'] : ['餐飲','交通','居住','娛樂','購物','生活','保險','衣物','聚餐','其他'];
+            accCategoryInput.innerHTML = arr.map(c => `<option value="${c}">${c}</option>`).join('');
+        });
+    }
+
+    if (closeAccountingBtn) {
+        closeAccountingBtn.addEventListener('click', () => {
+            accountingModal.classList.remove('active');
+        });
+    }
+
+    if (prevMonthBtn) {
+        prevMonthBtn.addEventListener('click', () => {
+            currentAccDate.setMonth(currentAccDate.getMonth() - 1);
+            renderAccounting();
+        });
+    }
+
+    if (nextMonthBtn) {
+        nextMonthBtn.addEventListener('click', () => {
+            currentAccDate.setMonth(currentAccDate.getMonth() + 1);
+            renderAccounting();
+        });
+    }
+
+    if (addAccBtn) {
+        addAccBtn.addEventListener('click', () => {
+            const type = accTypeInput.value;
+            const date = accDateInput.value;
+            const category = accCategoryInput.value;
+            const amountStr = accAmountInput.value || '0';
+            const amount = window.parseFloat(amountStr);
+            const note = accNoteInput.value.trim();
+
+            if (!date) {
+                alert('請選擇日期');
+                return;
+            }
+            if (isNaN(amount) || amount <= 0) {
+                alert('請輸入大於零的有效金額');
+                return;
+            }
+
+            const newRecord = {
+                id: Date.now(),
+                type,
+                date,
+                category,
+                amount,
+                note
+            };
+
+            accountingData.push(newRecord);
+            localStorage.setItem('twStockAccounting', JSON.stringify(accountingData));
+            
+            // Adjust current month to newly added record's month visually
+            currentAccDate = new Date(date);
+            
+            accAmountInput.value = '';
+            accAmountInput.dispatchEvent(new Event('blur')); 
+            accNoteInput.value = '';
+            
+            renderAccounting();
+        });
+    }
+
+    // --- Blood Pressure Module ---
+    const bpModal = document.getElementById('bpModal');
+    const openBPBtn = document.getElementById('openBPBtn');
+    const closeBPModalBtn = document.getElementById('closeBPModalBtn');
+    const addBPBtn = document.getElementById('addBPBtn');
+    const bpDate = document.getElementById('bpDate');
+    const bpTime = document.getElementById('bpTime');
+    const bpSys = document.getElementById('bpSys');
+    const bpDia = document.getElementById('bpDia');
+    const bpPulse = document.getElementById('bpPulse');
+    const bpTableBody = document.getElementById('bpTableBody');
+    
+    let bpData = [];
+    const savedBP = localStorage.getItem('twStockBP');
+    if (savedBP) bpData = JSON.parse(savedBP);
+
+    if (openBPBtn) {
+        openBPBtn.addEventListener('click', () => {
+            try {
+                if(bpModal) bpModal.classList.add('active');
+                const now = new Date();
+                const year = now.getFullYear();
+                const month = String(now.getMonth() + 1).padStart(2, '0');
+                const day = String(now.getDate()).padStart(2, '0');
+                const hours = String(now.getHours()).padStart(2, '0');
+                const minutes = String(now.getMinutes()).padStart(2, '0');
+                
+                if(bpDate) bpDate.value = `${year}-${month}-${day}`;
+                if(bpTime) bpTime.value = `${hours}:${minutes}`;
+                if(bpSys) bpSys.value = '';
+                if(bpDia) bpDia.value = '';
+                if(bpPulse) bpPulse.value = '';
+                
+                renderBP();
+            } catch (e) {
+                console.error("BP Modal Error", e);
+            }
+        });
+    }
+
+    if (closeBPModalBtn) {
+        closeBPModalBtn.addEventListener('click', () => {
+            try {
+                if(bpModal) bpModal.classList.remove('active');
+            } catch(e){}
+        });
+    }
+
+    if (bpTableBody) {
+        bpTableBody.addEventListener('click', (e) => {
+            if (e.target.classList.contains('delete-bp-btn')) {
+                const id = e.target.getAttribute('data-id');
+                bpData = bpData.filter(item => item.id !== parseInt(id));
+                localStorage.setItem('twStockBP', JSON.stringify(bpData));
+                renderBP();
+            }
+        });
+    }
+
+    if (addBPBtn) {
+        addBPBtn.addEventListener('click', () => {
+            try {
+                const date = bpDate.value;
+                const time = bpTime.value;
+                const sys = parseInt(bpSys.value);
+                const dia = parseInt(bpDia.value);
+                const pulse = parseInt(bpPulse.value);
+
+                if (!date || !time || isNaN(sys) || isNaN(dia) || isNaN(pulse)) {
+                    alert('請完整填寫日期、時間、收縮壓、舒張壓與脈搏');
+                    return;
+                }
+
+                const record = { id: Date.now(), date, time, sys, dia, pulse };
+                bpData.push(record);
+                bpData.sort((a, b) => new Date(`${b.date}T${b.time}`) - new Date(`${a.date}T${a.time}`));
+                localStorage.setItem('twStockBP', JSON.stringify(bpData));
+                
+                bpSys.value = '';
+                bpDia.value = '';
+                bpPulse.value = '';
+                renderBP();
+            } catch(e) { console.error('Add BP Error', e); }
+        });
+    }
+
+    function renderBP() {
+        try {
+            if (!bpTableBody) return;
+            bpTableBody.innerHTML = '';
+            
+            bpData.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+                const bpColor = item.sys >= 130 || item.dia >= 85 ? '#fca5a5' : '#86efac';
+                tr.innerHTML = `
+                    <td style="padding:8px;">${item.date} ${item.time}</td>
+                    <td style="padding:8px; color:${bpColor}; font-weight:bold;">${item.sys} / ${item.dia}</td>
+                    <td style="padding:8px;">${item.pulse}</td>
+                    <td style="padding:8px;">
+                        <button class="delete-bp-btn" data-id="${item.id}" style="background:rgba(239, 68, 68, 0.2); color:#fca5a5; border:none; padding:4px 8px; border-radius:4px; cursor:pointer;">刪除</button>
+                    </td>
+                `;
+                bpTableBody.appendChild(tr);
+            });
+
+            const now = new Date();
+            const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+            
+            let daily = { sys:0, dia:0, count:0 };
+            let weekly = { sys:0, dia:0, count:0 };
+            let monthly = { sys:0, dia:0, count:0 };
+            let total = { sys:0, dia:0, count:0 };
+
+            bpData.forEach(item => {
+                const itemDate = new Date(`${item.date}T00:00:00`);
+                const todayDate = new Date(`${todayStr}T00:00:00`);
+                let diffDays = (todayDate - itemDate) / (24 * 60 * 60 * 1000);
+                if (isNaN(diffDays)) return;
+                
+                total.sys += item.sys;
+                total.dia += item.dia;
+                total.count++;
+
+                if (item.date === todayStr) {
+                    daily.sys += item.sys;
+                    daily.dia += item.dia;
+                    daily.count++;
+                }
+                if (diffDays <= 7 && diffDays >= 0) {
+                    weekly.sys += item.sys;
+                    weekly.dia += item.dia;
+                    weekly.count++;
+                }
+                if (diffDays <= 30 && diffDays >= 0) {
+                    monthly.sys += item.sys;
+                    monthly.dia += item.dia;
+                    monthly.count++;
+                }
+            });
+
+            const fmt = (stat) => stat.count > 0 ? `${Math.round(stat.sys/stat.count)} / ${Math.round(stat.dia/stat.count)}` : '-- / --';
+            
+            const sd = document.getElementById('bpStatDaily');
+            const sw = document.getElementById('bpStatWeekly');
+            const sm = document.getElementById('bpStatMonthly');
+            const sa = document.getElementById('bpStatAll');
+            
+            if (sd) sd.textContent = fmt(daily);
+            if (sw) sw.textContent = fmt(weekly);
+            if (sm) sm.textContent = fmt(monthly);
+            if (sa) sa.textContent = fmt(total);
+        } catch(e) {
+            console.error('Render BP Error', e);
+        }
+    }
+
+    // --- Standalone Stock Analysis Logic ---
+    const openAnalysisBtn = document.getElementById('openAnalysisBtn');
+    const standaloneAnalysisSearchModal = document.getElementById('standaloneAnalysisSearchModal');
+    const closeAnalysisSearchBtn = document.getElementById('closeAnalysisSearchBtn');
+    const analysisSearchInput = document.getElementById('analysisSearchInput');
+    const startAnalysisBtn = document.getElementById('startAnalysisBtn');
+
+    if (openAnalysisBtn) {
+        openAnalysisBtn.addEventListener('click', () => {
+            standaloneAnalysisSearchModal.classList.add('active');
+            analysisSearchInput.focus();
+        });
+    }
+
+    if (closeAnalysisSearchBtn) {
+        closeAnalysisSearchBtn.addEventListener('click', () => {
+            standaloneAnalysisSearchModal.classList.remove('active');
+        });
+    }
+
+    if (startAnalysisBtn) {
+        startAnalysisBtn.addEventListener('click', () => {
+            const input = analysisSearchInput.value.trim();
+            if (!input) {
+                alert('請輸入股票代號或名稱');
+                return;
+            }
+            
+            // 關閉搜尋視窗並開啟分析視窗
+            standaloneAnalysisSearchModal.classList.remove('active');
+            
+            // 調用 analysis.js 的功能
+            if (typeof openAnalysisModal === 'function') {
+                openAnalysisModal(input, input, null);
+            } else {
+                alert('分析系統尚未準備就緒，請重新整理頁面。');
+            }
+        });
+    }
+
+    if (analysisSearchInput) {
+        analysisSearchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') startAnalysisBtn.click();
+        });
+    }
+
+
+
+
+
+
+
+
+
+    calculate();
+    loadInventory();
+    updateDateDisplay();
+});
+
+
+    // ===== Mobile Tab Switching =====
+    function isMobile() {
+        return window.innerWidth <= 640;
+    }
+
+    // ── History-based back-button management ────────────────────────
+    // Tracks whether we pushed a state for an open modal/menu
+    let _historyModalOpen = false;
+
+    function _pushModalState() {
+        if (!_historyModalOpen) {
+            history.pushState({ modalOpen: true }, '');
+            _historyModalOpen = true;
+        }
+    }
+
+    function _clearModalState() {
+        _historyModalOpen = false;
+    }
+
+    // Returns the currently active modal overlay (if any), or null
+    function _getActiveModal() {
+        return document.querySelector('.modal-overlay.active');
+    }
+
+    // Returns true if the mobile "more" menu is visible
+    function _moreMenuVisible() {
+        const m = document.getElementById('mobileMoreMenu');
+        return m && m.style.display !== 'none';
+    }
+
+    // Central "close topmost layer" — called by popstate
+    function _closeTopLayer() {
+        if (_moreMenuVisible()) {
+            hideMobileMore();
+            return;
+        }
+        const modal = _getActiveModal();
+        if (modal) {
+            modal.classList.remove('active');
+            return;
+        }
+    }
+
+    // Intercept Android/browser back button
+    window.addEventListener('popstate', (e) => {
+        _clearModalState();
+        if (_moreMenuVisible() || _getActiveModal()) {
+            _closeTopLayer();
+            // Re-push so another back press can work again if needed
+        }
+    });
+
+    // ── Overlay click-to-close ───────────────────────────────────────
+    document.addEventListener('click', (e) => {
+        // If user clicked directly on the overlay (not on the modal-content inside)
+        if (e.target.classList.contains('modal-overlay') && e.target.classList.contains('active')) {
+            e.target.classList.remove('active');
+            _clearModalState();
+        }
+    });
+
+    // ── Patch all modal open calls to push history state ─────────────
+    // We monkey-patch classList.add('active') by wrapping the existing
+    // open-button event listeners. Easiest: observe the overlays.
+    const _modalOverlayObserver = new MutationObserver((mutations) => {
+        mutations.forEach(m => {
+            if (m.type === 'attributes' && m.attributeName === 'class') {
+                const el = m.target;
+                if (el.classList.contains('modal-overlay')) {
+                    if (el.classList.contains('active')) {
+                        _pushModalState();
+                    }
+                }
+            }
+        });
+    });
+    document.querySelectorAll('.modal-overlay').forEach(el => {
+        _modalOverlayObserver.observe(el, { attributes: true });
+    });
+    function switchMobileTab(tab) {
+        if (!isMobile()) return;
+        const calcPanel = document.querySelector('.calculator-panel');
+        const invPanel = document.querySelector('.inventory-panel');
+        const navCalc = document.getElementById('navCalc');
+        const navInv = document.getElementById('navInventory');
+
+        if (tab === 'calc') {
+            calcPanel.classList.add('mobile-active');
+            invPanel.classList.remove('mobile-active');
+            navCalc.classList.add('active');
+            navInv.classList.remove('active');
+        } else {
+            invPanel.classList.add('mobile-active');
+            calcPanel.classList.remove('mobile-active');
+            navInv.classList.add('active');
+            navInv.classList.add('active');
+            navCalc.classList.remove('active');
+        }
+        hideMobileMore();
+        window.scrollTo(0, 0);
+    }
+
+    function showMobileMore() {
+        const menu = document.getElementById('mobileMoreMenu');
+        const isVisible = menu.style.display !== 'none';
+        if (!isVisible) {
+            menu.style.display = 'block';
+            document.getElementById('navMore').classList.add('active');
+            _pushModalState();
+        } else {
+            hideMobileMore();
+        }
+    }
+
+    function hideMobileMore() {
+        document.getElementById('mobileMoreMenu').style.display = 'none';
+        document.getElementById('navMore').classList.remove('active');
+    }
+
+    // Initialize mobile layout
+    function initMobileLayout() {
+        if (isMobile()) {
+            const calcPanel = document.querySelector('.calculator-panel');
+            const invPanel = document.querySelector('.inventory-panel');
+            if (!calcPanel.classList.contains('mobile-active') && !invPanel.classList.contains('mobile-active')) {
+                calcPanel.classList.add('mobile-active');
+            }
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', initMobileLayout);
+    window.addEventListener('resize', () => {
+        const calcPanel = document.querySelector('.calculator-panel');
+        const invPanel = document.querySelector('.inventory-panel');
+        if (!isMobile()) {
+            calcPanel.classList.remove('mobile-active');
+            invPanel.classList.remove('mobile-active');
+        } else {
+            if (!calcPanel.classList.contains('mobile-active') && !invPanel.classList.contains('mobile-active')) {
+                calcPanel.classList.add('mobile-active');
+            }
+        }
+    });
+
+    // Close more menu when clicking outside
+    document.addEventListener('click', (e) => {
+        const menu = document.getElementById('mobileMoreMenu');
+        const navMore = document.getElementById('navMore');
+        if (menu && menu.style.display !== 'none' && !menu.contains(e.target) && !navMore.contains(e.target)) {
+            hideMobileMore();
+        }
+    });
+
+    // ===== PWA Install Prompt =====
+    let deferredPrompt = null;
+    const installBanner = document.getElementById('pwaInstallBanner');
+    const installBtn = document.getElementById('pwaInstallBtn');
+    const dismissBtn = document.getElementById('pwaDismissBtn');
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        setTimeout(() => {
+            if (isMobile() && !localStorage.getItem('pwa-dismissed')) {
+                installBanner.style.display = 'block';
+            }
+        }, 3000);
+    });
+
+    installBtn && installBtn.addEventListener('click', async () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        deferredPrompt = null;
+        installBanner.style.display = 'none';
+    });
+
+    dismissBtn && dismissBtn.addEventListener('click', () => {
+        installBanner.style.display = 'none';
+        localStorage.setItem('pwa-dismissed', '1');
+    });
+
+    window.addEventListener('appinstalled', () => {
+        installBanner.style.display = 'none';
+        deferredPrompt = null;
+    });
+</script>
+    <div class="modal-overlay" id="analysisModal">
+        <div class="modal-content" style="max-width: 800px; display:flex; flex-direction:column; gap:16px;">
+            <div class="modal-header">
+                <h2 id="analysisTitle">📊 個股分析</h2>
+                <button class="close-btn" id="closeAnalysisBtn">&times;</button>
+            </div>
+            <div class="modal-body" style="flex:1; overflow-y:auto; padding-right:8px;" id="analysisBody">
+                <div style="text-align:center; padding:40px; color:#94a3b8;">
+                    <div class="spinner" style="width:30px; height:30px; border:3px solid rgba(255,255,255,0.1); border-top-color:#3b82f6; border-radius:50%; animation:spin 1s linear infinite; margin:0 auto 16px;"></div>
+                    載入分析數據中...
+                </div>
+            </div>
+        </div>
+    </div>
+<link rel="stylesheet" href="analysis.css">
+<script src="analysis.js?v=final_force_v3"></script>
+</body>
+
+</html>
