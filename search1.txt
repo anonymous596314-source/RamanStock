@@ -1,0 +1,22 @@
+﻿
+              <div style="display:flex; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+                  <div style="flex:1; display:flex; gap:4px; min-width:200px;">
+>                     <input type="text" id="dictSearchInput" placeholder="輸入單字直接查字典..." class="input-field" style="bac
+kground:rgba(0,0,0,0.3); border-color:rgba(59, 130, 246, 0.3);">
+                      <button id="dictSearchBtn" class="btn primary-btn" style="padding:0 16px;">🔍 查詢</button>
+                  </div>
+  
+  
+>     <!-- ── 即時浮動查字典 Popup ── -->
+      <div id="floatDictPopup" style="display:none; position:fixed; z-index:9999; background:rgba(10,18,38,0.98); backd
+rop-filter:blur(24px); -webkit-backdrop-filter:blur(24px); border:1px solid rgba(59,130,246,0.45); border-radius:18px; 
+padding:0; min-width:300px; max-width:380px; max-height:80vh; box-shadow:0 12px 48px rgba(0,0,0,0.7); font-family:'Outf
+it','Noto Sans TC',sans-serif; overflow:hidden; display:none; flex-direction:column;">
+          <!-- Header -->
+      });
+  
+>     // ── 即時浮動查字典（完整版）────────────────────────────────────
+      (function() {
+          const popup   = document.getElementById('floatDictPopup');
+
+

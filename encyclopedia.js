@@ -1,0 +1,183 @@
+
+
+// === Indicators Encyclopedia (指標百科) ===
+
+const termDefinitions = {
+    "ROE": {
+        title: "ROE (股東權益報酬率)",
+        category: "獲利能力",
+        desc: "這指標代表「公司用自己的錢賺錢的效率」。數值越高，代表公司幫股東賺錢的能力越強。",
+        rules: "<li><b>>15%</b>: 非常優秀，屬於高獲利公司。</li><li><b>>10%</b>: 穩健，獲利能力在水準之上。</li><li><b><5%</b>: 警訊，獲利效率偏低，需留意競爭力。</li>",
+        pro: "適合長期投資者尋找具備「護城河」的公司。"
+    },
+    "本益比": {
+        title: "PE (本益比)",
+        category: "估值高低",
+        desc: "代表「投資這間公司幾年可以回本」。也是市場願意為每一塊錢獲利支付的價格。",
+        rules: "<li><b><12倍</b>: 相對便宜，回本速度快。</li><li><b>15-20倍</b>: 合理區間，與大多數公司同步。</li><li><b>>20倍</b>: 偏貴，市場給予高期待，需有高成長支撐。</li>",
+        pro: "注意不同產業有不同的本益比常態（如科技股通常較高）。"
+    },
+    "殖利率": {
+        title: "Cash Yield (現金殖利率)",
+        category: "股利政策",
+        desc: "就像定存利率一樣，代表「投入 100 元每年可以拿回多少現金股利」。",
+        rules: "<li><b>>5%</b>: 高殖利率，優於大多數定存與債券。</li><li><b>3-5%</b>: 穩健，適合尋求穩定現金流的投資人。</li><li><b><2%</b>: 較低，通常是成長型股票，獲利多用於擴張。</li>",
+        pro: "需配合「盈餘分配率」觀察，確保不是在吃老本發放股利。"
+    },
+    "RSI": {
+        title: "RSI (相對強弱指標)",
+        category: "技術面",
+        desc: "反映股價在一段時間內的漲跌力道。數值越高代表漲勢越強，反之越弱。",
+        rules: "<li><b>>70</b>: 超買過熱，股價短線可能回檔。</li><li><b><30</b>: 超跌，股價短線可能反彈。</li><li><b>50上下</b>: 中性，股價處於整理區。</li>",
+        pro: "在強勢多頭市場中，RSI 可能長期維持在 70 以上，不可盲目放空。"
+    },
+    "Beta": {
+        title: "Beta 係數 (β)",
+        category: "風險指標",
+        desc: "衡量個股相對於大盤的波動敏感度。大盤漲 1% 時，個股會漲跌多少。",
+        rules: "<li><b>>1.2</b>: 積極型，波動比大盤劇烈，牛市時漲得多，熊市時跌得深。</li><li><b>0.8 - 1.2</b>: 中性，波動與大盤基本同步。</li><li><b><0.8</b>: 防禦型，在大盤波動時表現相對平穩。</li>",
+        pro: "Beta 值高代表風險較大，適合風險承受度高的投資者。"
+    },
+    "自由現金流": {
+        title: "FCF (自由現金流)",
+        category: "財務安全",
+        desc: "公司賺進來的錢，扣除掉維持營運所需的設備投資後，真正能自由運用的「現金」。",
+        rules: "<li><b>正數且穩定</b>: 代表公司有能力配息、還債或進行再投資。</li><li><b>長期負數</b>: 警訊，公司可能入不敷出，需要頻繁增資。</li>",
+        pro: "它是檢驗獲利含金量最嚴格的指標，比淨利更難造假。"
+    },
+    "存貨週轉天數": {
+        title: "Inventory Days",
+        category: "營運效率",
+        desc: "代表「商品從進貨到賣出去平均需要幾天」。天數越短，銷貨速度越快。",
+        rules: "<li><b>天數縮短</b>: 代表產品熱銷，公司營運效率提升。</li><li><b>天數拉長</b>: 警訊，可能代表產品滯銷或產業寒冬。</li>",
+        pro: "不同產業差異極大（如電子通路天數短，房地產天數極長）。"
+    },
+    "盈餘分配率": {
+        title: "Payout Ratio",
+        category: "股利政策",
+        desc: "公司去年賺 100 元，今年發多少錢給股東。",
+        rules: "<li><b>40% - 80%</b>: 穩健成熟公司的理想區間。</li><li><b>>100%</b>: 吃老本，動用公積來發股利，不具持續性。</li><li><b><30%</b>: 擴張期，公司正保留現金投資未來。</li>",
+        pro: "定存股應尋求分配率穩定且不過高的標的。"
+    },
+    "Altman Z-Score": {
+        title: "Altman Z-Score",
+        category: "償債能力",
+        desc: "預測企業破產風險的經典模型，結合了營運資金、保留盈餘、稅前息前產利、股權市值與總資產。數值越高代表財務越穩健。",
+        rules: "<li><b>> 2.99</b>: 安全區，短期無破產風險。</li><li><b>1.81 - 2.99</b>: 灰色區，需密切觀察財務變化。</li><li><b>< 1.81</b>: 危險區，需高度警惕倒閉風險。</li>",
+        pro: "主要針對製造業設計，對於輕資產的軟體公司或金融業參考價值稍降。"
+    },
+    "估值位階 (PE River)": {
+        title: "PE River Map",
+        category: "估值位階",
+        desc: "將當前本益比與過去 5 年的歷史分布進行對比。百分位數代表目前比歷史上多少比例的時間還要貴。",
+        rules: "<li><b><20%</b>: 極低估值，歷史罕見的便宜價。</li><li><b>40-60%</b>: 合理區，與歷史長期平均持平。</li><li><b>>80%</b>: 昂貴區，需注意市場情緒是否過熱。</li>",
+        pro: "適合穩定獲利的公司。若獲利暴增或暴跌（景氣循環股），本益比會失真，需搭配 PB 使用。"
+    },
+    "PEG 比例": {
+        title: "PEG Ratio",
+        category: "估值位階",
+        desc: "本益成長比。計算公式：本益比 / EPS 成長率 (TTM)。",
+        rules: "<li><b>< 1.0</b>: 成長性高於估值，價格便宜。</li><li><b>> 1.5</b>: 估值透支成長性，價格昂貴。</li><li><b>N/A</b>: 獲利衰退中，無法計算。</li>",
+        pro: "能避免錯過高成長股，但若成長率預估錯誤，風險極大。"
+    },
+    "EPS 成長率 (TTM)": {
+        title: "EPS Growth (TTM)",
+        category: "獲利能力",
+        desc: "滾動十二個月的每股盈餘年增率。公式：(近四季 EPS 總和 / 前一年同期四季 EPS 總和) - 1。",
+        rules: "<li><b>> 0%</b>: 獲利持續成長。</li><li><b>< 0%</b>: 進入獲利衰退期（盈餘退潮）。</li>",
+        pro: "比起單季 YoY 更能反映長期趨勢，是法人判斷營運拐點的核心指標。"
+    },
+    "毛利改善 (YoY)": {
+        title: "Gross Margin Improvement (YoY)",
+        category: "獲利能力",
+        desc: "本季毛利率與去年同期毛利率的差值（單位：百分點）。",
+        rules: "<li><b>> 0</b>: 毛利結構優化。</li><li><b>< 0</b>: 毛利受侵蝕（成本上升或降價）。</li>",
+        pro: "毛利率是所有獲利指標的起點，若毛利改善通常代表公司掌握了強大的定價權。"
+    }
+};
+
+function showTermExplainer(termKey) {
+    const term = termDefinitions[termKey];
+    if (!term) return;
+    let overlay = document.getElementById("termExplainerOverlay");
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "termExplainerOverlay";
+        overlay.onclick = (e) => { if (e.target === overlay) closeTermExplainer(); };
+        document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+        <div class="term-explainer-content">
+            <div class="term-explainer-close" onclick="closeTermExplainer()">✕</div>
+            <div class="term-explainer-badge" style="background: rgba(99, 179, 237, 0.15); color: #63b3ed;">${term.category}</div>
+            <div class="term-explainer-title">💡 ${term.title}</div>
+            <div class="term-explainer-body">
+                ${term.desc}
+                <div class="term-explainer-section">
+                    <div class="term-explainer-subtitle">📊 判斷準則</div>
+                    <ul style="padding-left: 20px; margin: 0;">${term.rules}</ul>
+                </div>
+                <div class="term-explainer-section">
+                    <div class="term-explainer-subtitle">💡 達人筆記</div>
+                    <div style="font-style: italic; color: #94a3b8;">"${term.pro}"</div>
+                </div>
+            </div>
+            <div style="margin-top: 25px; text-align: center;">
+                <button onclick="closeTermExplainer()" style="background: #3b82f6; color: #fff; border: none; padding: 8px 30px; border-radius: 12px; cursor: pointer; font-weight: 700;">我瞭解了</button>
+            </div>
+        </div>
+    `;
+    setTimeout(() => overlay.classList.add("active"), 10);
+}
+
+function closeTermExplainer() {
+    const overlay = document.getElementById("termExplainerOverlay");
+    if (overlay) overlay.classList.remove("active");
+}
+
+function renderStatRow(label, value, barPercent = null) {
+    const termKey = Object.keys(termDefinitions).find(k => label.includes(k));
+    const labelHtml = termKey 
+        ? `<span class="analysis-label has-info" onclick="showTermExplainer('${termKey}')">${label}</span>`
+        : `<span class="analysis-label">${label}</span>`;
+
+    return `
+        <div class="analysis-stat-row">
+            ${labelHtml}
+            <div style="display:flex; flex-direction:column; align-items:flex-end; flex:1;">
+                <span class="analysis-val">${value}</span>
+                ${barPercent !== null ? `
+                    <div class="progress-bar-bg" style="width: 80px;">
+                        <div class="progress-bar-fill" style="width: ${Math.min(100, Math.max(0, barPercent))}%; background: ${barPercent > 80 ? '#ef4444' : (barPercent < 30 ? '#4ade80' : '#3b82f6')};"></div>
+                    </div>
+                ` : ''}
+            </div>
+        </div>
+    `;
+}
+
+function renderPercentRow(label, value, showBar = true) {
+    const isNA = value === null || value === undefined;
+    const num = parseFloat(value);
+    const color = isNA ? '#64748b' : (num >= 0 ? '#ef4444' : '#10b981');
+    const displayVal = isNA ? 'N/A' : (num > 0 ? '+' : '') + safeFix(num, 2) + '%';
+    
+    const termKey = Object.keys(termDefinitions).find(k => label.includes(k));
+    const labelHtml = termKey 
+        ? `<span class="analysis-label has-info" onclick="showTermExplainer('${termKey}')">${label}</span>`
+        : `<span class="analysis-label">${label}</span>`;
+
+    return `
+        <div class="analysis-stat-row">
+            ${labelHtml}
+            <div style="display:flex; flex-direction:column; align-items:flex-end; flex:1;">
+                <span class="analysis-val" style="color:${color}">${displayVal}</span>
+                ${(showBar && !isNA) ? `
+                    <div class="progress-bar-bg" style="width: 80px;">
+                        <div class="progress-bar-fill" style="width: ${Math.min(100, Math.abs(num))}%; background: ${color}; opacity: 0.6;"></div>
+                    </div>
+                ` : ''}
+            </div>
+        </div>
+    `;
+}

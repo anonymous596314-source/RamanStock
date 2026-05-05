@@ -1,0 +1,135 @@
+﻿
+              <div class="modal-header">
+                  <h2>📝 每日英文學習卡</h2>
+                  <button class="close-btn" id="closeEnglishBtn">&times;</button>
+              </div>
+              
+              <div style="display:flex; justify-content:center; gap:8px; margin-bottom: 8px; flex-wrap:wrap;">
+                  <button id="tabFlashcardBtn" class="btn primary-btn" style="width:auto; padding:8px 20px;">🗂️ 單字卡</b
+utton>
+                  <button id="tabArticleBtn" class="btn secondary-btn" style="width:auto; padding:8px 20px;">📖 短文閱讀</b
+utton>
+                  <button id="tabGamesBtn" class="btn secondary-btn" style="width:auto; padding:8px 20px; background:rg
+ba(139,92,246,0.2); border-color:rgba(139,92,246,0.5); color:#c4b5fd;">🎮 益智遊戲</button>
+              </div>
+  
+              <!-- 單字卡模式區塊 -->
+              <div id="flashcardSection" style="display:flex; flex-direction:column; gap:16px;">
+              <div style="display:flex; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+                  <div style="flex:1; display:flex; gap:4px; min-width:200px;">
+>                     <input type="text" id="dictSearchInput" placeholder="輸入單字直接查字典..." class="input-field" style="bac
+kground:rgba(0,0,0,0.3); border-color:rgba(59, 130, 246, 0.3);">
+                      <button id="dictSearchBtn" class="btn primary-btn" style="padding:0 16px;">🔍 查詢</button>
+                  </div>
+                  <button id="addVocabGroupBtn" class="btn secondary-btn" style="background:rgba(16, 185, 129, 0.15); c
+olor:#6ee7b7; border-color:rgba(16, 185, 129, 0.3);">➕ 新增群組</button>
+              </div>
+  
+              <div id="englishLevelContainer" style="display:flex; justify-content:center; gap:8px; margin-bottom:8px; 
+flex-wrap:wrap;">
+                  <!-- Buttons injected by JS (A1~C2 + Custom Groups) -->
+              </div>
+  
+              <!-- 單字卡片本體 -->
+              <div class="flashcard glass-panel" style="background: rgba(255,255,255,0.05); padding: 40px 20px 20px; bo
+rder-radius: 16px; position:relative;">
+                  
+                  <!-- 收藏至群組區塊 (絕對定位右上角) -->
+                  <div style="position:absolute; top:12px; right:12px; display:flex; gap:6px; align-items:center;">
+                      <select id="saveGroupSelect" class="input-field" style="padding:4px 8px; font-size:12px; backgrou
+nd:rgba(0,0,0,0.5); width:auto; border-radius:4px; border:1px solid rgba(255,255,255,0.2);">
+      const flashcardEngEg = document.getElementById('flashcardEngEg');
+      const flashcardChiEg = document.getElementById('flashcardChiEg');
+      const playEgAudioBtn = document.getElementById('playEgAudioBtn');
+      
+      const actionFront = document.getElementById('actionFront');
+      const actionBack = document.getElementById('actionBack');
+      const flipCardBtn = document.getElementById('flipCardBtn');
+      const ankiBtns = document.querySelectorAll('.anki-btn');
+  
+      const wordFreqStars = document.getElementById('wordFreqStars');
+      const flashcardEgsContainer = document.getElementById('flashcardEgsContainer');
+      const playChiDefBtn = document.getElementById('playChiDefBtn');
+  
+      const englishLevelContainer = document.getElementById('englishLevelContainer');
+      const addVocabGroupBtn = document.getElementById('addVocabGroupBtn');
+>     const dictSearchInput = document.getElementById('dictSearchInput');
+      const dictSearchBtn = document.getElementById('dictSearchBtn');
+      const saveGroupSelect = document.getElementById('saveGroupSelect');
+      const saveWordBtn = document.getElementById('saveWordBtn');
+  
+      const tabFlashcardBtn = document.getElementById('tabFlashcardBtn');
+      const tabArticleBtn = document.getElementById('tabArticleBtn');
+      const flashcardSection = document.getElementById('flashcardSection');
+      const articleSection = document.getElementById('articleSection');
+      const articleLevelSelect = document.getElementById('articleLevelSelect');
+      const refreshArticleBtn = document.getElementById('refreshArticleBtn');
+      const articleTitle = document.getElementById('articleTitle');
+      const articleContent = document.getElementById('articleContent');
+      const recordArticleBtn = document.getElementById('recordArticleBtn');
+      const articleScorePanel = document.getElementById('articleScorePanel');
+      const articleScoreVal = document.getElementById('articleScoreVal');
+      function renderRandomArticle(level) {
+          if(globalActiveMicBtn) fallbackRecognition.stop();
+          
+          const list = ARTICLES_DB[level] || ARTICLES_DB['A1'];
+          const randomItem = list[Math.floor(Math.random() * list.length)];
+          articleTitle.textContent = `[${level}] ${randomItem.title}`;
+          articleContent.innerHTML = makeTextClickable(randomItem.text);
+          
+          articleScorePanel.style.display = 'none';
+          articleRecordResult.innerHTML = '';
+          articleScoreVal.textContent = '0';
+  
+          articleContent.querySelectorAll('.clickable-word').forEach(span => {
+              span.addEventListener('click', (e) => {
+                  const word = e.currentTarget.getAttribute('data-word');
+>                 dictSearchInput.value = word;
+                  dictSearchBtn.click();
+                  if(tabFlashcardBtn) tabFlashcardBtn.click();
+              });
+          });
+  
+          // Rebind record btn
+          const oldBtn = recordArticleBtn.cloneNode(true);
+          recordArticleBtn.parentNode.replaceChild(oldBtn, recordArticleBtn);
+          // Note: recordArticleBtn reference needs to be updated but since we cloned we use oldBtn
+          setupShadowing(oldBtn, randomItem.text, articleRecordResult, () => {
+              articleScorePanel.style.display = 'block';
+          }, (score) => {
+              articleScoreVal.textContent = score;
+          });
+      }
+                  customGroups[targetGroup].push(currentWord);
+                  localStorage.setItem('twStockCustomGroups', JSON.stringify(customGroups));
+                  saveWordBtn.innerHTML = '已收藏 ✔️';
+                  setTimeout(() => { saveWordBtn.innerHTML = '⭐ 收藏'; }, 2000);
+              }
+              
+              renderLevelButtons();
+              
+              // Force reload vocabDb binding to make sure the loadNextWord gets the updated custom array
+              vocabDb[targetGroup] = customGroups[targetGroup];
+          });
+      }
+  
+      if (dictSearchBtn) {
+          dictSearchBtn.addEventListener('click', () => {
+>             const word = dictSearchInput.value.trim().toLowerCase();
+              if(!word) return;
+              
+              // Force skip Anki logging & directly show dict view
+              currentWord = word;
+              wordContent.style.display = 'none';
+              wordLoading.style.display = 'block';
+              actionFront.style.display = 'none';
+              actionBack.style.display = 'none';
+              flashcardBack.style.display = 'none';
+              flashcardEgsContainer.innerHTML = '';
+              wordFreqStars.innerHTML = '';
+  
+              fetchWordData(word).then(data => {
+                  flashcardWord.textContent = data.word;
+                  flashcardIpa.textContent = data.ipa;
+
+

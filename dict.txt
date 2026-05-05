@@ -1,0 +1,90 @@
+﻿
+>         dictSearchBtn.addEventListener('click', () => {
+              const word = dictSearchInput.value.trim().toLowerCase();
+              if(!word) return;
+              
+              // Force skip Anki logging & directly show dict view
+              currentWord = word;
+              wordContent.style.display = 'none';
+              wordLoading.style.display = 'block';
+              actionFront.style.display = 'none';
+              actionBack.style.display = 'none';
+              flashcardBack.style.display = 'none';
+              flashcardEgsContainer.innerHTML = '';
+              wordFreqStars.innerHTML = '';
+  
+              fetchWordData(word).then(data => {
+                  flashcardWord.textContent = data.word;
+                  flashcardIpa.textContent = data.ipa;
+                  currentAudioUrl = data.audioUrl;
+                  
+                  let starHtml = '';
+                  let freqInt = Math.round(data.freqScore);
+                  if (freqInt > 5) freqInt = 5;
+                  if (freqInt < 1) freqInt = 1;
+                  for(let i=1; i<=5; i++) {
+                      if(i <= freqInt) starHtml += '★'; else starHtml += '☆';
+                  }
+                  wordFreqStars.innerHTML = `<span title="Datamuse Frequency: ${data.frequencyRaw || 0}/M" style="curso
+r:help;">${starHtml}</span>`;
+  
+                  flashcardEngDef.textContent = data.engDef;
+                  flashcardChiDef.textContent = data.chiDef;
+                  currentEngDefText = data.engDef;
+                  
+                  currentEgTexts = [];
+                  data.examples.forEach((exObj, idx) => {
+                      currentEgTexts.push(exObj.eng);
+                      const egDiv = document.createElement('div');
+                      egDiv.className = 'eg-item';
+                      egDiv.innerHTML = `
+                          <div style="display:flex; justify-content:space-between; align-items:start; border-bottom: 1p
+x solid rgba(255,255,255,0.05); padding-bottom:8px;">
+                              <div style="flex:1;">
+                                  <p style="font-size:15px; color:#e2e8f0; margin-bottom:4px; font-style:italic;">${idx
++1}. ${exObj.eng}</p>
+                                  <p style="font-size:14px; color:#cbd5e1; margin:0;">${exObj.chi}</p>
+                              </div>
+                              <div style="display:flex;">
+                                  <button class="play-single-eg-btn" data-eg="${exObj.eng.replace(/"/g, '&quot;')}" sty
+le="background:transparent; border:none; cursor:pointer; font-size:20px; padding:4px;">🔊</button>
+                                  <button class="record-single-eg-btn" data-eg="${exObj.eng.replace(/"/g, '&quot;')}" s
+tyle="background:transparent; border:none; cursor:pointer; font-size:20px; padding:4px;">🎤</button>
+                              </div>
+                          </div>
+                          <div class="shadow-result-container" style="display:none; font-size:14px; margin-top:4px; mar
+gin-bottom:8px; padding:8px; background:rgba(0,0,0,0.3); border-radius:6px;"></div>`;
+                      flashcardEgsContainer.appendChild(egDiv);
+                  });
+  
+                  flashcardEgsContainer.querySelectorAll('.play-single-eg-btn').forEach(btn => {
+                      btn.addEventListener('click', (e) => {
+                          e.stopPropagation();
+                          const txt = e.currentTarget.getAttribute('data-eg');
+                          speakTTS(txt, 'en-US');
+                      });
+                  });
+                  
+                  flashcardEgsContainer.querySelectorAll('.record-single-eg-btn').forEach(btn => {
+                      const txt = btn.getAttribute('data-eg');
+                      const resultContainer = btn.closest('.eg-item').querySelector('.shadow-result-container');
+                      setupShadowing(btn, txt, resultContainer);
+                  });
+  
+                  if (data.examples.length === 0) {
+                      flashcardEgsContainer.innerHTML = `<p style="font-size:14px; color:#cbd5e1; opacity:0.5;">No exam
+ples available.</p>`;
+                  }
+  
+                  wordLoading.style.display = 'none';
+                  wordContent.style.display = 'block';
+                  
+                  // Directly flip card
+                  flashcardBack.style.display = 'block';
+                  actionFront.style.display = 'none';
+                  actionBack.style.display = 'none';
+              });
+          });
+      }
+
+

@@ -1,0 +1,34 @@
+﻿
+      const actionBack = document.getElementById('actionBack');
+      const flipCardBtn = document.getElementById('flipCardBtn');
+      const ankiBtns = document.querySelectorAll('.anki-btn');
+  
+      const wordFreqStars = document.getElementById('wordFreqStars');
+      const flashcardEgsContainer = document.getElementById('flashcardEgsContainer');
+      const playChiDefBtn = document.getElementById('playChiDefBtn');
+  
+      const englishLevelContainer = document.getElementById('englishLevelContainer');
+      const addVocabGroupBtn = document.getElementById('addVocabGroupBtn');
+      const dictSearchInput = document.getElementById('dictSearchInput');
+      const dictSearchBtn = document.getElementById('dictSearchBtn');
+      const saveGroupSelect = document.getElementById('saveGroupSelect');
+      const saveWordBtn = document.getElementById('saveWordBtn');
+  
+>     const tabFlashcardBtn = document.getElementById('tabFlashcardBtn');
+      const tabArticleBtn = document.getElementById('tabArticleBtn');
+      const flashcardSection = document.getElementById('flashcardSection');
+      const articleSection = document.getElementById('articleSection');
+      const articleLevelSelect = document.getElementById('articleLevelSelect');
+      const refreshArticleBtn = document.getElementById('refreshArticleBtn');
+      const articleTitle = document.getElementById('articleTitle');
+      const articleContent = document.getElementById('articleContent');
+      const recordArticleBtn = document.getElementById('recordArticleBtn');
+      const articleScorePanel = document.getElementById('articleScorePanel');
+      const articleScoreVal = document.getElementById('articleScoreVal');
+      const articleRecordResult = document.getElementById('articleRecordResult');
+      const articleRecordStatus = document.getElementById('articleRecordStatus');
+  
+      // Setup Shadowing Function
+      function setupShadowing(btnElement, targetText, resultContainer, onStart, onEnd) {
+
+

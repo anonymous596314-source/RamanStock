@@ -1,0 +1,241 @@
+﻿
+>             fetchWordData(word).then(data => {
+                  flashcardWord.textContent = data.word;
+                  flashcardIpa.textContent = data.ipa;
+                  currentAudioUrl = data.audioUrl;
+                  
+                  let starHtml = '';
+                  let freqInt = Math.round(data.freqScore);
+                  if (freqInt > 5) freqInt = 5;
+                  if (freqInt < 1) freqInt = 1;
+                  for(let i=1; i<=5; i++) {
+                      if(i <= freqInt) starHtml += '★'; else starHtml += '☆';
+                  }
+                  wordFreqStars.innerHTML = `<span title="Datamuse Frequency: ${data.frequencyRaw || 0}/M" style="curso
+r:help;">${starHtml}</span>`;
+  
+                  flashcardEngDef.textContent = data.engDef;
+                  flashcardChiDef.textContent = data.chiDef;
+                  currentEngDefText = data.engDef;
+                  
+                  currentEgTexts = [];
+                  data.examples.forEach((exObj, idx) => {
+                      currentEgTexts.push(exObj.eng);
+                      const egDiv = document.createElement('div');
+                      egDiv.className = 'eg-item';
+                      egDiv.innerHTML = `
+                          <div style="display:flex; justify-content:space-between; align-items:start; border-bottom: 1p
+x solid rgba(255,255,255,0.05); padding-bottom:8px;">
+                              <div style="flex:1;">
+                                  <p style="font-size:15px; color:#e2e8f0; margin-bottom:4px; font-style:italic;">${idx
++1}. ${exObj.eng}</p>
+                                  <p style="font-size:14px; color:#cbd5e1; margin:0;">${exObj.chi}</p>
+                              </div>
+                              <div style="display:flex;">
+                                  <button class="play-single-eg-btn" data-eg="${exObj.eng.replace(/"/g, '&quot;')}" sty
+le="background:transparent; border:none; cursor:pointer; font-size:20px; padding:4px;">🔊</button>
+                                  <button class="record-single-eg-btn" data-eg="${exObj.eng.replace(/"/g, '&quot;')}" s
+tyle="background:transparent; border:none; cursor:pointer; font-size:20px; padding:4px;">🎤</button>
+                              </div>
+                          </div>
+                          <div class="shadow-result-container" style="display:none; font-size:14px; margin-top:4px; mar
+gin-bottom:8px; padding:8px; background:rgba(0,0,0,0.3); border-radius:6px;"></div>`;
+                      flashcardEgsContainer.appendChild(egDiv);
+                  });
+  
+                  flashcardEgsContainer.querySelectorAll('.play-single-eg-btn').forEach(btn => {
+                      btn.addEventListener('click', (e) => {
+                          e.stopPropagation();
+                          const txt = e.currentTarget.getAttribute('data-eg');
+                          speakTTS(txt, 'en-US');
+                      });
+                  });
+                  
+                  flashcardEgsContainer.querySelectorAll('.record-single-eg-btn').forEach(btn => {
+                      const txt = btn.getAttribute('data-eg');
+                      const resultContainer = btn.closest('.eg-item').querySelector('.shadow-result-container');
+                      setupShadowing(btn, txt, resultContainer);
+                  });
+  
+                  if (data.examples.length === 0) {
+                      flashcardEgsContainer.innerHTML = `<p style="font-size:14px; color:#cbd5e1; opacity:0.5;">No exam
+ples available.</p>`;
+                  }
+  
+                  wordLoading.style.display = 'none';
+                  wordContent.style.display = 'block';
+                  
+                  // Directly flip card
+                  flashcardBack.style.display = 'block';
+                  actionFront.style.display = 'none';
+                  actionBack.style.display = 'none';
+              });
+          });
+      }
+  
+      if (flipCardBtn) {
+          flipCardBtn.addEventListener('click', () => {
+              flashcardBack.style.display = 'block';
+              actionFront.style.display = 'none';
+              actionBack.style.display = 'flex';
+          });
+      }
+  
+      if (playAudioBtn) {
+          playAudioBtn.addEventListener('click', () => {
+              if (currentAudioUrl && currentAudioUrl.startsWith('http')) {
+                  new Audio(currentAudioUrl).play().catch(() => speakTTS(currentWord, 'en-US'));
+>         const data = await fetchWordData(targetWord);
+          
+          flashcardWord.textContent = data.word;
+          flashcardIpa.textContent = data.ipa;
+          currentAudioUrl = data.audioUrl;
+          
+          // Render Frequency Stars
+          let starHtml = '';
+          let freqInt = Math.round(data.freqScore);
+          if (freqInt > 5) freqInt = 5;
+          if (freqInt < 1) freqInt = 1;
+          for(let i=1; i<=5; i++) {
+              if(i <= freqInt) starHtml += '★'; else starHtml += '☆';
+          }
+          wordFreqStars.innerHTML = `<span title="Datamuse Frequency: ${data.frequencyRaw || 0}/M" style="cursor:help;"
+>${starHtml}</span>`;
+  
+          flashcardEngDef.textContent = data.engDef;
+          flashcardChiDef.textContent = data.chiDef;
+          currentEngDefText = data.engDef;
+          
+          // Setup Examples
+          currentEgTexts = [];
+          data.examples.forEach((exObj, idx) => {
+              currentEgTexts.push(exObj.eng);
+              const egDiv = document.createElement('div');
+              egDiv.className = 'eg-item';
+              egDiv.innerHTML = `
+                  <div style="display:flex; justify-content:space-between; align-items:start; border-bottom: 1px solid 
+rgba(255,255,255,0.05); padding-bottom:8px;">
+                      <div style="flex:1;">
+                          <p style="font-size:15px; color:#e2e8f0; margin-bottom:4px; font-style:italic;">${idx+1}. ${e
+xObj.eng}</p>
+                          <p style="font-size:14px; color:#cbd5e1; margin:0;">${exObj.chi}</p>
+                      </div>
+                      <div style="display:flex;">
+                          <button class="play-single-eg-btn" data-eg="${exObj.eng.replace(/"/g, '&quot;')}" style="back
+ground:transparent; border:none; cursor:pointer; font-size:20px; padding:4px;">🔊</button>
+                          <button class="record-single-eg-btn" data-eg="${exObj.eng.replace(/"/g, '&quot;')}" style="ba
+ckground:transparent; border:none; cursor:pointer; font-size:20px; padding:4px;">🎤</button>
+                      </div>
+                  </div>
+                  <div class="shadow-result-container" style="display:none; font-size:14px; margin-top:4px; margin-bott
+om:8px; padding:8px; background:rgba(0,0,0,0.3); border-radius:6px;"></div>`;
+              flashcardEgsContainer.appendChild(egDiv);
+          });
+  
+          flashcardEgsContainer.querySelectorAll('.play-single-eg-btn').forEach(btn => {
+              btn.addEventListener('click', (e) => {
+                  e.stopPropagation();
+                  const txt = e.currentTarget.getAttribute('data-eg');
+                  speakTTS(txt, 'en-US');
+              });
+          });
+  
+          flashcardEgsContainer.querySelectorAll('.record-single-eg-btn').forEach(btn => {
+              const txt = btn.getAttribute('data-eg');
+              const resultContainer = btn.closest('.eg-item').querySelector('.shadow-result-container');
+              setupShadowing(btn, txt, resultContainer);
+          });
+  
+          if (data.examples.length === 0) {
+              flashcardEgsContainer.innerHTML = `<p style="font-size:14px; color:#cbd5e1; opacity:0.5;">No examples ava
+ilable.</p>`;
+          }
+  
+          wordLoading.style.display = 'none';
+          wordContent.style.display = 'block';
+          actionFront.style.display = 'block';
+      }
+  
+>     async function fetchWordData(word) {
+          try {
+              // 1. Fetch Dictionary API for Definitions & Examples
+              const dictUrl = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`;
+              const dictRes = await fetch(dictUrl);
+              const dictJson = dictRes.ok ? await dictRes.json() : null;
+              
+              // 2. Fetch Datamuse for Frequency mapping
+              let frequencyRaw = 0;
+              let freqScore = 1; 
+              try {
+                  const dmRes = await fetch(`https://api.datamuse.com/words?sp=${encodeURIComponent(word)}&md=f&max=1`)
+;
+                  if (dmRes.ok) {
+                      const dmJson = await dmRes.json();
+                      if (dmJson.length > 0 && dmJson[0].tags) {
+                          const fTag = dmJson[0].tags.find(t => t.startsWith('f:'));
+                          if (fTag) frequencyRaw = parseFloat(fTag.split(':')[1]);
+                      }
+                  }
+              } catch(e){}
+  
+              // Map standard frequencies to 1-5 Collins-like stars
+              if (frequencyRaw > 100) freqScore = 5;
+              else if (frequencyRaw > 40) freqScore = 4;
+              else if (frequencyRaw > 10) freqScore = 3;
+              else if (frequencyRaw > 1) freqScore = 2;
+              else freqScore = 1;
+              
+              let ipa = `/${word}/`;
+              let audioUrl = '';
+              let engDef = 'No specific explanation found.';
+              let examplesRaw = [];
+  
+              if (dictJson && dictJson[0]) {
+                  const entry = dictJson[0];
+                  const ph = entry.phonetics.find(p => p.text);
+                  if (ph) ipa = ph.text;
+                  
+                  // 優先選有效的美式發音，再選任何有 https 的音訊
+                  const usAu  = entry.phonetics.find(p => p.audio && p.audio.includes('-us'));
+                  const anyAu = entry.phonetics.find(p => p.audio && p.audio.trim() !== '');
+                  const rawUrl = (usAu || anyAu)?.audio || '';
+                  // 補齊 protocol（有些 API 回傳 //ssl.gstatic... 沒有 https:）
+                  if (rawUrl.startsWith('//')) audioUrl = 'https:' + rawUrl;
+                  else if (rawUrl.startsWith('http')) audioUrl = rawUrl;
+                  else audioUrl = '';  // 不確定的 URL 一律清空，改用 TTS
+                  
+                  let foundDef = false;
+                  for (let m of entry.meanings) {
+                      for (let d of m.definitions) {
+                          if (d.definition && !foundDef) {
+                              engDef = d.definition;
+                              foundDef = true;
+                          }
+                          if (d.example && examplesRaw.length < 3) {
+                              examplesRaw.push(d.example);
+                          }
+                      }
+                  }
+              }
+              // 若字典 API 沒有例句，嘗試從 Datamuse 抓例句
+              if (examplesRaw.length === 0) {
+                  try {
+                      const dmEgRes = await fetch(`https://api.datamuse.com/words?ml=${encodeURIComponent(word)}&md=d&m
+ax=5`);
+                      if (dmEgRes.ok) {
+                          const dmEgJson = await dmEgRes.json();
+                          for (const item of dmEgJson) {
+                              if (item.defs) {
+                                  for (const def of item.defs) {
+                                      const parts2 = def.split('\t');
+                                      if (parts2[1] && parts2[1].length > 20 && !parts2[1].includes(word + '.')) {
+                                          examplesRaw.push(parts2[1]);
+                                          if (examplesRaw.length >= 2) break;
+                                      }
+                                  }
+                              }
+                              if (examplesRaw.length >= 2) break;
+                          }
+                      }
+
+

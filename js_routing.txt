@@ -1,0 +1,44 @@
+﻿
+                  }
+              };
+  
+              try {
+                  fallbackRecognition.start();
+              } catch(err) {
+                  fallbackRecognition.stop();
+              }
+          });
+      }
+  
+      // --- Tab Switching & Article Logic ---
+      if(tabFlashcardBtn) {
+          tabFlashcardBtn.addEventListener('click', () => {
+              tabFlashcardBtn.classList.replace('secondary-btn', 'primary-btn');
+              tabArticleBtn.classList.replace('primary-btn', 'secondary-btn');
+              flashcardSection.style.display = 'flex';
+              articleSection.style.display = 'none';
+          });
+  
+>         tabArticleBtn.addEventListener('click', () => {
+              tabArticleBtn.classList.replace('secondary-btn', 'primary-btn');
+              tabFlashcardBtn.classList.replace('primary-btn', 'secondary-btn');
+              flashcardSection.style.display = 'none';
+              articleSection.style.display = 'flex';
+              if (!articleTitle.dataset.loaded) {
+                  renderRandomArticle(articleLevelSelect.value);
+                  articleTitle.dataset.loaded = 'true';
+              }
+          });
+  
+          articleLevelSelect.addEventListener('change', () => {
+              renderRandomArticle(articleLevelSelect.value);
+          });
+  
+          refreshArticleBtn.addEventListener('click', () => {
+              renderRandomArticle(articleLevelSelect.value);
+          });
+      }
+  
+      function renderRandomArticle(level) {
+
+

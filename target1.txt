@@ -1,0 +1,22 @@
+﻿        <div class="modal-content" style="max-width: 750px; text-align: center; display:flex; flex-direction:column; gap:16px;">
+            <div class="modal-header">
+                <h2>📝 每日英文學習卡</h2>
+                <button class="close-btn" id="closeEnglishBtn">&times;</button>
+            </div>
+            
+            <div style="display:flex; justify-content:center; gap:8px; margin-bottom: 8px; flex-wrap:wrap;">
+                <button id="tabFlashcardBtn" class="btn primary-btn" style="width:auto; padding:8px 20px;">🗂️ 單字卡</button>
+                <button id="tabArticleBtn" class="btn secondary-btn" style="width:auto; padding:8px 20px;">📖 短文閱讀</button>
+                <button id="tabGamesBtn" class="btn secondary-btn" style="width:auto; padding:8px 20px; background:rgba(139,92,246,0.2); border-color:rgba(139,92,246,0.5); color:#c4b5fd;">🎮 益智遊戲</button>
+            </div>
+
+            <!-- 單字卡模式區塊 -->
+            <div id="flashcardSection" style="display:flex; flex-direction:column; gap:16px;">
+            <div style="display:flex; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+                <div style="flex:1; display:flex; gap:4px; min-width:200px;">
+                    <input type="text" id="dictSearchInput" placeholder="輸入單字直接查字典..." class="input-field" style="background:rgba(0,0,0,0.3); border-color:rgba(59, 130, 246, 0.3);">
+                    <button id="dictSearchBtn" class="btn primary-btn" style="padding:0 16px;">🔍 查詢</button>
+                </div>
+                <button id="addVocabGroupBtn" class="btn secondary-btn" style="background:rgba(16, 185, 129, 0.15); color:#6ee7b7; border-color:rgba(16, 185, 129, 0.3);">➕ 新增群組</button>
+            </div>
+

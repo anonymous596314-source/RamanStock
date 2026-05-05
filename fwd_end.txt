@@ -1,0 +1,157 @@
+﻿
+>     async function fetchWordData(word) {
+          try {
+              // 1. Fetch Dictionary API for Definitions & Examples
+              const dictUrl = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`;
+              const dictRes = await fetch(dictUrl);
+              const dictJson = dictRes.ok ? await dictRes.json() : null;
+              
+              // 2. Fetch Datamuse for Frequency mapping
+              let frequencyRaw = 0;
+              let freqScore = 1; 
+              try {
+                  const dmRes = await fetch(`https://api.datamuse.com/words?sp=${encodeURIComponent(word)}&md=f&max=1`)
+;
+                  if (dmRes.ok) {
+                      const dmJson = await dmRes.json();
+                      if (dmJson.length > 0 && dmJson[0].tags) {
+                          const fTag = dmJson[0].tags.find(t => t.startsWith('f:'));
+                          if (fTag) frequencyRaw = parseFloat(fTag.split(':')[1]);
+                      }
+                  }
+              } catch(e){}
+  
+              // Map standard frequencies to 1-5 Collins-like stars
+              if (frequencyRaw > 100) freqScore = 5;
+              else if (frequencyRaw > 40) freqScore = 4;
+              else if (frequencyRaw > 10) freqScore = 3;
+              else if (frequencyRaw > 1) freqScore = 2;
+              else freqScore = 1;
+              
+              let ipa = `/${word}/`;
+              let audioUrl = '';
+              let engDef = 'No specific explanation found.';
+              let examplesRaw = [];
+  
+              if (dictJson && dictJson[0]) {
+                  const entry = dictJson[0];
+                  const ph = entry.phonetics.find(p => p.text);
+                  if (ph) ipa = ph.text;
+                  
+                  // 優先選有效的美式發音，再選任何有 https 的音訊
+                  const usAu  = entry.phonetics.find(p => p.audio && p.audio.includes('-us'));
+                  const anyAu = entry.phonetics.find(p => p.audio && p.audio.trim() !== '');
+                  const rawUrl = (usAu || anyAu)?.audio || '';
+                  // 補齊 protocol（有些 API 回傳 //ssl.gstatic... 沒有 https:）
+                  if (rawUrl.startsWith('//')) audioUrl = 'https:' + rawUrl;
+                  else if (rawUrl.startsWith('http')) audioUrl = rawUrl;
+                  else audioUrl = '';  // 不確定的 URL 一律清空，改用 TTS
+                  
+                  let foundDef = false;
+                  for (let m of entry.meanings) {
+                      for (let d of m.definitions) {
+                          if (d.definition && !foundDef) {
+                              engDef = d.definition;
+                              foundDef = true;
+                          }
+                          if (d.example && examplesRaw.length < 3) {
+                              examplesRaw.push(d.example);
+                          }
+                      }
+                  }
+              }
+              // 若字典 API 沒有例句，嘗試從 Datamuse 抓例句
+              if (examplesRaw.length === 0) {
+                  try {
+                      const dmEgRes = await fetch(`https://api.datamuse.com/words?ml=${encodeURIComponent(word)}&md=d&m
+ax=5`);
+                      if (dmEgRes.ok) {
+                          const dmEgJson = await dmEgRes.json();
+                          for (const item of dmEgJson) {
+                              if (item.defs) {
+                                  for (const def of item.defs) {
+                                      const parts2 = def.split('\t');
+                                      if (parts2[1] && parts2[1].length > 20 && !parts2[1].includes(word + '.')) {
+                                          examplesRaw.push(parts2[1]);
+                                          if (examplesRaw.length >= 2) break;
+                                      }
+                                  }
+                              }
+                              if (examplesRaw.length >= 2) break;
+                          }
+                      }
+                  } catch(e) {}
+              }
+              // 最終 fallback：用真實句型範本，不只是 "I am learning the word X"
+              if (examplesRaw.length === 0) {
+                  const templates = [
+                      `She showed great ${word} during the difficult times.`,
+                      `The concept of ${word} is essential in this field.`,
+                      `He described the situation as ${word}.`,
+                      `Understanding ${word} can help you communicate more effectively.`,
+                      `The teacher explained what ${word} means with a real-life example.`,
+                  ];
+                  examplesRaw.push(templates[Math.floor(Math.random() * templates.length)]);
+              }
+  
+              // Translate definition and all examples at once via Google Translate undocumented
+              let combinedString = `${word} ||| ${engDef}`;
+              examplesRaw.forEach(ex => combinedString += ` ||| ${ex}`);
+  
+              const tlUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-TW&dt=t&q=${enc
+odeURIComponent(combinedString)}`;
+              const tlRes = await fetch(tlUrl);
+              const tlJson = await tlRes.json();
+              
+              let translated = "";
+              if (tlJson && tlJson[0]) {
+                  tlJson[0].forEach(t => translated += t[0]);
+              }
+              
+              const parts = translated.split('|||').map(s => s.trim());
+              
+              let chiDefBase = parts[0] || '';
+              let chiDefExpl = parts[1] || '';
+              
+              let processedExamples = [];
+              for (let i = 0; i < examplesRaw.length; i++) {
+                  processedExamples.push({
+                      eng: examplesRaw[i],
+                      chi: parts[2 + i] || '翻譯遺失'
+                  });
+              }
+  
+              return {
+                  word, ipa, audioUrl, 
+                  freqScore, frequencyRaw,
+                  engDef, chiDef: `[${chiDefBase}] ${chiDefExpl}`,
+                  examples: processedExamples
+              };
+          } catch (e) {
+              console.error('Words API Error:', e);
+              return {
+                  word, ipa:'', audioUrl:'', freqScore: 1, frequencyRaw: 0,
+                  engDef: 'Network Error', chiDef: '連線錯誤，請檢查網路連線。',
+                  examples: []
+              };
+          }
+      }
+  
+      calculate();
+      loadInventory();
+      updateDateDisplay();
+  });
+  
+      </script>
+      <script>
+  
+      // ============================================================
+      //  🎮 英文益智遊戲系統  (20 Games)
+      // ============================================================
+      (function() {
+          const tabGamesBtn      = document.getElementById('tabGamesBtn');
+          const tabFlashcardBtn2 = document.getElementById('tabFlashcardBtn');
+          const tabArticleBtn2   = document.getElementById('tabArticleBtn');
+          const flashcardSection2 = document.getElementById('flashcardSection');
+
+
