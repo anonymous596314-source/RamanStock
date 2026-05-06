@@ -80,10 +80,37 @@ async function analysisFetchProxy(url, isJson = false) {
             const res = await fetch(targetUrl, fetchOptions);
             clearTimeout(timeoutId);
             
-            const buffer = await res.arrayBuffer();
+            let buffer = await res.arrayBuffer();
+
+            // --- 修復：GZIP 手動解壓偵測 ---
+            const uint8 = new Uint8Array(buffer);
+            if (uint8.length > 2 && uint8[0] === 0x1F && uint8[1] === 0x8B) {
+                log("📦 偵測到 GZIP 壓縮數據，正在嘗試手動解壓...");
+                try {
+                    const ds = new DecompressionStream('gzip');
+                    const writer = ds.writable.getWriter();
+                    writer.write(buffer);
+                    writer.close();
+                    buffer = await new Response(ds.readable).arrayBuffer();
+                    log("✅ GZIP 解壓成功");
+                } catch (gzErr) {
+                    log(`⚠️ GZIP 解壓失敗 (可能瀏覽器不支援): ${gzErr.message}`);
+                }
+            }
+
             let encoding = 'utf-8';
             if (targetUrl.includes('moneydj.com') || targetUrl.includes('fbs.com.tw')) encoding = 'big5';
-            const text = new TextDecoder(encoding).decode(buffer).trim();
+            
+            let text = new TextDecoder(encoding).decode(buffer).trim();
+
+            // --- 修復：智慧編碼校正 ---
+            // 如果預期是 Big5 但出現明顯的 UTF-8 HTML 報錯特徵，則切換
+            if (encoding === 'big5' && (text.includes('\uFFFD') || text.length < 500)) {
+                if (text.includes('<!DOCTYPE') || text.includes('<html') || text.includes('Cloudflare') || text.includes('Access Denied')) {
+                    log("🔍 偵測到原始數據可能是 UTF-8 (報錯頁面)，切換解碼...");
+                    text = new TextDecoder('utf-8').decode(buffer).trim();
+                }
+            }
 
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             
@@ -712,17 +739,24 @@ function parseMoneyDJInsider(html) {
         };
     }
     
-    // 如果失敗，嘗試抓取 <title> 來診斷是否被攔截
+    // 如果失敗，嘗試診斷原因
     let title = "No Title";
     const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
     if (titleMatch) title = titleMatch[1];
 
-    const snippet = html.substring(0, 150).replace(/[\r\n\t]/g, ' ').replace(/</g, '&lt;');
+    let snippet = html.substring(0, 150).replace(/[\r\n\t]/g, ' ').replace(/</g, '&lt;');
+    
+    // 檢查是否為常見的錯誤頁面
+    let errorReason = "Parse Failed";
+    if (html.includes('Cloudflare') || html.includes('captcha')) errorReason = "Blocked by Cloudflare/Captcha";
+    else if (html.includes('Access Denied') || html.includes('403 Forbidden')) errorReason = "Access Denied (403)";
+    else if (html.length < 1000) errorReason = "Page too small (Maybe error)";
+
     return { 
         type: 'none', 
         history: [], 
         trend: 0, 
-        sample: `Parse Failed. [${title}] Snippet: ${snippet}` 
+        sample: `${errorReason}. [${title}] Snippet: ${snippet}` 
     };
 }
 
