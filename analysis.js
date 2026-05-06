@@ -81,17 +81,25 @@ async function analysisFetchProxy(url, isJson = false) {
             clearTimeout(timeoutId);
             
             let buffer = await res.arrayBuffer();
+            let uint8 = new Uint8Array(buffer);
 
-            // --- 強化：更穩定的 GZIP 手動解壓 ---
-            const uint8 = new Uint8Array(buffer);
-            let isGzip = uint8.length > 2 && uint8[0] === 0x1F && uint8[1] === 0x8B;
+            // --- 強化：搜尋 GZIP 標頭 (可能被 Proxy 加入了干擾字元如 ESC) ---
+            let gzipIdx = -1;
+            for(let i=0; i<Math.min(uint8.length-2, 32); i++) {
+                if(uint8[i] === 0x1F && uint8[i+1] === 0x8B) {
+                    gzipIdx = i;
+                    break;
+                }
+            }
             
-            if (isGzip) {
-                log("📦 偵測到 GZIP 壓縮數據，正在嘗試手動解壓...");
+            if (gzipIdx !== -1) {
+                log(`📦 偵測到 GZIP 壓縮數據 (Offset: ${gzipIdx})，正在手動解壓...`);
                 try {
                     const ds = new DecompressionStream('gzip');
-                    const decompressedResponse = new Response(new Response(buffer).body.pipeThrough(ds));
+                    const sourceBuffer = gzipIdx === 0 ? buffer : buffer.slice(gzipIdx);
+                    const decompressedResponse = new Response(new Response(sourceBuffer).body.pipeThrough(ds));
                     buffer = await decompressedResponse.arrayBuffer();
+                    uint8 = new Uint8Array(buffer);
                     log("✅ GZIP 解壓成功");
                 } catch (gzErr) {
                     log(`⚠️ GZIP 解壓失敗: ${gzErr.message}`);
@@ -99,15 +107,27 @@ async function analysisFetchProxy(url, isJson = false) {
             }
 
             let encoding = 'utf-8';
-            if (targetUrl.includes('moneydj.com') || targetUrl.includes('fbs.com.tw')) encoding = 'big5';
+            if (targetUrl.includes('moneydj.com') || targetUrl.includes('fbs.com.tw')) {
+                // 優先檢查是否真的是 Big5。如果是 UTF-8，前幾個字節通常會有規律
+                const isUtf8 = (buf) => {
+                    let i = 0;
+                    while (i < Math.min(buf.length, 100)) {
+                        if (buf[i] < 0x80) i++;
+                        else if ((buf[i] & 0xE0) === 0xC0 && (buf[i+1] & 0xC0) === 0x80) i += 2;
+                        else if ((buf[i] & 0xF0) === 0xE0 && (buf[i+1] & 0xC0) === 0x80 && (buf[i+2] & 0xC0) === 0x80) i += 3;
+                        else return false;
+                    }
+                    return true;
+                };
+                encoding = isUtf8(uint8) ? 'utf-8' : 'big5';
+            }
             
             let text = new TextDecoder(encoding).decode(buffer).trim();
 
-            // --- 修復：智慧編碼校正 ---
-            // 如果預期是 Big5 但出現明顯的 UTF-8 HTML 報錯特徵，則切換
+            // --- 修復：智慧編碼校正 (針對報錯頁面) ---
             if (encoding === 'big5' && (text.includes('\uFFFD') || text.length < 500)) {
                 if (text.includes('<!DOCTYPE') || text.includes('<html') || text.includes('Cloudflare') || text.includes('Access Denied')) {
-                    log("🔍 偵測到原始數據可能是 UTF-8 (報錯頁面)，切換解碼...");
+                    log("🔍 偵測到報錯頁面可能是 UTF-8，切換解碼...");
                     text = new TextDecoder('utf-8').decode(buffer).trim();
                 }
             }
