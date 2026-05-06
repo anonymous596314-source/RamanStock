@@ -82,19 +82,19 @@ async function analysisFetchProxy(url, isJson = false) {
             
             let buffer = await res.arrayBuffer();
 
-            // --- 修復：GZIP 手動解壓偵測 ---
+            // --- 強化：更穩定的 GZIP 手動解壓 ---
             const uint8 = new Uint8Array(buffer);
-            if (uint8.length > 2 && uint8[0] === 0x1F && uint8[1] === 0x8B) {
+            let isGzip = uint8.length > 2 && uint8[0] === 0x1F && uint8[1] === 0x8B;
+            
+            if (isGzip) {
                 log("📦 偵測到 GZIP 壓縮數據，正在嘗試手動解壓...");
                 try {
                     const ds = new DecompressionStream('gzip');
-                    const writer = ds.writable.getWriter();
-                    writer.write(buffer);
-                    writer.close();
-                    buffer = await new Response(ds.readable).arrayBuffer();
+                    const decompressedResponse = new Response(new Response(buffer).body.pipeThrough(ds));
+                    buffer = await decompressedResponse.arrayBuffer();
                     log("✅ GZIP 解壓成功");
                 } catch (gzErr) {
-                    log(`⚠️ GZIP 解壓失敗 (可能瀏覽器不支援): ${gzErr.message}`);
+                    log(`⚠️ GZIP 解壓失敗: ${gzErr.message}`);
                 }
             }
 
@@ -679,7 +679,7 @@ function processInsiderData(raw, chipsData) {
     
     // 1. 優先嘗試 MoneyDJ 申報轉讓
     if (raw?.moneydj) {
-        result = parseMoneyDJInsider(raw.moneydj);
+        result = parseMoneyDJInsider(raw.moneydj, null); // 這裡暫不傳 buffer，因為邏輯在 parse 內部
     }
 
     // 2. 備援 A：解析 FinMind 董監持股明細
@@ -698,8 +698,16 @@ function processInsiderData(raw, chipsData) {
     return result;
 }
 
-function parseMoneyDJInsider(html) {
-    if (!html || typeof html !== 'string' || html.length < 500) return null;
+function parseMoneyDJInsider(html, rawBuffer) {
+    if (!html || typeof html !== 'string' || html.length < 500) {
+        // 如果傳入了原始 buffer，嘗試提取前幾個字節的 Hex 作為診斷
+        let hex = "N/A";
+        if (rawBuffer) {
+            const bytes = new Uint8Array(rawBuffer.slice(0, 8));
+            hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        }
+        return { type: 'none', history: [], trend: 0, sample: `Empty or Short Data. Hex: [${hex}]` };
+    }
     
     const history = [];
     let latestSample = "N/A";
@@ -746,6 +754,14 @@ function parseMoneyDJInsider(html) {
 
     let snippet = html.substring(0, 150).replace(/[\r\n\t]/g, ' ').replace(/</g, '&lt;');
     
+    // 診斷原始字節 (避免亂碼誤導)
+    let hex = "N/A";
+    try {
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(html.substring(0, 8));
+        hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    } catch(e) {}
+
     // 檢查是否為常見的錯誤頁面
     let errorReason = "Parse Failed";
     if (html.includes('Cloudflare') || html.includes('captcha')) errorReason = "Blocked by Cloudflare/Captcha";
@@ -756,7 +772,7 @@ function parseMoneyDJInsider(html) {
         type: 'none', 
         history: [], 
         trend: 0, 
-        sample: `${errorReason}. [${title}] Snippet: ${snippet}` 
+        sample: `${errorReason}. [${title}] Hex: ${hex} Snippet: ${snippet}` 
     };
 }
 
