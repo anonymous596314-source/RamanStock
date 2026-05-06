@@ -93,12 +93,13 @@ async function analysisFetchProxy(url, isJson = false) {
             }
             
             if (gzipIdx !== -1) {
-                log(`📦 偵測到 GZIP 壓縮數據 (Offset: ${gzipIdx})，正在手動解壓...`);
+                const sourceBuffer = gzipIdx === 0 ? uint8 : uint8.slice(gzipIdx);
+                log(`📦 偵測到 GZIP 壓縮數據 (Offset: ${gzipIdx}, Bytes: ${sourceBuffer[0].toString(16)} ${sourceBuffer[1].toString(16)})，正在手動解壓...`);
                 try {
                     const ds = new DecompressionStream('gzip');
-                    const sourceBuffer = gzipIdx === 0 ? buffer : buffer.slice(gzipIdx);
                     const decompressedResponse = new Response(new Response(sourceBuffer).body.pipeThrough(ds));
-                    buffer = await decompressedResponse.arrayBuffer();
+                    const decompressedBuffer = await decompressedResponse.arrayBuffer();
+                    buffer = decompressedBuffer;
                     uint8 = new Uint8Array(buffer);
                     log("✅ GZIP 解壓成功");
                 } catch (gzErr) {
@@ -708,11 +709,14 @@ function processInsiderData(raw, chipsData) {
         if (dirRes) result = dirRes;
     }
 
-    // 3. 備援 B：分析大股東分級趨勢
-    const holderData = chipsData?.holders || chipsData?.shareholding || [];
+    // 3. 備援 B：分析大股東分級趨勢 (集保)
+    const holderData = chipsData?.holderTrend || chipsData?.holders || chipsData?.shareholding || [];
     if ((!result || result.type === 'none') && holderData && holderData.length >= 2) {
         const chipRes = calculateLargeHolderTrend(holderData);
-        if (chipRes) result = chipRes;
+        if (chipRes) {
+            result = chipRes;
+            if (raw?.moneydj) result.sample = "MoneyDJ Failed, Fallback to Weekly Chips";
+        }
     }
 
     return result;
@@ -824,7 +828,21 @@ function calculateDirectorChanges(data) {
 
 function calculateLargeHolderTrend(data) {
     if (!data || data.length < 2) return null;
-    // 找出 Level 15 (400張) 或 Level 17 (1000張)
+    
+    // 如果是 holderTrend (包含 large/retail)
+    if (data[0].large !== undefined) {
+        const sorted = [...data].sort((a, b) => new Date(a.date) - new Date(b.date));
+        const latest = sorted[sorted.length - 1];
+        const prev = sorted[sorted.length - 2];
+        const diff = (latest.large || 0) - (prev.large || 0);
+        return {
+            type: 'fallback_chips',
+            history: [{ date: latest.date, totalChange: diff, isPercent: true, method: '400張大戶持股比變動' }],
+            trend: diff, isPercent: true, sample: 'Weekly Chips Trend OK'
+        };
+    }
+
+    // 如果是 raw holders (HoldingSharesLevel)
     const targetLevel = data.some(d => d.HoldingSharesLevel === '17' || d.HoldingSharesLevel === 17) ? 17 : 15;
     const levels = data.filter(d => d.HoldingSharesLevel == targetLevel).sort((a, b) => new Date(a.date) - new Date(b.date));
     
