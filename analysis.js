@@ -6,10 +6,7 @@ window.onerror = function(msg, url, line) {
 };
 
 // === UI & Initialization ===
-const analysisModal = document.getElementById('analysisModal');
-const closeAnalysisBtn = document.getElementById('closeAnalysisBtn');
-const analysisTitle = document.getElementById('analysisTitle');
-const analysisBody = document.getElementById('analysisBody');
+// UI elements are now managed in analysis_data.js
 
 // Close modal handlers
 closeAnalysisBtn.addEventListener('click', () => {
@@ -2042,28 +2039,8 @@ async function fetchInstitutionalMoneyDJ(symbol) {
     return null;
 }
 
-// === Rendering Logic ===
+// === Rendering Logic & Data moved to analysis_data.js ===
 
-function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, finData, marginData, institutionalData, avgCost = null, riskMetrics = null, insiderActivity = null, debugInfo = null, brokerData = null, peerCCCData = [], chipCosts = null, winnerBrokers = [], topSellers60 = []) {
-    if (!chartData) {
-        analysisBody.innerHTML = `
-            <div style="text-align:center; padding:60px 20px; background:rgba(255,255,255,0.02); border-radius:15px; border:1px dashed rgba(255,255,255,0.1);">
-                <div style="font-size:50px; margin-bottom:20px;">📡</div>
-                <div style="color:#f87171; font-size:20px; font-weight:700; margin-bottom:12px;">核心數據載入失敗 (v18)</div>
-                <div style="color:#cbd5e1; font-size:14px; line-height:1.6; margin-bottom:25px;">
-                    連線偵測結果：<br>
-                    <div id="fetchDiagnostic" style="font-size:11px; color:#cbd5e1; font-family:monospace; margin-top:10px; text-align:left; background:rgba(0,0,0,0.6); padding:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); max-height:150px; overflow-y:auto; line-height:1.5;">
-                        ${(window._fetchLogs && window._fetchLogs.length > 0) ? window._fetchLogs.slice(-8).join('<br>') : '⚠️ 無日誌記錄，請確認網路連線或重試'}
-                    </div>
-                </div>
-                <button onclick="openAnalysisModal('${symbol}', '${name}', '${avgCost || ''}', true)" 
-                        style="background:#3b82f6; color:white; border:none; padding:12px 30px; border-radius:12px; cursor:pointer; font-weight:700; font-size:15px; box-shadow:0 4px 15px rgba(59, 130, 246, 0.4);">
-                    🚀 嘗試終極重新連線
-                </button>
-            </div>
-        `;
-        return;
-    }
     const { currentPrice, ma, high52w, low52w, posIn52w, rsi14, bb, latestVol, avgVol5, kd, macd, price1m, price3m, mom6m, mom1y, mom2y, mom3y, mom4y, mom5y, momYTD } = chartData;
     
     // 計算均線排列與技術狀態 (修正 undefined 問題)
