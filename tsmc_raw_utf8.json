@@ -1,0 +1,27 @@
+﻿
+
+StatusCode        : 200
+StatusDescription : OK
+Content           : {"msg":"success","status":200,"data":[{"date":"2025-03-31","stock_id":"2330","type":"OTHNOE","value
+                    ":-1128212000.0,"origin_name":"\u5176\u4ed6\u6536\u76ca\u53ca\u8cbb\u640d\u6de8\u984d"},{"date":"20
+                    25...
+RawContent        : HTTP/1.1 200 OK
+                    Access-Control-Allow-Origin: *
+                    Vary: Accept-Encoding
+                    Transfer-Encoding: chunked
+                    Content-Type: application/json
+                    Date: Tue, 05 May 2026 07:06:24 GMT
+                    Server: uvicorn
+                    
+                    {"msg":"succ...
+Forms             : {}
+Headers           : {[Access-Control-Allow-Origin, *], [Vary, Accept-Encoding], [Transfer-Encoding, chunked], [Content-
+                    Type, application/json]...}
+Images            : {}
+InputFields       : {}
+Links             : {}
+ParsedHtml        : System.__ComObject
+RawContentLength  : 11108
+
+
+
