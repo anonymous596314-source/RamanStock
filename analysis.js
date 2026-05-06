@@ -135,6 +135,19 @@ async function analysisFetchProxy(url, isJson = false) {
 
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             
+            // --- 強化：檢查回傳內容是否為「垃圾數據」或「代理錯誤頁面」 ---
+            const isMoneyDJ = targetUrl.includes('moneydj.com') || targetUrl.includes('fbs.com.tw');
+            if (isMoneyDJ && !isJson) {
+                const lowText = text.toLowerCase();
+                const isGarbage = text.includes('\uFFFD') && !text.includes('<html');
+                const isShortError = text.length < 500 && (lowText.includes('error') || lowText.includes('forbidden') || lowText.includes('denied'));
+                
+                if (isGarbage || isShortError) {
+                    log(`⚠️ 偵測到無效數據或攔截頁面 (Length: ${text.length})，跳過此代理節點...`);
+                    throw new Error("無效的代理回傳內容");
+                }
+            }
+            
             if (isJson) {
                 try {
                     const parsed = JSON.parse(text);
@@ -1809,10 +1822,6 @@ async function fetchBrokerConcentration(symbol) {
     const rawSymbol = symbol.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
     
     const fetchForPeriod = async (days) => {
-        // 富邦的 URL 邏輯：
-        // 1日: zco.djhtm?a=SYMBOL
-        // 5日: zco_SYMBOL_2.djhtm
-        // 20日: zco_SYMBOL_4.djhtm
         let url;
         if (days === 1) {
             url = `https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco.djhtm?a=${rawSymbol}`;
@@ -1824,7 +1833,7 @@ async function fetchBrokerConcentration(symbol) {
         
         try {
             const html = await analysisFetchProxy(url, false);
-            if (!html) return null;
+            if (!html || html.length < 1000) return null;
 
             // 1. 提取合計買超/賣超張數與均價 (位於表格底部)
             const buySumMatch = html.match(/合計買超張數[\s\S]*?<td[^>]*>([\d,]+)[\s\S]*?平均買超成本[\s\S]*?<td[^>]*>([\d,.]+)/i);
