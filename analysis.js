@@ -59,12 +59,12 @@ async function analysisFetchProxy(url, isJson = false) {
     };
 
     const proxies = [
-        (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
         (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
         (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
         (url) => `https://yacdn.org/proxy/${encodeURIComponent(url)}`,
         (url) => `https://cors-proxy.org/?url=${encodeURIComponent(url)}`,
-        (url) => `https://tiny-cors-proxy.herokuapp.com/${url}`
+        (url) => `https://tiny-cors-proxy.herokuapp.com/${url}`,
+        (url) => `https://corsproxy.io/?${encodeURIComponent(url)}` // 放在最後，因為此代理最近常回傳損壞的 GZIP 數據
     ];
 
     async function tryFetch(targetUrl, useHeaders = true) {
@@ -135,16 +135,15 @@ async function analysisFetchProxy(url, isJson = false) {
 
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             
-            // --- 強化：檢查回傳內容是否為「垃圾數據」或「代理錯誤頁面」 ---
+            // --- 強化：檢查回傳內容是否為「垃圾數據」 ---
             const isMoneyDJ = targetUrl.includes('moneydj.com') || targetUrl.includes('fbs.com.tw');
             if (isMoneyDJ && !isJson) {
-                const lowText = text.toLowerCase();
-                const isGarbage = text.includes('\uFFFD') && !text.includes('<html');
-                const isShortError = text.length < 500 && (lowText.includes('error') || lowText.includes('forbidden') || lowText.includes('denied'));
+                const isGarbage = text.includes('\uFFFD') && !text.includes('<html') && !text.includes('<table');
+                const isBlocked = text.includes('Access Denied') || text.includes('Cloudflare') || text.includes('Captcha');
                 
-                if (isGarbage || isShortError) {
-                    log(`⚠️ 偵測到無效數據或攔截頁面 (Length: ${text.length})，跳過此代理節點...`);
-                    throw new Error("無效的代理回傳內容");
+                if (isGarbage || (text.length < 500 && isBlocked)) {
+                    log(`⚠️ 偵測到無效或攔截頁面 (Len:${text.length}, Garbage:${isGarbage})，嘗試下一個節點...`);
+                    throw new Error("Proxy Garbage/Blocked");
                 }
             }
             
