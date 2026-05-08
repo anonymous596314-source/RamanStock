@@ -4148,10 +4148,39 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
     <div class="modal-overlay" id="analysisModal">
         <div class="modal-content" style="max-width: 800px; display:flex; flex-direction:column; gap:16px;">
-            <div class="modal-header">
-                <h2 id="analysisTitle">📊 個股分析</h2>
-                <button class="close-btn" id="closeAnalysisBtn">&times;</button>
+            <div class="modal-header" style="flex-wrap: wrap; gap: 8px;">
+                <div style="display:flex; flex-direction:column; gap:4px; flex: 1; min-width: 0;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <h2 id="analysisTitle" style="margin:0; font-size:18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex-shrink: 1;">📊 個股分析</h2>
+                        <button id="toggleLargeFontBtn" class="responsive-large-font-btn">
+                            <span id="largeFontBtnText" class="btn-text-desktop">大字版</span>
+                            <span class="btn-icon-mobile">🔍</span>
+                        </button>
+                    </div>
+                    <div id="analysisHeaderPrice" style="font-size:16px; font-weight:800; color:#fbbf24; white-space:nowrap;"></div>
+                </div>
+                <button class="close-btn" id="closeAnalysisBtn" style="padding: 0 5px;">&times;</button>
             </div>
+            <script>
+                // 全局大字模式切換邏輯 (手機與電腦共用)
+                (function() {
+                    const btn = document.getElementById('toggleLargeFontBtn');
+                    const modalContent = document.querySelector('#analysisModal .modal-content');
+                    const btnText = document.getElementById('largeFontBtnText');
+                    
+                    btn.addEventListener('click', function() {
+                        modalContent.classList.toggle('large-font-mode');
+                        const isLarge = modalContent.classList.contains('large-font-mode');
+                        
+                        // 更新按鈕文字 (電腦版)
+                        btnText.textContent = isLarge ? '正常版' : '大字版';
+                        
+                        // 更新按鈕啟動狀態樣式 (手機與電腦共用)
+                        btn.classList.toggle('desktop-large-active', isLarge);
+                        btn.classList.toggle('magnifier-active', isLarge);
+                    });
+                })();
+            </script>
             <div class="modal-body" style="flex:1; overflow-y:auto; padding-right:8px;" id="analysisBody">
                 <div style="text-align:center; padding:40px; color:#94a3b8;">
                     <div class="spinner" style="width:30px; height:30px; border:3px solid rgba(255,255,255,0.1); border-top-color:#3b82f6; border-radius:50%; animation:spin 1s linear infinite; margin:0 auto 16px;"></div>

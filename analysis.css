@@ -301,6 +301,336 @@
     gap: 6px;
 }
 
+
+/* === Large Font Mode (老花友善模式) === */
+.large-font-mode .analysis-card-title {
+    font-size: 17px !important;
+    padding-bottom: 12px;
+}
+
+.large-font-mode .analysis-label {
+    font-size: 16px !important;
+}
+/* ============================================================
+   統一設計系統 V2：大字模式 (Extreme Large Mode)
+   目標：極致放大，針對說明與圖表進行二次強化
+   ============================================================ */
+
+/* 1. 核心數值與重要指標 (數字) — 統一為 30px，確保所有數值絕對一致 */
+.large-font-mode .analysis-val,
+.large-font-mode [class*="analysis-val"],
+.large-font-mode [style*="font-size:15px"],
+.large-font-mode [style*="font-size:16px"],
+.large-font-mode [style*="font-weight:800"],
+.large-font-mode [style*="font-weight:700"] {
+    font-size: 30px !important;
+    font-weight: 800 !important;
+    line-height: 1 !important;
+}
+
+/* 2. 圖表文字修正：再縮小 2px 以追求極致精確，與大字標題拉開層次 */
+.large-font-mode svg text[font-size="13"] {
+    font-size: 11px !important; /* 從 13px 再下調 2px，追求極致不重疊 */
+    font-weight: 800 !important;
+}
+.large-font-mode svg text[font-size="11"] { font-size: 12px !important; }
+.large-font-mode svg text[font-size="9"],
+.large-font-mode svg text[font-size="8"] {
+    font-size: 9px !important; /* 回歸極細註解大小 */
+}
+
+/* 3. 標題與小節標題 — 統一為 24px */
+.large-font-mode .analysis-card-title,
+.large-font-mode [style*="font-size:11px"][style*="border-bottom"],
+.large-font-mode [style*="font-size:11px"][style*="margin:10px 0"],
+.large-font-mode [style*="font-size:11px"][style*="margin: 12px 0"] {
+    font-size: 24px !important;
+    font-weight: 800 !important;
+    color: #ffffff !important;
+    border-bottom: 2px solid rgba(255,255,255,0.2) !important;
+    padding-bottom: 8px !important;
+    margin-top: 25px !important;
+}
+
+/* === 電腦版大字模式：強制單列展示，絕對不併排 === */
+.large-font-mode .analysis-grid {
+    grid-template-columns: 1fr !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 25px !important;
+    width: 100% !important;
+}
+
+.large-font-mode {
+    overflow-x: hidden !important; /* 消除橫向拉動條 */
+}
+
+/* 獲利三率 毛/營/淨 再放大 (原本 16px) */
+.large-font-mode [style*="font-size:8.5px"] {
+    font-size: 20px !important;
+}
+
+/* 內部人卡片高度修正：緊湊排列 & 姓名/信託字體一致 */
+.large-font-mode div[style*="min-height:60px"] {
+    min-height: 100px !important;
+    padding-bottom: 8px !important;
+}
+.large-font-mode div[style*="min-height:60px"] span[style*="color:#94a3b8"] {
+    font-size: 18px !important; /* 使 (信託) 與姓名一致 */
+}
+
+/* 估值河流圖下方 低估/合理/昂貴 標籤放大 */
+.large-font-mode div[style*="font-size:8px"][style*="justify-content:space-between"] span {
+    font-size: 18px !important;
+    font-weight: 700 !important;
+    color: #cbd5e1 !important;
+}
+
+/* 法人動態：連買/連賣天數特別放大 (30px) */
+.large-font-mode [style*="font-size:14px"][style*="font-weight:600"],
+.large-font-mode [style*="font-size:14px"][style*="font-weight: 600"] {
+    font-size: 30px !important;
+    font-weight: 800 !important;
+}
+
+/* 4. 說明文字、標籤與診斷建議 — 統一提升至 20px - 22px */
+.large-font-mode .analysis-label,
+.large-font-mode .analysis-summary,
+.large-font-mode div[style*="color:#fbbf24"], /* 獲利三率趨勢說明 */
+.large-font-mode [style*="font-size:10px"],
+.large-font-mode [style*="font-size:11px"],
+.large-font-mode [style*="font-size:12px"],
+.large-font-mode [style*="font-size:13px"],
+.large-font-mode span.has-info,
+.large-font-mode [style*="font-size:9.5px"] {
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    line-height: 1.7 !important;
+}
+
+/* 特別針對：內部人姓名、券商標籤、中長期動能標題等極小字 (原 9px) */
+.large-font-mode [style*="font-size:9px"],
+.large-font-mode [style*="font-size: 8px"],
+.large-font-mode span[style*="font-size:9px"] {
+    font-size: 18px !important;
+    font-weight: 700 !important;
+}
+
+/* 獲利三率趨勢說明文字再放大 */
+.large-font-mode div[style*="color:#fbbf24"][style*="font-size:11px"] {
+    font-size: 22px !important;
+}
+
+/* 佈局修正 */
+.large-font-mode .analysis-card {
+    padding: 22px !important;
+    margin-bottom: 35px !important;
+}
+
+.large-font-mode .analysis-stat-row {
+    padding: 20px 0 !important;
+}
+
+/* 配合表格/卡片放大後的最小高度 */
+.large-font-mode div[style*="min-height:80px"],
+.large-font-mode div[style*="min-height:85px"],
+.large-font-mode div[style*="min-height:60px"] {
+    min-height: 180px !important;
+    padding: 15px !important;
+}
+
+/* 📊 歷史估值區間圖柱放大 (2.5倍粗) — 將原本縮小的 5px 增加回 14px */
+.large-font-mode div[style*="height:14px"],
+.large-font-mode div[style*="height:12px"],
+.large-font-mode div[style*="height:6px"] {
+    height: 14px !important;
+    border-radius: 4px !important;
+}
+
+/* 圖表容器高度 */
+.large-font-mode .river-map-container,
+.large-font-mode [style*="height:110px"] {
+    height: 260px !important;
+    margin: 25px 0 40px !important;
+}
+
+/* 價格與動能九格標題修正 */
+.large-font-mode [style*="grid-template-columns: repeat(3, 1fr)"] {
+    grid-template-columns: 1fr 1fr 1fr !important; /* 電腦版維持三列，但卡片本體單列 */
+}
+@media (max-width: 640px) {
+    .large-font-mode [style*="grid-template-columns: repeat(3, 1fr)"] {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* 針對手機大字版：精確優化，修復圖表與比例條 */
+@media (max-width: 640px) {
+    /* 1. 核心網格變為單列，嚴禁併排 */
+    .large-font-mode .analysis-grid {
+        grid-template-columns: 1fr !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+
+    /* 2. 仿照電腦版：數據列恢復橫向排列 */
+    .large-font-mode .analysis-stat-row {
+        display: flex !important;
+        flex-direction: row !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        width: 100% !important;
+        padding: 8px 0 !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+        overflow: hidden !important;
+    }
+
+    /* 標籤：控制寬度防止溢出，保障右側數據 */
+    .large-font-mode .analysis-label {
+        font-size: 18px !important;
+        font-weight: 700 !important;
+        flex: 0 1 50% !important; /* 最大佔一半，可縮小 */
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        min-width: 0 !important;
+    }
+
+    /* 數值：強制顯示，絕不折行，保障資訊完整 */
+    .large-font-mode .analysis-val {
+        font-size: 28px !important;
+        font-weight: 800 !important;
+        flex: 1 0 auto !important; /* 強勢佔據剩餘空間 */
+        text-align: right !important;
+        margin-left: 10px !important;
+        white-space: nowrap !important; /* 嚴禁折行 */
+    }
+
+    /* 3. 找回圖表：恢復 Flex/Grid 佈局 */
+    .large-font-mode .chart-internal,
+    .large-font-mode .legend-horizontal,
+    .large-font-mode [style*="display:grid"],
+    .large-font-mode [style*="display: grid"],
+    .large-font-mode [style*="display:flex"],
+    .large-font-mode [style*="display: flex"] {
+        display: flex !important;
+    }
+
+    .large-font-mode [style*="grid-template-columns: 1fr 1fr"],
+    .large-font-mode [style*="grid-template-columns:1fr 1fr"] {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: 8px !important;
+    }
+
+    /* 標題與輔助文字 */
+    .large-font-mode div[style*="font-size:11px"],
+    .large-font-mode span[style*="font-size:11px"] {
+        font-size: 15px !important;
+    }
+
+    /* === 取消手機版表頭鎖定 === */
+    #analysisModal .modal-content {
+        display: block !important; /* 改為區塊佈局，讓內部自然流動 */
+        overflow-y: auto !important; /* 由外層統一捲動 */
+    }
+
+    #analysisModal .modal-body {
+        overflow-y: visible !important; /* 禁用內部捲動 */
+        height: auto !important;
+        padding-right: 0 !important;
+    }
+
+    #analysisModal .modal-header {
+        position: relative !important;
+        margin-bottom: 20px !important;
+    }
+}
+
+/* === 響應式按鈕設計系統 === */
+.responsive-large-font-btn {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #94a3b8;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.responsive-large-font-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.3);
+    color: #ffffff;
+}
+
+/* 電腦版啟動狀態 (全局) */
+.responsive-large-font-btn.desktop-large-active {
+    background: rgba(59, 130, 246, 0.2) !important;
+    color: #60a5fa !important;
+    border-color: #3b82f6 !important;
+}
+
+/* 手機版設定 */
+@media (max-width: 640px) {
+    .responsive-large-font-btn {
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        border-radius: 50%;
+        font-size: 18px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .btn-text-desktop { display: none; }
+    .btn-icon-mobile { display: inline; }
+}
+
+@media (min-width: 641px) {
+    .btn-text-desktop { display: inline; }
+    .btn-icon-mobile { display: none; }
+}
+
+/* 手機版放大鏡啟動狀態 */
+.responsive-large-font-btn.magnifier-active {
+    background: rgba(59, 130, 246, 0.3) !important;
+    color: #60a5fa !important;
+    border-color: #3b82f6 !important;
+    transform: scale(1.1);
+}
+
+/* 電腦版大字模式基礎設定 (維持原樣) */
+.large-font-mode:not(@media (max-width: 640px)) {
+    .analysis-label { font-size: 18px !important; }
+    .analysis-val { font-size: 22px !important; }
+}
+
+#toggleLargeFontBtn:hover { border-color: #63b3ed; color: #fff; }
+
+.analysis-label.has-info {
+    cursor: help;
+    text-decoration: underline dotted rgba(255, 255, 255, 0.4);
+}
+
+/* 針對數據點圓圈同步放大 */
+.large-font-mode svg circle[r="4"] { r: 6 !important; }
+.large-font-mode svg circle[r="2"] { r: 3 !important; }
+
+/* 指標與輔助線調整 */
+.large-font-mode div[style*="top:-18px"] {
+    top: -14px !important; /* 指標下移一點，避免與字重疊 */
+    font-size: 11px !important;
+}
+
+#toggleLargeFontBtn:hover { border-color: #63b3ed; color: #fff; }
+
 .analysis-label.has-info {
     cursor: pointer;
     position: relative;

@@ -6,16 +6,21 @@ window.onerror = function(msg, url, line) {
 };
 
 // === UI & Initialization ===
-// UI elements are now managed in analysis_data.js
+const analysisModal = document.getElementById('analysisModal');
+const closeAnalysisBtn = document.getElementById('closeAnalysisBtn');
+const analysisTitle = document.getElementById('analysisTitle');
+const analysisBody = document.getElementById('analysisBody');
 
 // Close modal handlers
 closeAnalysisBtn.addEventListener('click', () => {
     analysisModal.classList.remove('active');
+    if (window.toggleMagnifierMode) window.toggleMagnifierMode(false);
 });
 
 analysisModal.addEventListener('click', (e) => {
     if (e.target === analysisModal) {
         analysisModal.classList.remove('active');
+        if (window.toggleMagnifierMode) window.toggleMagnifierMode(false);
     }
 });
 
@@ -44,6 +49,10 @@ window.addEventListener('stockPricesUpdated', (e) => {
 // Caches for APIs to avoid repeated large fetches
 let twseBasicCache = null;
 
+// === FinMind API Mutex Queue ===
+// Prevents HTTP 429 Too Many Requests by serializing FinMind API calls
+let finmindQueue = Promise.resolve();
+
 // === Global Connection Engine (Moved to Top for Reliability) ===
 async function analysisFetchProxy(url, isJson = false) {
     window._fetchLogs = window._fetchLogs || [];
@@ -57,11 +66,11 @@ async function analysisFetchProxy(url, isJson = false) {
 
     const proxies = [
         (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+        (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
         (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+        (url) => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`, // JSON 模式 fallback
         (url) => `https://yacdn.org/proxy/${encodeURIComponent(url)}`,
-        (url) => `https://cors-proxy.org/?url=${encodeURIComponent(url)}`,
-        (url) => `https://tiny-cors-proxy.herokuapp.com/${url}`,
-        (url) => `https://corsproxy.io/?${encodeURIComponent(url)}` // 放在最後，因為此代理最近常回傳損壞的 GZIP 數據
+        (url) => `https://cors-proxy.org/?url=${encodeURIComponent(url)}`
     ];
 
     async function tryFetch(targetUrl, useHeaders = true) {
@@ -76,90 +85,20 @@ async function analysisFetchProxy(url, isJson = false) {
             }
             const res = await fetch(targetUrl, fetchOptions);
             clearTimeout(timeoutId);
-            
-            let buffer = await res.arrayBuffer();
-            let uint8 = new Uint8Array(buffer);
-
-            // --- 強化：搜尋 GZIP 標頭 (可能被 Proxy 加入了干擾字元如 ESC) ---
-            let gzipIdx = -1;
-            for(let i=0; i<Math.min(uint8.length-2, 32); i++) {
-                if(uint8[i] === 0x1F && uint8[i+1] === 0x8B) {
-                    gzipIdx = i;
-                    break;
-                }
-            }
-            
-            if (gzipIdx !== -1) {
-                const sourceBuffer = gzipIdx === 0 ? uint8 : uint8.slice(gzipIdx);
-                log(`📦 偵測到 GZIP 壓縮數據 (Offset: ${gzipIdx}, Bytes: ${sourceBuffer[0].toString(16)} ${sourceBuffer[1].toString(16)})，正在手動解壓...`);
-                try {
-                    const ds = new DecompressionStream('gzip');
-                    const decompressedResponse = new Response(new Response(sourceBuffer).body.pipeThrough(ds));
-                    const decompressedBuffer = await decompressedResponse.arrayBuffer();
-                    buffer = decompressedBuffer;
-                    uint8 = new Uint8Array(buffer);
-                    log("✅ GZIP 解壓成功");
-                } catch (gzErr) {
-                    log(`⚠️ GZIP 解壓失敗: ${gzErr.message}`);
-                }
-            }
-
+              const buffer = await res.arrayBuffer();
             let encoding = 'utf-8';
-            if (targetUrl.includes('moneydj.com') || targetUrl.includes('fbs.com.tw')) {
-                // 優先檢查是否真的是 Big5。如果是 UTF-8，前幾個字節通常會有規律
-                const isUtf8 = (buf) => {
-                    let i = 0;
-                    while (i < Math.min(buf.length, 100)) {
-                        if (buf[i] < 0x80) i++;
-                        else if ((buf[i] & 0xE0) === 0xC0 && (buf[i+1] & 0xC0) === 0x80) i += 2;
-                        else if ((buf[i] & 0xF0) === 0xE0 && (buf[i+1] & 0xC0) === 0x80 && (buf[i+2] & 0xC0) === 0x80) i += 3;
-                        else return false;
-                    }
-                    return true;
-                };
-                encoding = isUtf8(uint8) ? 'utf-8' : 'big5';
-            }
-            
+            if (targetUrl.includes('moneydj.com') || targetUrl.includes('fbs.com.tw')) encoding = 'big5';
             let text = new TextDecoder(encoding).decode(buffer).trim();
-
-            // --- 修復：智慧編碼校正 (針對報錯頁面) ---
-            if (encoding === 'big5' && (text.includes('\uFFFD') || text.length < 500)) {
-                if (text.includes('<!DOCTYPE') || text.includes('<html') || text.includes('Cloudflare') || text.includes('Access Denied')) {
-                    log("🔍 偵測到報錯頁面可能是 UTF-8，切換解碼...");
-                    text = new TextDecoder('utf-8').decode(buffer).trim();
-                }
-            }
-
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
             
-            // --- 強化：檢查回傳內容是否為「垃圾數據」 ---
-            const isMoneyDJ = targetUrl.includes('moneydj.com') || targetUrl.includes('fbs.com.tw');
-            if (isMoneyDJ && !isJson) {
-                const isGarbage = text.includes('\uFFFD') && !text.includes('<html') && !text.includes('<table');
-                const isBlocked = text.includes('Access Denied') || text.includes('Cloudflare') || text.includes('Captcha');
-                
-                if (isGarbage || (text.length < 500 && isBlocked)) {
-                    log(`⚠️ 偵測到無效或攔截頁面 (Len:${text.length}, Garbage:${isGarbage})，嘗試下一個節點...`);
-                    throw new Error("Proxy Garbage/Blocked");
-                }
-            }
-            
-            if (isJson) {
+            // 處理 AllOrigins 的 JSON 模式
+            if (targetUrl.includes('allorigins.win/get')) {
                 try {
-                    const parsed = JSON.parse(text);
-                    // 數據歸一化：確保無論是 Array 還是 Object 都能正確讀取 .data
-                    if (Array.isArray(parsed)) return { status: 200, data: parsed };
-                    if (parsed && !parsed.data && !parsed.chart) {
-                        // 如果物件本身沒有 .data，且看起來像是一組屬性，嘗試將其視為單一數據包裝
-                        return { status: 200, data: [parsed] };
-                    }
-                    return parsed;
-                } catch(e) {
-                    // 如果 JSON 解析失敗，檢查是否為空字串或錯誤訊息
-                    if (text.length < 5) throw new Error("回傳數據格式不正確 (Empty)");
-                    throw new Error("JSON 解析失敗");
-                }
+                    const outer = JSON.parse(text);
+                    text = outer.contents;
+                } catch(e) {}
             }
+            
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return text;
         } catch (e) {
             clearTimeout(timeoutId);
@@ -168,13 +107,51 @@ async function analysisFetchProxy(url, isJson = false) {
     }
 
     log(`🌐 發起請求: ${url.substring(0, 40)}...`);
+    
+    // 定義統一的解析器
+    const parseResponse = (text) => {
+        if (!isJson) return text;
+        try {
+            const parsed = JSON.parse(text);
+            if (parsed && parsed.status && parsed.status !== 200 && parsed.msg) {
+                throw new Error(`API ${parsed.status}: ${parsed.msg}`);
+            }
+            if (Array.isArray(parsed)) return { status: 200, data: parsed };
+            if (parsed && !parsed.data && !parsed.chart) {
+                if (parsed.msg || parsed.error) throw new Error(parsed.msg || parsed.error);
+                return { status: 200, data: [parsed] };
+            }
+            return parsed;
+        } catch(e) {
+            if (text.length < 5) throw new Error("回傳數據格式不正確 (Empty)");
+            throw new Error(`JSON 解析失敗: ${e.message.substring(0, 20)}`);
+        }
+    };
+
     // Attempt 1: Direct
     try {
-        const dRes = await tryFetch(url, true);
+        let dText;
+        if (url.includes('finmindtrade.com')) {
+            // Apply Mutex Queue to serialize FinMind requests with 400ms spacing
+            dText = await new Promise((resolve, reject) => {
+                finmindQueue = finmindQueue.then(async () => {
+                    try {
+                        const res = await tryFetch(url, true);
+                        await new Promise(r => setTimeout(r, 400));
+                        resolve(res);
+                    } catch(e) {
+                        await new Promise(r => setTimeout(r, 400));
+                        reject(e);
+                    }
+                });
+            });
+        } else {
+            dText = await tryFetch(url, true);
+        }
         log(`✅ 直連成功`);
-        return dRes;
+        return parseResponse(dText);
     } catch (e) {
-        log(`❌ 直連失敗: ${e.name === 'AbortError' ? '連線逾時' : '連線被拒'}`);
+        log(`❌ 直連失敗: ${e.message.substring(0, 15)}`);
     }
 
     // Attempt 2-N: Proxies
@@ -182,9 +159,9 @@ async function analysisFetchProxy(url, isJson = false) {
         const proxyUrl = proxies[i](url);
         try {
             log(`🔄 嘗試代理節點 ${i+1}...`);
-            const result = await tryFetch(proxyUrl, false);
+            const pText = await tryFetch(proxyUrl, false);
             log(`✅ 節點 ${i+1} 連線成功`);
-            return result;
+            return parseResponse(pText);
         } catch (e) {
             log(`❌ 節點 ${i+1} 失敗: ${e.message.substring(0, 15)}`);
         }
@@ -203,41 +180,47 @@ async function fetchStockChart(symbol) {
     const d = new Date();
     d.setDate(d.getDate() - 2100); 
     let startDate = d.toISOString().split('T')[0];
-    let url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${rawSymbol}&start_date=${startDate}`;
+    let url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${rawSymbol}&start_date=${startDate}&cb=${Date.now()}`;
     
-    let json = null;
     try {
         json = await analysisFetchProxy(url, true);
     } catch (e) {
-        log(`FM 5Y failed, trying 2Y...`);
-        const d2 = new Date(); d2.setDate(d2.getDate() - 730);
-        const url2 = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${rawSymbol}&start_date=${d2.toISOString().split('T')[0]}&cb=${Date.now()}`;
+        log(`FM 5Y failed (${e.message}), trying 1Y...`);
+        const d1y = new Date(); d1y.setDate(d1y.getDate() - 365);
+        const url1y = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${rawSymbol}&start_date=${d1y.toISOString().split('T')[0]}&cb=${Date.now()}`;
         try {
-            json = await analysisFetchProxy(url2, true);
-        } catch (e2) {
-            log(`FM 2Y failed, trying Yahoo...`);
+            json = await analysisFetchProxy(url1y, true);
+        } catch (e1y) {
+            log(`FM 1Y failed, trying 90D...`);
+            const d90 = new Date(); d90.setDate(d90.getDate() - 90);
+            const url90 = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${rawSymbol}&start_date=${d90.toISOString().split('T')[0]}&cb=${Date.now()}`;
             try {
-                const yahooSymbol = rawSymbol.length === 4 ? `${rawSymbol}.TW` : `${rawSymbol}.TWO`;
-                const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?range=5y&interval=1d`;
-                const yahooRes = await analysisFetchProxy(yahooUrl, true);
-                if (yahooRes?.chart?.result?.[0]) {
-                    const result = yahooRes.chart.result[0];
-                    const quotes = result.indicators.quote[0];
-                    const timestamps = result.timestamp;
-                    json = {
-                        data: timestamps.map((t, i) => ({
-                            date: new Date(t * 1000).toISOString().split('T')[0],
-                            close: quotes.close[i],
-                            max: quotes.high[i],
-                            min: quotes.low[i],
-                            trading_volume: quotes.volume[i]
-                        })).filter(x => x.close != null)
-                    };
-                    log(`Yahoo success`);
-                } else { throw new Error("Yahoo invalid"); }
-            } catch (e3) {
-                log(`All failed: ${e3.message}`);
-                throw e3;
+                json = await analysisFetchProxy(url90, true);
+            } catch (e90) {
+                log(`FM all failed, trying Yahoo...`);
+                try {
+                    const yahooSymbol = rawSymbol.length === 4 ? `${rawSymbol}.TW` : `${rawSymbol}.TWO`;
+                    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?range=5y&interval=1d&cb=${Date.now()}`;
+                    const yahooRes = await analysisFetchProxy(yahooUrl, true);
+                    const result = yahooRes?.chart?.result?.[0];
+                    if (result) {
+                        const quotes = result.indicators?.quote?.[0] || {};
+                        const timestamps = result.timestamp || [];
+                        json = {
+                            data: timestamps.map((t, i) => ({
+                                date: new Date(t * 1000).toISOString().split('T')[0],
+                                close: quotes.close ? quotes.close[i] : null,
+                                max: quotes.high ? quotes.high[i] : null,
+                                min: quotes.low ? quotes.low[i] : null,
+                                trading_volume: quotes.volume ? quotes.volume[i] : 0
+                            })).filter(x => x.close != null && x.close > 0)
+                        };
+                        log(`Yahoo success (${json.data.length} records)`);
+                    } else { throw new Error("Yahoo invalid response"); }
+                } catch (e3) {
+                    log(`All paths failed: ${e3.message}`);
+                    throw e3;
+                }
             }
         }
     }
@@ -245,15 +228,27 @@ async function fetchStockChart(symbol) {
     try {
         if (!json || !json.data || json.data.length === 0) {
             log(`Final data check failed. Json: ${!!json}, DataLen: ${json?.data?.length}`);
-            throw new Error(`無歷史股價資料 (代號: ${rawSymbol})。可能是該股票剛上市、代號輸入錯誤，或數據源暫時無法連線。`);
+            throw new Error(`無歷史股價資料 (代號: ${rawSymbol})。可能尚未產生有效交易價格或數據源連線受阻。`);
         }
-        log(`Processing ${json.data.length} records...`);
         
-        const data = json.data.filter(item => (item.close || item.Close) > 0);
-        const closes = data.map(item => item.close || item.Close);
-        const highs  = data.map(item => item.max || item.High || item.Max || item.close || 0);
-        const lows   = data.map(item => item.min || item.Low || item.Min || item.close || 0);
-        const vols   = data.map(item => item.Trading_Volume || item.trading_volume || item.volume || item.Volume || 0);
+        // 增加欄位容錯性
+        const getP = (item) => (item.close || item.Close || item.price || item.Price || 0);
+        const getV = (item) => (item.Trading_Volume || item.trading_volume || item.volume || item.Volume || item.Trading_Turnover || 0);
+        const getH = (item) => (item.max || item.High || item.Max || item.high || getP(item));
+        const getL = (item) => (item.min || item.Low || item.Min || item.low || getP(item));
+
+        const data = json.data.filter(item => getP(item) > 0);
+        if (data.length === 0) {
+            const keys = Object.keys(json.data[0] || {}).join(', ');
+            log(`Filtered data is empty. Original: ${json.data.length}. Keys: ${keys}`);
+            throw new Error(`股價解析失敗 (代號: ${rawSymbol})。<br>API 回傳欄位: [${keys}]<br>原因：找不到有效收盤價。請嘗試點擊「全數重抓」。`);
+        }
+        log(`Processing ${data.length} records...`);
+        
+        const closes = data.map(item => getP(item));
+        const highs  = data.map(item => getH(item));
+        const lows   = data.map(item => getL(item));
+        const vols   = data.map(item => getV(item));
         const currentPrice = closes[closes.length - 1];
         
         const ma5   = calcMA(closes, 5);
@@ -262,9 +257,10 @@ async function fetchStockChart(symbol) {
         const ma60  = calcMA(closes, 60);
         const ma120 = calcMA(closes, 120);
         const ma240 = calcMA(closes, 240);
-        const recentCloses = closes.slice(-252);
-        const high52w = Math.max(...recentCloses);
-        const low52w  = Math.min(...recentCloses);
+        const recentHighs = highs.slice(-252);
+        const recentLows  = lows.slice(-252);
+        const high52w = Math.max(...recentHighs);
+        const low52w  = Math.min(...recentLows);
         const posIn52w = (high52w - low52w) > 0 ? safeFix(((currentPrice - low52w) / (high52w - low52w) * 100), 1) : "0.0";
         const rsi14 = calcRSI(closes, 14);
         const bb = calcBollinger(closes, 20, 2);
@@ -295,19 +291,17 @@ async function fetchStockChart(symbol) {
     }
 }
 
-async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = false) {
+async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = false, partialResults = null) {
     analysisModal.classList.add('active');
 
-    
-    
     // Show Loading
     analysisBody.innerHTML = `
         <div class="analysis-loading">
             <div class="analysis-spinner"></div>
-            <span id="analysisLoadingStatus">正在建立安全連線...</span>
+            <span id="analysisLoadingStatus">${partialResults ? '正在修補缺失數據...' : '正在建立安全連線...'}</span>
             <div style="margin-top:15px;">
                 <div id="analysisProgressBar" style="width:200px; height:4px; background:rgba(255,255,255,0.1); border-radius:2px; margin:0 auto 10px; overflow:hidden;">
-                    <div id="analysisProgressInner" style="width:10%; height:100%; background:#3b82f6; transition:width 0.3s;"></div>
+                    <div id="analysisProgressInner" style="width:${partialResults ? '50' : '10'}%; height:100%; background:#3b82f6; transition:width 0.3s;"></div>
                 </div>
                 <button onclick="openAnalysisModal('${symbol}', '${name}', '${avgCost || ''}', true)" 
                         style="background:transparent; color:#94a3b8; border:1px solid #475569; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:11px;">
@@ -326,62 +320,38 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
 
     let finalSymbol = symbol.trim().toUpperCase();
     let displayName = name;
-    // 如果輸入不是數字，則嘗試將其解析為股票代號
-    if (!/^\d{4,6}$/.test(finalSymbol)) {
-        analysisBody.innerHTML = `
-            <div class="analysis-loading">
-                <div class="analysis-spinner"></div>
-                <span>正在將名稱「${symbol}」轉換為代號...</span>
-                <div style="margin-top:10px;">
-                    <button onclick="openAnalysisModal('${symbol}', '${name}', '${avgCost || ''}', true)" 
-                            style="background:transparent; color:#94a3b8; border:1px solid #475569; padding:4px 10px; border-radius:5px; cursor:pointer; font-size:10px;">
-                        🔄 取消並強制重試
-                    </button>
-                </div>
-            </div>
-        `;
-        try {
-            // 優先從本地快取或 API 獲取完整股票清單
-            if (!window.allStockInfoCache) {
-                const json = await analysisFetchProxy(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo`, true);
-                if (json && json.data) window.allStockInfoCache = json.data;
-            }
-            
-            if (window.allStockInfoCache) {
-                const found = window.allStockInfoCache.find(x => x.stock_name === symbol || x.stock_id === symbol);
-                if (found) {
-                    finalSymbol = found.stock_id;
-                    displayName = found.stock_name;
-                } else {
-                    // 模糊匹配 (選第一個)
-                    const fuzzy = window.allStockInfoCache.find(x => x.stock_name.includes(symbol));
-                    if (fuzzy) {
-                        finalSymbol = fuzzy.stock_id;
-                        displayName = fuzzy.stock_name;
-                    } else {
-                        throw new Error(`找不到股票名稱「${symbol}」對應的代號`);
-                    }
+    
+    // 全域緩存與名稱解析邏輯：確保輸入代號時也能顯示正確名稱
+    try {
+        if (!window.allStockInfoCache) {
+            const json = await analysisFetchProxy(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo`, true);
+            if (json && json.data) window.allStockInfoCache = json.data;
+        }
+        
+        if (window.allStockInfoCache) {
+            // 優先比對代號，其次比對名稱
+            const found = window.allStockInfoCache.find(x => x.stock_id === finalSymbol || x.stock_name === symbol);
+            if (found) {
+                finalSymbol = found.stock_id;
+                displayName = found.stock_name;
+            } else if (!/^\d{4,6}$/.test(finalSymbol)) {
+                // 如果輸入不是數字且完全匹配失敗，嘗試模糊比對
+                const fuzzy = window.allStockInfoCache.find(x => x.stock_name.includes(symbol));
+                if (fuzzy) {
+                    finalSymbol = fuzzy.stock_id;
+                    displayName = fuzzy.stock_name;
                 }
             }
-        } catch(e) {
-            analysisBody.innerHTML = `
-                <div style="text-align:center; padding:40px;">
-                    <div style="font-size:40px; margin-bottom:20px;">🔍</div>
-                    <div style="color:#f87171; font-size:16px; font-weight:700;">解析失敗</div>
-                    <div style="color:#cbd5e1; margin-top:8px; margin-bottom:20px;">${e.message}</div>
-                    <button onclick="openAnalysisModal('${symbol}', '${name}', '${avgCost || ''}')" 
-                            style="background:rgba(255,255,255,0.1); color:white; border:1px solid rgba(255,255,255,0.2); padding:8px 16px; border-radius:8px; cursor:pointer; font-size:13px;">
-                        🔄 重新嘗試解析
-                    </button>
-                    <div style="color:#94a3b8; font-size:12px; margin-top:16px;">提示：請嘗試輸入完整的 4 位數代號 (例如: 2330)</div>
-                </div>`;
-            return;
         }
+    } catch(e) {
+        console.warn("Stock info resolution failed", e);
     }
 
-    analysisTitle.textContent = `📊 ${displayName} (${finalSymbol}) 分析報告 (v18修復版)`;
+    analysisTitle.textContent = `📊 ${displayName} (${finalSymbol}) 分析報告`;
+    const headerPrice = document.getElementById('analysisHeaderPrice');
+    if (headerPrice) headerPrice.textContent = ''; // 清空等待載入
     window._fetchLogs = window._fetchLogs || [];
-    window._fetchLogs.push(`--- 開始分析 ${finalSymbol} (${new Date().toLocaleTimeString()}) ---`);
+    window._fetchLogs.push(`--- 開始分析 ${finalSymbol} (${new Date().toLocaleTimeString()}) ${partialResults ? '[PARTIAL RETRY]' : ''} ---`);
 
     try {
         if (forceRefresh) {
@@ -390,13 +360,9 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
         }
         
         const cacheKey = `${finalSymbol}_v12`; 
-        let cachedResults = forceRefresh ? null : getCachedAnalysis(cacheKey);
+        let cachedResults = (forceRefresh || partialResults) ? null : getCachedAnalysis(cacheKey);
         
-        // 自動修復：如果快取中的核心數據是空的，則強制重新抓取
-        if (cachedResults && !cachedResults[0]) {
-            window._fetchLogs.push(`[Cache] 偵測到失效快取，自動轉為網路抓取`);
-            cachedResults = null;
-        }
+        if (cachedResults && !cachedResults[0]) cachedResults = null;
 
         let results;
         if (cachedResults) {
@@ -406,54 +372,62 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
             let completedCount = 0;
             const totalTasks = 10;
             
+            // 如果有 partialResults，先初始化 results
+            results = partialResults || new Array(10).fill(null);
+            
             const taskDone = (msg) => {
                 completedCount++;
                 updateStatus(msg, Math.min(95, Math.round((completedCount / totalTasks) * 100)));
             };
 
-            window._fetchLogs.push(`[Step] Preparing fetchers...`);
+            let pChart = null;
+            let pChips = null;
+
             const fetchers = [
+                () => { pChart = (async () => { if (results[0]) { taskDone("跳過已載入股價"); return results[0]; } const r = await fetchStockChart(finalSymbol); taskDone("股價數據 OK"); return r; })(); return pChart; },
+                async () => { if (results[1]) { taskDone("跳過基本資料"); return results[1]; } await wait(50); const r = await fetchTWSEBasic(finalSymbol); taskDone("基本資料 OK"); return r; },
+                () => { pChips = (async () => { if (results[2]) { taskDone("跳過籌碼數據"); return results[2]; } await wait(100); const r = await fetchStockChips(finalSymbol); taskDone("籌碼數據 OK"); return r; })(); return pChips; },
+                async () => { if (results[3]) { taskDone("跳過營收數據"); return results[3]; } await wait(150); const r = await fetchFinMindRevenue(finalSymbol); taskDone("營收數據 OK"); return r; },
+                async () => { if (results[4]) { taskDone("跳過融資融券"); return results[4]; } await wait(200); const r = await fetchFinMindMargin(finalSymbol); taskDone("融資融券 OK"); return r; },
+                async () => { if (results[5]) { taskDone("跳過法人動態"); return results[5]; } await wait(250); const r = await fetchFinMindInstitutional(finalSymbol, 0); taskDone("法人動態 OK"); return r; },
                 async () => { 
-                    window._fetchLogs.push(`[Step] Triggering Chart Fetch...`);
-                    const r = await fetchStockChart(finalSymbol); 
-                    taskDone("股價數據 OK"); return r; 
+                    if (results[6]) { taskDone("跳過財務指標"); return results[6]; } 
+                    await wait(300); 
+                    const chart = await pChart;
+                    const chips = await pChips;
+                    const cp = chart?.currentPrice || 0;
+                    const sh = chips?.shares || 0;
+                    const r = await fetchFinMindFinancial(finalSymbol, cp, sh); 
+                    taskDone("財務指標 OK"); 
+                    return r; 
                 },
-                async () => { await wait(50); const r = await fetchTWSEBasic(finalSymbol); taskDone("基本資料 OK"); return r; },
-                async () => { await wait(100); const r = await fetchStockChips(finalSymbol); taskDone("籌碼數據 OK"); return r; },
-                async () => { await wait(150); const r = await fetchFinMindRevenue(finalSymbol); taskDone("營收數據 OK"); return r; },
-                async () => { await wait(200); const r = await fetchFinMindMargin(finalSymbol); taskDone("融資融券 OK"); return r; },
-                async () => { await wait(250); const r = await fetchFinMindInstitutional(finalSymbol, 0); taskDone("法人動態 OK"); return r; },
-                async () => { await wait(300); const r = await fetchFinMindFinancial(finalSymbol, 0, 0); taskDone("財務指標 OK"); return r; },
                 async () => { 
+                    if (results[7]) { taskDone("跳過市場數據"); return results[7]; }
                     await wait(350);
                     const d = new Date(); d.setDate(d.getDate() - 500);
-                    const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=TAIEX&start_date=${d.toISOString().split('T')[0]}`;
-                    const res = await analysisFetchProxy(url, true);
+                    const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=TAIEX&start_date=${d.toISOString().split('T')[0]}&cb=${Date.now()}`;
+                    const res = await analysisFetchProxy(url, true).catch(() => null);
                     taskDone("市場數據 OK");
                     return res?.data || null;
                 },
                 async () => {
+                    if (results[8]) { taskDone("跳過內部人"); return results[8]; }
                     await wait(400);
                     const res = { moneydj: null, director: null };
-                    try {
-                        const url = `https://concords.moneydj.com/z/zc/zck/zck_${finalSymbol}.djhtm`;
-                        res.moneydj = await analysisFetchProxy(url, false);
-                    } catch(e) {}
+                    try { const url = `https://concords.moneydj.com/z/zc/zck/zck_${finalSymbol}.djhtm`; res.moneydj = await analysisFetchProxy(url, false); } catch(e) {}
                     taskDone("內部人數據 OK");
                     return res;
                 },
-                async () => { await wait(450); const r = await fetchBrokerConcentration(finalSymbol); taskDone("分點籌碼 OK"); return r; }
+                async () => { if (results[9]) { taskDone("跳過分點籌碼"); return results[9]; } await wait(450); const r = await fetchBrokerConcentration(finalSymbol); taskDone("分點籌碼 OK"); return r; }
             ];
             
-            window._fetchLogs.push(`[Step] Executing Promise.all...`);
             results = await Promise.all(fetchers.map(f => f()));
-            window._fetchLogs.push(`[Step] Promise.all completed.`);
-            
-            if (!cachedResults) {
-                setCachedAnalysis(cacheKey, results);
-            }
+            setCachedAnalysis(cacheKey, results);
         }
 
+        // 保存最後一次結果供局部重試使用
+        window._lastAnalysisResults = results;
+        
         const [chartData, twseBasic, chipsData, revData, marginData, instDataFinMind, finDataRaw, marketDataRaw, insiderDataRaw, brokerData] = results;
 
         // 獲取同業專業對比數據 (延後獲取)
@@ -473,8 +447,9 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
 
         let winnerBrokers = [];
         let topSellers60 = [];
-        if (brokerData && chartData?.prices) {
-            const currentPrice = chartData.prices[chartData.prices.length - 1].close;
+        if (brokerData && chartData?.prices && chartData.prices.length > 0) {
+            const lastPriceObj = chartData.prices[chartData.prices.length - 1];
+            const currentPrice = lastPriceObj ? (lastPriceObj.close || lastPriceObj.Close) : 0;
             const res = identifyWinnerBrokers(brokerData, currentPrice);
             winnerBrokers = res.winners;
             topSellers60 = res.sellers;
@@ -497,12 +472,22 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
         
         const finData = finDataRaw;
 
+        // --- 新增：估計融資維持率計算 (當 API 未提供時) ---
+        if (marginData && !marginData.marginMaintenance && chartData?.ma?.ma60 && chartData?.currentPrice) {
+            // 估計成本基準使用 60 日均線，融資成數以台股標準 6 成 (0.6) 計算
+            // 公式：(目前股價 / (成本基準 * 0.6)) * 100
+            const estimatedCost = chartData.ma.ma60;
+            marginData.estimatedMMR = (chartData.currentPrice / (estimatedCost * 0.6)) * 100;
+        }
+
         if (!cachedResults) {
             setCachedAnalysis(cacheKey, results);
         }
 
         renderAnalysis(finalSymbol, displayName, chartData, twseBasic, chipsData, revData, finData, marginData, institutionalData, avgCost, riskMetrics, insiderActivity, debugInfo, brokerData, peerCCCData, chipCosts, winnerBrokers, topSellers60);
     } catch (err) {
+        // 發生錯誤時也確保放大鏡關閉
+        if (window.toggleMagnifierMode) window.toggleMagnifierMode(false);
         console.error("Analysis fetch error:", err);
         analysisBody.innerHTML = `
             <div style="text-align:center; padding:40px;">
@@ -555,16 +540,30 @@ function calcMA(closes, period) {
 }
 
 function calcRSI(closes, period = 14) {
-    if (closes.length < period + 1) return null;
-    const recent = closes.slice(-(period + 1));
-    let gains = 0, losses = 0;
-    for (let i = 1; i < recent.length; i++) {
-        const diff = recent[i] - recent[i - 1];
-        if (diff > 0) gains += diff;
-        else losses += Math.abs(diff);
+    if (closes.length <= period) return null;
+    
+    // 使用最近 150 筆資料進行計算以確保 Wilder's 平滑值穩定
+    const lookback = Math.min(closes.length, 150);
+    const data = closes.slice(-lookback);
+    
+    const gains = [];
+    const losses = [];
+    for (let i = 1; i < data.length; i++) {
+        const diff = data[i] - data[i - 1];
+        gains.push(diff > 0 ? diff : 0);
+        losses.push(diff < 0 ? Math.abs(diff) : 0);
     }
-    const avgGain = gains / period;
-    const avgLoss = losses / period;
+    
+    // 1. 計算初始種子 (前 period 期的 SMA)
+    let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    let avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    
+    // 2. 使用 Wilder's 平滑公式迭代其餘數據
+    for (let i = period; i < gains.length; i++) {
+        avgGain = (avgGain * (period - 1) + gains[i]) / period;
+        avgLoss = (avgLoss * (period - 1) + losses[i]) / period;
+    }
+    
     if (avgLoss === 0) return 100;
     const rs = avgGain / avgLoss;
     const rsiVal = 100 - (100 / (1 + rs));
@@ -572,10 +571,22 @@ function calcRSI(closes, period = 14) {
 }
 
 function calcEMA(data, period) {
+    if (data.length < period) return data.map(v => v); 
     const k = 2 / (period + 1);
-    let ema = [data[0]];
-    for (let i = 1; i < data.length; i++) {
-        ema.push(data[i] * k + ema[i-1] * (1 - k));
+    const ema = new Array(data.length).fill(0);
+    
+    // 業界標準：先算前 N 期的 SMA 作為 EMA 的種子起始值
+    const smaSeed = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    ema[period - 1] = smaSeed;
+    
+    // 為了保持陣列長度一致，種子之前的數值用原始數據填充
+    for (let i = 0; i < period - 1; i++) {
+        ema[i] = data[i];
+    }
+    
+    // 從種子後第一筆開始套用 EMA 公式
+    for (let i = period; i < data.length; i++) {
+        ema[i] = data[i] * k + ema[i-1] * (1 - k);
     }
     return ema;
 }
@@ -598,7 +609,7 @@ function calcBollinger(prices, period, stdDev) {
     if (prices.length < period) return null;
     const mid = calcMA(prices.slice(-period), period);
     const sumSq = prices.slice(-period).reduce((a, b) => a + Math.pow(b - mid, 2), 0);
-    const sigma = Math.sqrt(sumSq / period);
+    const sigma = Math.sqrt(sumSq / Math.max(1, period - 1));
     return {
         upper: parseFloat(safeFix(mid + sigma * stdDev, 2)),
         mid: parseFloat(safeFix(mid, 2)),
@@ -610,7 +621,8 @@ function calcKD(highs, lows, closes, period = 9) {
     if (closes.length < period) return null;
     let k = 50, d = 50;
     // Iterate to stabilize KD values
-    const startIdx = Math.max(0, closes.length - 60); // Check last 60 days for stabilization
+    // 增加穩定化天數至 120 天，讓 K/D 初始種子值 (50) 的衝擊充分平滑消散
+    const startIdx = Math.max(0, closes.length - 120); 
     for (let i = startIdx; i < closes.length; i++) {
         const start = Math.max(0, i - period + 1);
         const highPeriod = Math.max(...highs.slice(start, i + 1));
@@ -709,7 +721,7 @@ function processInsiderData(raw, chipsData) {
     
     // 1. 優先嘗試 MoneyDJ 申報轉讓
     if (raw?.moneydj) {
-        result = parseMoneyDJInsider(raw.moneydj, null); // 這裡暫不傳 buffer，因為邏輯在 parse 內部
+        result = parseMoneyDJInsider(raw.moneydj);
     }
 
     // 2. 備援 A：解析 FinMind 董監持股明細
@@ -718,29 +730,18 @@ function processInsiderData(raw, chipsData) {
         if (dirRes) result = dirRes;
     }
 
-    // 3. 備援 B：分析大股東分級趨勢 (集保)
-    const holderData = chipsData?.holderTrend || chipsData?.holders || chipsData?.shareholding || [];
+    // 3. 備援 B：分析大股東分級趨勢
+    const holderData = chipsData?.holders || chipsData?.shareholding || [];
     if ((!result || result.type === 'none') && holderData && holderData.length >= 2) {
         const chipRes = calculateLargeHolderTrend(holderData);
-        if (chipRes) {
-            result = chipRes;
-            if (raw?.moneydj) result.sample = "MoneyDJ Failed, Fallback to Weekly Chips";
-        }
+        if (chipRes) result = chipRes;
     }
 
     return result;
 }
 
-function parseMoneyDJInsider(html, rawBuffer) {
-    if (!html || typeof html !== 'string' || html.length < 500) {
-        // 如果傳入了原始 buffer，嘗試提取前幾個字節的 Hex 作為診斷
-        let hex = "N/A";
-        if (rawBuffer) {
-            const bytes = new Uint8Array(rawBuffer.slice(0, 8));
-            hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
-        }
-        return { type: 'none', history: [], trend: 0, sample: `Empty or Short Data. Hex: [${hex}]` };
-    }
+function parseMoneyDJInsider(html) {
+    if (!html || typeof html !== 'string' || html.length < 500) return null;
     
     const history = [];
     let latestSample = "N/A";
@@ -780,32 +781,17 @@ function parseMoneyDJInsider(html, rawBuffer) {
         };
     }
     
-    // 如果失敗，嘗試診斷原因
+    // 如果失敗，嘗試抓取 <title> 來診斷是否被攔截
     let title = "No Title";
     const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
     if (titleMatch) title = titleMatch[1];
 
-    let snippet = html.substring(0, 150).replace(/[\r\n\t]/g, ' ').replace(/</g, '&lt;');
-    
-    // 診斷原始字節 (避免亂碼誤導)
-    let hex = "N/A";
-    try {
-        const encoder = new TextEncoder();
-        const bytes = encoder.encode(html.substring(0, 8));
-        hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
-    } catch(e) {}
-
-    // 檢查是否為常見的錯誤頁面
-    let errorReason = "Parse Failed";
-    if (html.includes('Cloudflare') || html.includes('captcha')) errorReason = "Blocked by Cloudflare/Captcha";
-    else if (html.includes('Access Denied') || html.includes('403 Forbidden')) errorReason = "Access Denied (403)";
-    else if (html.length < 1000) errorReason = "Page too small (Maybe error)";
-
+    const snippet = html.substring(0, 150).replace(/[\r\n\t]/g, ' ').replace(/</g, '&lt;');
     return { 
         type: 'none', 
         history: [], 
         trend: 0, 
-        sample: `${errorReason}. [${title}] Hex: ${hex} Snippet: ${snippet}` 
+        sample: `Parse Failed. [${title}] Snippet: ${snippet}` 
     };
 }
 
@@ -837,21 +823,7 @@ function calculateDirectorChanges(data) {
 
 function calculateLargeHolderTrend(data) {
     if (!data || data.length < 2) return null;
-    
-    // 如果是 holderTrend (包含 large/retail)
-    if (data[0].large !== undefined) {
-        const sorted = [...data].sort((a, b) => new Date(a.date) - new Date(b.date));
-        const latest = sorted[sorted.length - 1];
-        const prev = sorted[sorted.length - 2];
-        const diff = (latest.large || 0) - (prev.large || 0);
-        return {
-            type: 'fallback_chips',
-            history: [{ date: latest.date, totalChange: diff, isPercent: true, method: '400張大戶持股比變動' }],
-            trend: diff, isPercent: true, sample: 'Weekly Chips Trend OK'
-        };
-    }
-
-    // 如果是 raw holders (HoldingSharesLevel)
+    // 找出 Level 15 (400張) 或 Level 17 (1000張)
     const targetLevel = data.some(d => d.HoldingSharesLevel === '17' || d.HoldingSharesLevel === 17) ? 17 : 15;
     const levels = data.filter(d => d.HoldingSharesLevel == targetLevel).sort((a, b) => new Date(a.date) - new Date(b.date));
     
@@ -952,7 +924,7 @@ async function fetchStockChips(symbol) {
     const rawSymbol = symbol.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
     
     // --- 並行執行所有子請求 ---
-    const [jsonDiv, jsonInfo, jsonShare, mdjHtmls, jsonMargin, jsonHolders, jsonPledge] = await Promise.all([
+    const [jsonDiv, jsonInfo, jsonShare, mdjHtmls, jsonMargin, jsonHolders, jsonPledgeData] = await Promise.all([
         (async () => {
             try {
                 const dDiv = new Date(); dDiv.setDate(dDiv.getDate() - 7000); 
@@ -996,11 +968,17 @@ async function fetchStockChips(symbol) {
             } catch(e) { return null; }
         })(),
         (async () => {
-            try {
-                const dPledge = new Date(); dPledge.setDate(dPledge.getDate() - 60);
-                const urlPledge = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDirectorShareholding&data_id=${rawSymbol}&start_date=${dPledge.toISOString().split('T')[0]}`;
-                return await analysisFetchProxy(urlPledge, true);
-            } catch(e) { return null; }
+            // 董監質押與持股明細 (含 FinMind API 與 MoneyDJ 備援)
+            const dPledge = new Date(); dPledge.setDate(dPledge.getDate() - 60);
+            const urlFinMind = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDirectorShareholding&data_id=${rawSymbol}&start_date=${dPledge.toISOString().split('T')[0]}&cb=${Date.now()}`;
+            // 切換至免登入的券商代理版本以確保能抓取原始數據
+            const urlMoneyDJ = `https://fubon-ebrokerdj.fbs.com.tw/z/zc/zck/zck_${rawSymbol}.djhtm`;
+            
+            const [fm, mdj] = await Promise.all([
+                analysisFetchProxy(urlFinMind, true).catch(() => null),
+                analysisFetchProxy(urlMoneyDJ, false).catch(() => null)
+            ]);
+            return { fm, mdj };
         })()
     ]);
 
@@ -1170,9 +1148,34 @@ async function fetchStockChips(symbol) {
     }
 
 
-    // --- 6. 處理董監質押 ---
+    // --- 6. 處理董監質押 (含 MoneyDJ 深度解析) ---
     let pledgeRatio = null;
-    if (jsonPledge && jsonPledge.data && jsonPledge.data.length > 0) {
+    const { fm: jsonPledge, mdj: htmlPledge } = jsonPledgeData || {};
+    
+    // 優先嘗試解析 MoneyDJ (通常資料較完整且無權限限制)
+    if (htmlPledge && typeof htmlPledge === 'string') {
+        const rows = htmlPledge.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
+        let totalHold = 0;
+        let totalPledged = 0;
+        for (let row of rows) {
+            // 篩選董監事行
+            if (row.includes('董事') || row.includes('監察人') || row.includes('代表')) {
+                const cells = row.match(/<td[^>]*>([\s\S]*?)<\/td>/gi) || [];
+                // 根據最新探測，券商版表格索引為：持股(2), 質押(4), 總數為 6 欄
+                if (cells.length >= 6) {
+                    const clean = (c) => c.replace(/<[^>]*>/g, '').trim().replace(/,/g, '');
+                    const hold = parseFloat(clean(cells[2])) || 0;
+                    const pledged = parseFloat(clean(cells[4])) || 0;
+                    totalHold += hold;
+                    totalPledged += pledged;
+                }
+            }
+        }
+        if (totalHold > 0) pledgeRatio = (totalPledged / totalHold) * 100;
+    }
+
+    // 備援：嘗試 FinMind API (若有權限)
+    if (pledgeRatio === null && jsonPledge && jsonPledge.data && jsonPledge.data.length > 0) {
         const latestPledgeDate = jsonPledge.data[jsonPledge.data.length - 1].date;
         const latestPledgeData = jsonPledge.data.filter(x => x.date === latestPledgeDate);
         const totalHolding = latestPledgeData.reduce((s, x) => s + (x.holding_shares || 0), 0);
@@ -1190,54 +1193,71 @@ async function fetchStockChips(symbol) {
 async function fetchFinMindRevenue(symbol) {
     const rawSymbol = symbol.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
     const d = new Date();
-    d.setDate(d.getDate() - 2000); // 延長至 5 年以上以支援估值河流圖
+    d.setDate(d.getDate() - 2000); 
     const startDate = d.toISOString().split('T')[0];
-    const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id=${rawSymbol}&start_date=${startDate}`;
+    const log = (msg) => {
+        window._fetchLogs = window._fetchLogs || [];
+        window._fetchLogs.push(`[${new Date().toLocaleTimeString()}] [Revenue] ${msg}`);
+    };
+    const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id=${rawSymbol}&start_date=${startDate}&cb=${Date.now()}`;
+    
+    let json = null;
     try {
-        const json = await analysisFetchProxy(url, true);
-        if (json && json.data && json.data.length >= 2) {
-            const data = json.data;
-            const current = data[data.length - 1];
-            const prev    = data[data.length - 2];
-            const lastYear = data.find(x => x.revenue_year === current.revenue_year - 1 && x.revenue_month === current.revenue_month);
-            
-            const curRev = current.revenue || current.Revenue || 0;
-            const preRev = prev.revenue || prev.Revenue || 0;
-            const lyRev  = lastYear ? (lastYear.revenue || lastYear.Revenue || 0) : 0;
+        json = await analysisFetchProxy(url, true);
+    } catch (e) {
+        log(`FM Revenue 5Y failed, trying 2Y...`);
+        const d2 = new Date(); d2.setDate(d2.getDate() - 730);
+        const url2 = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id=${rawSymbol}&start_date=${d2.toISOString().split('T')[0]}&cb=${Date.now()}`;
+        json = await analysisFetchProxy(url2, true).catch(() => null);
+    }
+    
+    // 如果數據仍為空，嘗試 1 年窗口
+    if (!json || !json.data || json.data.length < 2) {
+        log(`FM Revenue still empty, trying 1Y...`);
+        const d1y = new Date(); d1y.setDate(d1y.getDate() - 365);
+        const url1y = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id=${rawSymbol}&start_date=${d1y.toISOString().split('T')[0]}&cb=${Date.now()}`;
+        json = await analysisFetchProxy(url1y, true).catch(() => null);
+    }
 
-            const mom = preRev > 0 ? ((curRev - preRev) / preRev) * 100 : null;
-            const yoy = lyRev > 0 ? ((curRev - lyRev) / lyRev) * 100 : null;
-            
-            // 近 12 個月累計營收
-            const last12 = data.slice(-12);
-            const cum12m = last12.reduce((s, x) => s + (x.revenue || x.Revenue || 0), 0);
-            
-            // YTD 營收
-            const ytdMonths = data.filter(x => x.revenue_year === current.revenue_year);
-            const ytd = ytdMonths.reduce((s, x) => s + (x.revenue || x.Revenue || 0), 0);
-            
-            // 年增次數
-            let yoyUpMonths = 0;
-            for (const m of last12) {
-                const ly = data.find(x => x.revenue_year === m.revenue_year - 1 && x.revenue_month === m.revenue_month);
-                const mRev = m.revenue || m.Revenue || 0;
-                const lyR = ly ? (ly.revenue || ly.Revenue || 0) : 0;
-                if (lyR > 0 && mRev > lyR) yoyUpMonths++;
-            }
+    if (json && json.data && json.data.length >= 2) {
+        const data = json.data;
+        const current = data[data.length - 1];
+        const prev    = data[data.length - 2];
+        const lastYear = data.find(x => x.revenue_year === current.revenue_year - 1 && x.revenue_month === current.revenue_month);
+        
+        const curRev = current.revenue || current.Revenue || 0;
+        const preRev = prev.revenue || prev.Revenue || 0;
+        const lyRev  = lastYear ? (lastYear.revenue || lastYear.Revenue || 0) : 0;
 
-            return {
-                month: `${current.revenue_year}年${current.revenue_month}月`,
-                revenue: curRev,
-                mom,
-                yoy,
-                cum12m,
-                ytd,
-                ytdMonthCount: ytdMonths.length,
-                yoyUpMonths,
-                totalMonths: last12.length || 12
-            };
+        const mom = preRev > 0 ? ((curRev - preRev) / preRev) * 100 : null;
+        const yoy = lyRev > 0 ? ((curRev - lyRev) / lyRev) * 100 : null;
+        
+        const last12 = data.slice(-12);
+        const cum12m = last12.reduce((s, x) => s + (x.revenue || x.Revenue || 0), 0);
+        
+        const ytdMonths = data.filter(x => x.revenue_year === current.revenue_year);
+        const ytd = ytdMonths.reduce((s, x) => s + (x.revenue || x.Revenue || 0), 0);
+        
+        let yoyUpMonths = 0;
+        for (const m of last12) {
+            const ly = data.find(x => x.revenue_year === m.revenue_year - 1 && x.revenue_month === m.revenue_month);
+            const mRev = m.revenue || m.Revenue || 0;
+            const lyR = ly ? (ly.revenue || ly.Revenue || 0) : 0;
+            if (lyR > 0 && mRev > lyR) yoyUpMonths++;
         }
-    } catch(e) { console.warn("FinMind Revenue failed", e); }
+
+        return {
+            month: `${current.revenue_year}年${current.revenue_month}月`,
+            revenue: curRev,
+            mom,
+            yoy,
+            cum12m,
+            ytd,
+            ytdMonthCount: ytdMonths.length,
+            yoyUpMonths,
+            totalMonths: last12.length || 12
+        };
+    }
     return null;
 }
 
@@ -1245,7 +1265,7 @@ async function fetchFinMindRevenue(symbol) {
 async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips = 0) {
     const rawSymbol = symbol.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
     const d = new Date();
-    d.setDate(d.getDate() - 2000); 
+    d.setDate(d.getDate() - 2500); // 調整至 7 年左右，平衡數據量與載入速度
     const startDate = d.toISOString().split('T')[0];
     
     const datasets = [
@@ -1257,8 +1277,22 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
     try {
         const fetchDataset = async (ds) => {
             try {
-                const url = `https://api.finmindtrade.com/api/v4/data?dataset=${ds}&data_id=${rawSymbol}&start_date=${startDate}`;
-                const res = await analysisFetchProxy(url, true).catch(() => null);
+                // 加入快取破壞器 &cb= 以避免代理伺服器回傳過期的空數據
+                const url = `https://api.finmindtrade.com/api/v4/data?dataset=${ds}&data_id=${rawSymbol}&start_date=${startDate}&cb=${Date.now()}`;
+                let res = await analysisFetchProxy(url, true).catch(() => null);
+                
+                if (!res || !res.data || res.data.length === 0) {
+                    const dShort = new Date(); dShort.setDate(dShort.getDate() - 1200);
+                    const urlShort = `https://api.finmindtrade.com/api/v4/data?dataset=${ds}&data_id=${rawSymbol}&start_date=${dShort.toISOString().split('T')[0]}&retry=1&cb=${Date.now()}`;
+                    res = await analysisFetchProxy(urlShort, true).catch(() => null);
+                }
+                
+                if (!res || !res.data || res.data.length === 0) {
+                    const dVS = new Date(); dVS.setDate(dVS.getDate() - 500);
+                    const urlVS = `https://api.finmindtrade.com/api/v4/data?dataset=${ds}&data_id=${rawSymbol}&start_date=${dVS.toISOString().split('T')[0]}&retry=2&cb=${Date.now()}`;
+                    res = await analysisFetchProxy(urlVS, true).catch(() => null);
+                }
+                
                 if (res && res.data && res.data.length > 0) return res;
                 return { data: [] };
             } catch (e) {
@@ -1266,21 +1300,24 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             }
         };
 
-        const results = await Promise.all([
-            fetchDataset('TaiwanStockFinancialStatements'),
-            fetchDataset('TaiwanStockBalanceSheet'),
-            fetchDataset('TaiwanStockCashFlowsStatement'),
-            analysisFetchProxy(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id=${rawSymbol}`, true).catch(() => null)
-        ]);
-        const [jsonS, jsonB, jsonC, jsonInfo] = results;
+        // Modify to sequential fetching to further ensure stability
+        const jsonS = await fetchDataset('TaiwanStockFinancialStatements');
+        const jsonB = await fetchDataset('TaiwanStockBalanceSheet');
+        const jsonC = await fetchDataset('TaiwanStockCashFlowsStatement');
+        const jsonInfo = await analysisFetchProxy(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id=${rawSymbol}`, true).catch(() => null);
+        
+        const results = [jsonS, jsonB, jsonC, jsonInfo];
         
         // 取得產業資訊與發行股數 (關鍵：確保 PB 計算正確)
+
         let industry = '';
         let sharesFromInfo = 0;
         if (jsonInfo && jsonInfo.data && jsonInfo.data[0]) {
             industry = jsonInfo.data[0].industry_category;
             sharesFromInfo = jsonInfo.data[0].shares_issued || jsonInfo.data[0].number_of_shares_issued || 0;
         }
+        // 備援：若 TaiwanStockInfo 缺失股數，嘗試從外部傳入的 chipsData 補完
+        if (!sharesFromInfo && sharesFromChips) sharesFromInfo = sharesFromChips;
 
         
         // 核心檢查：只要有損益表數據就嘗試呈現
@@ -1313,6 +1350,23 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 return 0;
             };
 
+            // 新增：取得單季離散值的輔助函數 (不改動原始數據)
+            const getDiscreteVal = (dataset, date, types) => {
+                if (!dataset || dataset.length === 0) return 0;
+                const currentVal = getVal(getQData(dataset, date), types);
+                const year = date.substring(0, 4);
+                
+                // 從該數據集中找出同一年份的前一個日期
+                const dsDates = [...new Set(dataset.map(x => x.date))].sort();
+                const idx = dsDates.indexOf(date);
+                
+                if (idx > 0 && dsDates[idx - 1].startsWith(year)) {
+                    const prevVal = getVal(getQData(dataset, dsDates[idx - 1]), types);
+                    return currentVal - prevVal;
+                }
+                return currentVal;
+            };
+
             const latestS = getQData(jsonS.data, latestDate);
             
             const getLatestDataFromDataset = (dataset, date) => {
@@ -1325,15 +1379,19 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             const latestB = getLatestDataFromDataset(jsonB?.data, latestDate);
             const latestC = getLatestDataFromDataset(jsonC?.data, latestDate);
 
-            // 擴展關鍵欄位的匹配名稱，應對 FinMind API 的不穩定命名
+            // 擴展關鍵欄位的匹配名稱，優先選用「歸屬於母公司」之數值 (整合版)
+            const niSyns = ['Consolidated_net_income_attributable_to_owners_of_parent', 'Net_income_loss_attributable_to_owners_of_parent', 'NetIncomeAttributableToParent', 'NetIncome', 'Net_Income', 'IncomeAfterTaxes'];
+            const eqSyns = ['Total_equity_attributable_to_owners_of_parent', 'Equity_attributable_to_owners_of_parent', 'TotalEquity', 'Total_Equity', 'Equity'];
+            const assetSyns = ['TotalAssets', 'Assets', 'Total_Assets', 'Total_assets'];
+
             const rev = getVal(latestS, ['Revenue', 'revenue', 'OperatingRevenue', 'Total_Operating_Revenue', 'Operating_Revenue']);
-            const netIncome = getVal(latestS, ['IncomeAfterTaxes', 'NetIncome', 'Net_Income', 'income_after_taxes', 'NetIncomeAttributableToParent', 'Net_Income_Loss', 'Consolidated_net_income_attributable_to_owners_of_parent']);
+            const netIncome = getVal(latestS, niSyns);
             const opIncome = getVal(latestS, ['OperatingIncome', 'Operating_Income', 'operating_income', 'Operating_Income_Loss', 'Operating_income_loss']);
             const grossProfit = getVal(latestS, ['GrossProfit', 'Gross_Profit', 'gross_profit', 'Gross_Profit_Loss', 'Gross_profit_loss_from_operations']);
             const preTaxIncome = getVal(latestS, ['PreTaxIncome', 'IncomeBeforeTax', 'ProfitBeforeTax', 'Profit_Loss_Before_Tax', 'income_before_tax', 'Profit_loss_before_tax']);
             
-            const equity = getVal(latestB, ['Equity', 'TotalEquity', 'Total_Equity', 'equity', 'Total_equity', 'Total_equity_attributable_to_owners_of_parent', 'Equity_attributable_to_owners_of_parent']) || 1;
-            const assets = getVal(latestB, ['TotalAssets', 'Assets', 'Total_Assets', 'assets', 'Total_assets']) || 1;
+            const equity = getVal(latestB, eqSyns) || 1;
+            const assets = getVal(latestB, assetSyns) || 1;
             const liabilities = getVal(latestB, ['TotalLiabilities', 'Liabilities', 'Total_Liabilities', 'liabilities', 'Total_liabilities']);
             const curAssets = getVal(latestB, ['CurrentAssets', 'TotalCurrentAssets', 'Current_Assets', 'current_assets', 'Total_current_assets']);
             const curLiab = getVal(latestB, ['CurrentLiabilities', 'TotalCurrentLiabilities', 'Current_Liabilities', 'current_liabilities', 'Total_current_liabilities']);
@@ -1347,6 +1405,16 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             const nonOpIncome = getVal(latestS, ['TotalNonoperatingIncomeAndExpense', 'NonOperatingIncome', 'TotalNonOperatingIncomeAndExpenses', 'Total_non_operating_income_and_expenses', 'Non-operating_income_and_expenses', 'Net_non_operating_income_and_expenses']);
             const cash = getVal(latestB, ['CashAndCashEquivalents', 'Cash_And_Cash_Equivalents', 'cash_and_cash_equivalents', 'Cash_and_cash_equivalents']);
             const nonOpRate = (netIncome !== 0) ? (nonOpIncome / Math.abs(netIncome) * 100) : 0;
+
+            // 取得上季資產負債表數據用於計算「平均值」
+            const prevDate = allDates.length >= 2 ? allDates[allDates.length - 2] : null;
+            const prevB = prevDate ? getLatestDataFromDataset(jsonB?.data, prevDate) : [];
+
+            // 計算平均權益與平均資產 (分母平均化可提升 ROE/ROA 精確度)
+            const prevEquity = prevB.length > 0 ? getVal(prevB, eqSyns) : equity;
+            const prevAssets = prevB.length > 0 ? getVal(prevB, assetSyns) : assets;
+            const avgEquity = (equity + prevEquity) / 2;
+            const avgAssets = (assets + prevAssets) / 2;
 
             // Calculate Market Cap if possible
             const shares = sharesFromChips || getVal(latestB, ['Shares_issued', 'NumberOfSharesIssued', 'Total_shares_issued', 'Ordinary_shares_issued', 'Ordinary_shares_outstanding', 'Total_shares_outstanding']) || 0;
@@ -1382,14 +1450,22 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 const qd = getQData(jsonS.data, date);
                 const qb = getLatestDataFromDataset(jsonB?.data, date);
                 const qRev = getVal(qd, ['Revenue', 'OperatingRevenue', 'Total_Operating_Revenue']);
-                const qNet = getVal(qd, ['IncomeAfterTaxes', 'NetIncome', 'Net_Income']);
-                const qEq  = getVal(qb, ['Equity', 'TotalEquity', 'Total_Equity']);
+                const qNet = getVal(qd, niSyns);
+                const currentEquity = getVal(qb, eqSyns) || 1;
+                
+                // 獲取上季權益以計算趨勢中的平均值
+                const idx = allDates.indexOf(date);
+                const prevDate = idx > 0 ? allDates[idx-1] : null;
+                const prevQB = prevDate ? getLatestDataFromDataset(jsonB?.data, prevDate) : [];
+                const prevEquity = prevQB.length > 0 ? getVal(prevQB, eqSyns) : currentEquity;
+                const avgEq = (currentEquity + prevEquity) / 2;
+
                 return {
                     date: date,
                     grossMargin: qRev > 0 ? (getVal(qd, ['GrossProfit', 'gross_profit']) / qRev * 100) : 0,
                     operatingMargin: qRev > 0 ? (getVal(qd, ['OperatingIncome', 'operating_income']) / qRev * 100) : 0,
                     netMargin: qRev > 0 ? (qNet / qRev * 100) : 0,
-                    roe: qEq > 0 ? (qNet / qEq * 100) : 0
+                    roe: avgEq > 0 ? (qNet / avgEq * 100) : 0
                 };
             });
 
@@ -1443,14 +1519,14 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     else { fDetails.push({msg, ok:false}); } 
                 };
                 
-                check(ni > 0, "ROA (淨利) 為正值");
-                check(curOCF > 0 || ni > 0, "獲利能力檢核 (OCF 或 NI > 0)");
-                check(roa >= proa || ni > pni, "獲利較去年進步");
-                check(curOCF > ni || earningsQuality > 80, "獲利品質良好 (OCF/NI)");
-                check(curLTD <= pLTD || liabilities <= getVal(prevB, ['TotalLiabilities', 'Liabilities']), "債務結構未惡化");
-                check(curCR >= pCR || curCR > 100, "流動比率優良");
-                check(curGM >= pGM || curGM > 30, "毛利率優良");
-                check(curAT >= pAT || curAT > 0.1, "營運效率優良");
+                check(ni > 0, "ROA (本期淨利) 為正值 (F1)");
+                check(curOCF > 0, "營運現金流 (OCF) 為正值 (F2)");
+                check(roa > proa, "ROA 較去年同期進步 (F3)");
+                check(curOCF > ni, "獲利品質優良 (OCF > 淨利) (F4)");
+                check(curLTD <= pLTD, "長期負債未增加 (F5)");
+                check(curCR > pCR, "流動比率較去年同期進步 (F6)");
+                check(curGM > pGM, "毛利率較去年同期進步 (F8)");
+                check(curAT > pAT, "資產週轉率較去年同期進步 (F9)");
                 // 股份稀釋檢核：比對本期與去年同期的發行股數
                 const shareSyns = ['Shares_issued', 'NumberOfSharesIssued', 'Total_shares_issued', 'Ordinary_shares_issued', 'Ordinary_shares_outstanding', 'Total_shares_outstanding'];
                 const curShares = shares || getVal(latestB, shareSyns);
@@ -1489,12 +1565,12 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     return sum + (getVal(qd, 'EPS') || 0);
                 }, 0),
                 epsYoY:      epsYoY,
-                roe:         equity > 0 ? (netIncome / equity) * 100 : null,
-                roa:         assets > 0 ? (netIncome / assets) * 100 : null,
+                roe:         avgEquity > 0 ? (netIncome / avgEquity) * 100 : null,
+                roa:         avgAssets > 0 ? (netIncome / avgAssets) * 100 : null,
                 equity:      equity,
                 assets:      assets,
                 liabilities: liabilities,
-                assetTurnover: assets > 0 ? rev / assets : null,
+                assetTurnover: avgAssets > 0 ? rev / avgAssets : null,
                 equityMultiplier: equity > 0 ? assets / equity : null,
                 debtRatio:   getVal(latestB, 'Liabilities_per') || (liabilities / assets * 100),
                 currentRatio: curLiab > 0 ? (curAssets / curLiab) * 100 : null,
@@ -1507,9 +1583,8 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 interestCoverage: interestExp > 0 ? (preTaxIncome + interestExp) / interestExp : (preTaxIncome > 0 ? 999 : null),
                 earningsQuality: earningsQuality,
                 fcfTrend:    allDates.slice(-8).map(date => {
-                    const cData = getLatestDataFromDataset(jsonC?.data, date);
-                    const ocfVal = getVal(cData, ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities', 'OperatingCashFlow', 'Operating_cash_flow', 'Net_cash_generated_from_used_in_operating_activities']) || 0;
-                    const capexVal = getVal(cData, ['Acquisition_of_property_plant_and_equipment', 'PropertyAndPlantAndEquipment', 'AcquisitionOfPropertyPlantAndEquipment', 'Acquisition_of_property_plant_and_equipment_and_other_assets']) || 0;
+                    const ocfVal = getDiscreteVal(jsonC?.data, date, ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities', 'OperatingCashFlow', 'Operating_cash_flow', 'Net_cash_generated_from_used_in_operating_activities']);
+                    const capexVal = getDiscreteVal(jsonC?.data, date, ['Acquisition_of_property_plant_and_equipment', 'PropertyAndPlantAndEquipment', 'AcquisitionOfPropertyPlantAndEquipment', 'Acquisition_of_property_plant_and_equipment_and_other_assets', 'purchase_of_property_plant_and_equipment']);
                     return { date, ocf: ocfVal, capex: capexVal, fcf: ocfVal + capexVal };
                 }),
                 latestOCF: ocf,
@@ -1539,7 +1614,7 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 })(),
                 netIncomeTrend: allDates.slice(-8).map(date => {
                     const sData = getQData(jsonS.data, date);
-                    return { date, ni: getVal(sData, ['IncomeAfterTaxes', 'NetIncome', 'Net_Income']) || 0 };
+                    return { date, ni: getVal(sData, ['IncomeAfterTaxes', 'NetIncome', 'Net_Income', 'income_after_taxes', 'NetIncomeAttributableToParent', 'Net_Income_Loss', 'Consolidated_net_income_attributable_to_owners_of_parent']) };
                 }),
                 cashFlowFidelity: (() => {
                     const last8 = allDates.slice(-8);
@@ -1549,9 +1624,8 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     
                     last8.forEach(date => {
                         const sData = getQData(jsonS.data, date);
-                        const cData = getLatestDataFromDataset(jsonC?.data, date);
-                        const ni = getVal(sData, ['IncomeAfterTaxes', 'NetIncome', 'Net_Income']) || 0;
-                        const ocf = getVal(cData, ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities', 'OperatingCashFlow', 'Operating_cash_flow', 'Net_cash_generated_from_used_in_operating_activities']) || 0;
+                        const ni = getVal(sData, ['IncomeAfterTaxes', 'NetIncome', 'Net_Income', 'income_after_taxes', 'NetIncomeAttributableToParent', 'Net_Income_Loss', 'Consolidated_net_income_attributable_to_owners_of_parent']);
+                        const ocf = getDiscreteVal(jsonC?.data, date, ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities', 'OperatingCashFlow', 'Operating_cash_flow', 'Net_cash_generated_from_used_in_operating_activities']);
                         
                         totalOCF += ocf;
                         totalNI += ni;
@@ -1677,14 +1751,45 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     return { date, dio: dioVal, dso: dsoVal };
                 }),
                 totalFCF5Y: (() => {
+                    // 精確計算近 20 季 (5 年)
+                    const last20 = allDates.slice(-20);
                     let total = 0;
-                    allDates.forEach(date => {
+                    last20.forEach(date => {
                         const cData = getLatestDataFromDataset(jsonC?.data, date);
                         const ocfVal = getVal(cData, ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities', 'OperatingCashFlow', 'Operating_cash_flow', 'Net_cash_generated_from_used_in_operating_activities']) || 0;
                         const capexVal = getVal(cData, ['Acquisition_of_property_plant_and_equipment', 'PropertyAndPlantAndEquipment', 'AcquisitionOfPropertyPlantAndEquipment', 'Acquisition_of_property_plant_and_equipment_and_other_assets']) || 0;
                         total += (ocfVal + capexVal);
                     });
                     return total;
+                })(),
+                fcfContinuity: (() => {
+                    // 按年份分組計算 FCF
+                    const yearlyFCF = {};
+                    allDates.forEach(date => {
+                        const year = date.split('-')[0];
+                        const cData = getLatestDataFromDataset(jsonC?.data, date);
+                        const fcf = (getVal(cData, ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities', 'OperatingCashFlow', 'Operating_cash_flow', 'Net_cash_generated_from_used_in_operating_activities']) || 0) +
+                                    (getVal(cData, ['Acquisition_of_property_plant_and_equipment', 'PropertyAndPlantAndEquipment', 'AcquisitionOfPropertyPlantAndEquipment', 'Acquisition_of_property_plant_and_equipment_and_other_assets']) || 0);
+                        yearlyFCF[year] = (yearlyFCF[year] || 0) + fcf;
+                    });
+                    
+                    const years = Object.keys(yearlyFCF).sort().reverse();
+                    const last10Years = years.slice(0, 10);
+                    const positiveCount = last10Years.filter(y => yearlyFCF[y] > 0).length;
+                    
+                    // 計算連續正向年份 (由近往遠)
+                    let continuousPositiveYears = 0;
+                    for (let y of last10Years) {
+                        if (yearlyFCF[y] > 0) continuousPositiveYears++;
+                        else break;
+                    }
+                    
+                    return {
+                        positiveCount,
+                        totalYears: last10Years.length,
+                        continuousPositiveYears,
+                        isExcellent: continuousPositiveYears >= 5 || (positiveCount >= 8 && last10Years.length >= 8)
+                    };
                 })(),
                 fcfYield: (marketCap > 0) ? (((ocf + investingCF) / 100000000) / marketCap * 100) : 0,
                 marketCap: marketCap,
@@ -1733,6 +1838,8 @@ async function fetchIndustryPeersMetrics(industry, currentSymbol) {
             ]);
 
             if (jsonS?.data?.length > 0) {
+
+
                 const allDates = [...new Set(jsonS.data.map(x => x.date))].sort();
                 const latestDate = allDates[allDates.length - 1];
                 const prevYearDate = allDates[allDates.length - 5];
@@ -1818,6 +1925,10 @@ async function fetchBrokerConcentration(symbol) {
     const rawSymbol = symbol.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
     
     const fetchForPeriod = async (days) => {
+        // 富邦的 URL 邏輯：
+        // 1日: zco.djhtm?a=SYMBOL
+        // 5日: zco_SYMBOL_2.djhtm
+        // 20日: zco_SYMBOL_4.djhtm
         let url;
         if (days === 1) {
             url = `https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco.djhtm?a=${rawSymbol}`;
@@ -1829,7 +1940,7 @@ async function fetchBrokerConcentration(symbol) {
         
         try {
             const html = await analysisFetchProxy(url, false);
-            if (!html || html.length < 1000) return null;
+            if (!html) return null;
 
             // 1. 提取合計買超/賣超張數與均價 (位於表格底部)
             const buySumMatch = html.match(/合計買超張數[\s\S]*?<td[^>]*>([\d,]+)[\s\S]*?平均買超成本[\s\S]*?<td[^>]*>([\d,.]+)/i);
@@ -1898,7 +2009,7 @@ async function fetchFinMindMargin(symbol) {
     const d = new Date();
     d.setDate(d.getDate() - 30); // 擴大到 30 天，確保能抓到資料
     const startDate = d.toISOString().split('T')[0];
-    const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMarginPurchaseShortSale&data_id=${rawSymbol}&start_date=${startDate}`;
+    const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMarginPurchaseShortSale&data_id=${rawSymbol}&start_date=${startDate}&cb=${Date.now()}`;
     try {
         const json = await analysisFetchProxy(url, true);
         if (json && json.data && json.data.length > 0) {
@@ -1913,7 +2024,9 @@ async function fetchFinMindMargin(symbol) {
                 marginPurchase: marginBal,
                 shortSale: shortBal,
                 marginLimit: marginLim,
-                marginUseRate: marginLim > 0 ? (marginBal / marginLim * 100).toFixed(1) : '0.0'
+                marginUseRate: marginLim > 0 ? (marginBal / marginLim * 100).toFixed(1) : '0.0',
+                // 嘗試獲取維持率 (部分 API 版本支援)
+                marginMaintenance: latest.MarginPurchaseMaintenanceRatio || latest.margin_purchase_maintenance_ratio || null
             };
         } else {
             console.warn(`[Margin] No data returned for ${rawSymbol} since ${startDate}`);
@@ -1926,10 +2039,21 @@ async function fetchFinMindMargin(symbol) {
 async function fetchFinMindInstitutional(symbol, latestVol = 0) {
     const rawSymbol = symbol.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
     const d = new Date();
-    d.setDate(d.getDate() - 360); // 擴展至 360 天，確保能取得 240 個交易日的年線成本數據
+    d.setDate(d.getDate() - 360); 
     const startDate = d.toISOString().split('T')[0];
-    const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id=${rawSymbol}&start_date=${startDate}`;
-    
+    const log = (msg) => {
+        window._fetchLogs = window._fetchLogs || [];
+        window._fetchLogs.push(`[${new Date().toLocaleTimeString()}] [Inst] ${msg}`);
+    };
+    const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id=${rawSymbol}&start_date=${startDate}&cb=${Date.now()}`;
+    let json = null;
+    try {
+        json = await analysisFetchProxy(url, true);
+    } catch (e) {
+        const d2 = new Date(); d2.setDate(d2.getDate() - 120);
+        const url2 = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id=${rawSymbol}&start_date=${d2.toISOString().split('T')[0]}&cb=${Date.now()}`;
+        json = await analysisFetchProxy(url2, true).catch(() => null);
+    }
     const parseData = (data) => {
         if (!data || data.length === 0) return null;
         const allDates = [...new Set(data.map(x => x.date))].sort();
@@ -1960,6 +2084,7 @@ async function fetchFinMindInstitutional(symbol, latestVol = 0) {
         };
 
         const latestDay = calcNet(data.filter(x => x.date === latestDate));
+        latestDay.date = latestDate;
         const fiveDayTotal = calcNet(data.filter(x => allDates.slice(-5).includes(x.date)));
         
         const getStreak = (type) => {
@@ -1994,6 +2119,7 @@ async function fetchFinMindInstitutional(symbol, latestVol = 0) {
         });
 
         return {
+            date: latestDate,
             latestDay,
             fiveDayTotal,
             daily,
@@ -2003,17 +2129,7 @@ async function fetchFinMindInstitutional(symbol, latestVol = 0) {
         };
     };
 
-    try {
-        const json = await analysisFetchProxy(url, true).catch(() => null);
-        if (json && json.data && json.data.length > 0) return parseData(json.data);
-        
-        // 備援：擴大時間範圍嘗試
-        const dLong = new Date(); dLong.setDate(dLong.getDate() - 400); // 備援也擴展至一年以上
-        const urlLong = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id=${rawSymbol}&start_date=${dLong.toISOString().split('T')[0]}`;
-        const json2 = await analysisFetchProxy(urlLong, true).catch(() => null);
-        if (json2 && json2.data && json2.data.length > 0) return parseData(json2.data);
-    } catch(e) {}
-
+    if (json && json.data && json.data.length > 0) return parseData(json.data);
     return null;
 }
 
@@ -2039,8 +2155,28 @@ async function fetchInstitutionalMoneyDJ(symbol) {
     return null;
 }
 
-// === Rendering Logic & Data moved to analysis_data.js ===
+// === Rendering Logic ===
 
+function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, finData, marginData, institutionalData, avgCost = null, riskMetrics = null, insiderActivity = null, debugInfo = null, brokerData = null, peerCCCData = [], chipCosts = null, winnerBrokers = [], topSellers60 = []) {
+    if (!chartData) {
+        analysisBody.innerHTML = `
+            <div style="text-align:center; padding:60px 20px; background:rgba(255,255,255,0.02); border-radius:15px; border:1px dashed rgba(255,255,255,0.1);">
+                <div style="font-size:50px; margin-bottom:20px;">📡</div>
+                <div style="color:#f87171; font-size:20px; font-weight:700; margin-bottom:12px;">核心數據載入失敗 (v18)</div>
+                <div style="color:#cbd5e1; font-size:14px; line-height:1.6; margin-bottom:25px;">
+                    連線偵測結果：<br>
+                    <div id="fetchDiagnostic" style="font-size:11px; color:#cbd5e1; font-family:monospace; margin-top:10px; text-align:left; background:rgba(0,0,0,0.6); padding:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); max-height:150px; overflow-y:auto; line-height:1.5;">
+                        ${(window._fetchLogs && window._fetchLogs.length > 0) ? window._fetchLogs.slice(-8).join('<br>') : '⚠️ 無日誌記錄，請確認網路連線或重試'}
+                    </div>
+                </div>
+                <button onclick="openAnalysisModal('${symbol}', '${name}', '${avgCost || ''}', true)" 
+                        style="background:#3b82f6; color:white; border:none; padding:12px 30px; border-radius:12px; cursor:pointer; font-weight:700; font-size:15px; box-shadow:0 4px 15px rgba(59, 130, 246, 0.4);">
+                    🚀 嘗試終極重新連線
+                </button>
+            </div>
+        `;
+        return;
+    }
     const { currentPrice, ma, high52w, low52w, posIn52w, rsi14, bb, latestVol, avgVol5, kd, macd, price1m, price3m, mom6m, mom1y, mom2y, mom3y, mom4y, mom5y, momYTD } = chartData;
     
     // 計算均線排列與技術狀態 (修正 undefined 問題)
@@ -2069,10 +2205,14 @@ async function fetchInstitutionalMoneyDJ(symbol) {
         chartData.bbSqueeze = bandwidth < 0.1;
     }
     
-    // 更新表頭名稱（確保搜尋代號時也能顯示正確名稱）
+    // 更新表頭名稱與價格
     const displayName = chipsData?.stockName || name || symbol;
     if (analysisTitle) {
-        analysisTitle.textContent = `📊 ${displayName} (${symbol}) 分析報告 (v19穩定優化版)`;
+        analysisTitle.textContent = `📊 ${displayName} (${symbol}) 分析報告`;
+    }
+    const headerPrice = document.getElementById('analysisHeaderPrice');
+    if (headerPrice && currentPrice) {
+        headerPrice.textContent = `目前股價 ${currentPrice} 元`;
     }
     
     // 暫存當前價格供百科分析使用
@@ -2150,8 +2290,8 @@ async function fetchInstitutionalMoneyDJ(symbol) {
     // 成本殖利率
     const costYield = (avgCost && avgCost > 0 && totalDiv12m > 0) ? (totalDiv12m / avgCost * 100) : null;
     
-    // 便宜/合理/昂貴價推算
-    const eps = twseBasic?.pe && currentPrice ? currentPrice / twseBasic.pe : (finData?.eps ? finData.eps * 4 : null);
+    // 便宜/合理/昂貴價推算 (統一使用近四季加總 EPS LTM 以確保專業精度)
+    const eps = epsLTM > 0 ? epsLTM : (twseBasic?.pe && currentPrice ? currentPrice / twseBasic.pe : (finData?.eps ? finData.eps * 4 : null));
     const divCheap = currentDiv ? currentDiv / 0.05 : null;
     const divReasonable = currentDiv ? currentDiv / 0.04 : null;
     const divExpensive = currentDiv ? currentDiv / 0.03 : null;
@@ -2247,8 +2387,8 @@ async function fetchInstitutionalMoneyDJ(symbol) {
     if (finalYield && finalYield > 5) {
         summaryText += `目前殖利率 ${safeFix(finalYield, 2)}% 具備高息誘因。`;
         
-        // 盈餘分配率診斷
-        const payout = (totalDiv12m && finData?.epsLTM) ? (totalDiv12m / finData.epsLTM * 100) : null;
+        // 盈餘分配率診斷 (統一使用 eps 基準)
+        const payout = (totalDiv12m && eps > 0) ? (totalDiv12m / eps * 100) : null;
         if (payout > 100) {
             summaryText += `⚠️ 注意：盈餘分配率高達 ${safeFix(payout, 1)}%，股利發放已超過獲利，需警惕配息的永續性。`;
         } else if (payout > 80) {
@@ -2440,15 +2580,15 @@ async function fetchInstitutionalMoneyDJ(symbol) {
                 ${renderPercentRow('稅後淨利率', finData?.netMargin, false, false)}
                 ${renderStatRow('業外損益佔比', finData?.nonOpRate !== undefined ? safeFix(finData.nonOpRate, 1) + '%' : 'N/A')}
                 <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px;">📈 三率趨勢 (近四季)</div>
-                <div style="display:flex; justify-content:space-between; font-size:10px; color:#94a3b8; margin-bottom:4px; padding-bottom:2px; border-bottom:1px solid rgba(255,255,255,0.05);">
+                <div class="chart-internal" style="display:flex; justify-content:space-between; font-size:10px; color:#94a3b8; margin-bottom:4px; padding-bottom:2px; border-bottom:1px solid rgba(255,255,255,0.05);">
                     <span style="width:60px; font-size:10px;">季度</span>
                     <span style="color:#ef4444; flex:1; text-align:right;">毛利</span>
                     <span style="color:#3b82f6; flex:1; text-align:right;">營益</span>
                     <span style="color:#f8fafc; flex:1; text-align:right;">淨利</span>
                 </div>
-                <div style="display:flex; flex-direction:column; gap:4px;">
+                <div class="chart-internal" style="display:flex; flex-direction:column; gap:4px; width: 100%;">
                     ${(finData?.marginTrend || []).map(m => `
-                        <div style="display:flex; justify-content:space-between; font-size:11px;">
+                        <div class="chart-internal" style="display:flex; justify-content:space-between; font-size:11px; width: 100%;">
                             <span style="color:#94a3b8; width:60px; font-size:10px;">${m.date || 'N/A'}</span>
                             <span style="color:#ef4444; flex:1; text-align:right;">${safeFix(m.grossMargin, 1)}%</span>
                             <span style="color:#3b82f6; flex:1; text-align:right;">${safeFix(m.operatingMargin, 1)}%</span>
@@ -2461,7 +2601,7 @@ async function fetchInstitutionalMoneyDJ(symbol) {
                 ${renderPercentRow('ROA (資產報酬率)', finData?.roa, true, false)}
                 ${renderDiagnostic(
                     (finData?.grossImproveYoY > 0 ? "毛利率較去年同期改善，產品力轉強。" : (finData?.grossMargin < 10 ? "毛利率偏低，代工屬性強，獲利易受成本波動影響。" : "獲利能力穩定，三率維持常態水準。")) +
-                    (finData?.roe > 15 ? " ROE 表現優異，資本運用效率高。" : "")
+                    (finData?.roe > 4 ? " ROE 表現優異，資本運用效率高。" : "")
                 )}
             </div>
 
@@ -2502,7 +2642,7 @@ async function fetchInstitutionalMoneyDJ(symbol) {
                         <div style="position:absolute; left:${pePercentile}%; bottom:-18px; transform:translateX(-50%); font-size:10px; font-weight:800; color:#ffffff; white-space:nowrap;">目前位置</div>
                     </div>
                     
-                    <div style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8; margin-top:14px;">
+                    <div class="legend-horizontal chart-internal" style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8; margin-top:14px;">
                         <span>便宜 (10%)</span>
                         <span>合理 (50%)</span>
                         <span>昂貴 (90%)</span>
@@ -2551,6 +2691,12 @@ async function fetchInstitutionalMoneyDJ(symbol) {
                 <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:6px;">🚩 股東風險與長期資金</div>
                 ${renderStatRow('董監持股質押比例', (chipsData?.pledgeRatio !== undefined) ? safeFix(chipsData.pledgeRatio, 1) + '%' : 'N/A', chipsData?.pledgeRatio)}
                 ${renderStatRow('5年累計自由現金流', (finData?.totalFCF5Y !== undefined) ? formatCurrency(finData.totalFCF5Y) : 'N/A')}
+                ${(() => {
+                    const cont = finData?.fcfContinuity;
+                    if (!cont) return renderStatRow('FCF 連貫性 (10年)', 'N/A');
+                    const text = `${cont.positiveCount} / ${cont.totalYears} 年正向` + (cont.continuousPositiveYears >= 5 ? ` (連 ${cont.continuousPositiveYears} 年 🔥)` : "");
+                    return renderStatRow('FCF 連貫性 (10年)', text);
+                })()}
 
                 <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:6px;">💸 現金流量 (年化估算)</div>
                 ${renderStatRow('營業現金流 (OCF)', (finData?.opCashFlow !== undefined) ? formatCurrency(finData.opCashFlow) : 'N/A')}
@@ -2561,19 +2707,27 @@ async function fetchInstitutionalMoneyDJ(symbol) {
                     (zScore > 2.99 ? "財務體質極佳，短期無倒閉風險。" : (zScore < 1.8 ? "財務壓力較大，需警惕債務違約風險。" : "財務結構尚可，屬正常範圍。")) +
                     (finData?.earningsQuality > 100 ? " 獲利品質佳，現金回收能力強。" : "") +
                     (chipsData?.pledgeRatio > 30 ? " ⚠️ 警告：董監質押比例過高 (>30%)，大跌時恐有連鎖賣壓風險。" : "") +
-                    (finData?.totalFCF5Y < 0 ? " ⚠️ 警告：長期 (5年) 累計自由現金流為負，公司持續燒錢，投資需謹慎。" : "")
+                    (marginData?.marginMaintenance && marginData.marginMaintenance < 140 ? ` ⚠️ 警告：融資維持率過低 (${safeFix(marginData.marginMaintenance, 1)}%)，需防範斷頭追繳引發的連鎖賣壓。` : "") +
+                    (finData?.totalFCF5Y < 0 ? " ⚠️ 嚴重警告：近 5 年累計自由現金流為負值，公司長期處於「舉債燒錢」狀態，獲利恐為虛胖，投資風險極高。" : "") +
+                    (finData?.fcfContinuity?.continuousPositiveYears >= 7 ? " 具備卓越的長期現金產生能力。" : "")
                 )}
             </div>
-
-            <!-- 6. 籌碼與信用交易 -->
             <div class="analysis-card">
-                <div class="analysis-card-title">👥 籌碼與信用</div>
+                <div class="analysis-card-title">💎 籌碼深度分析</div>
                 ${renderStatRow('券資比', (chipsData.marginShortRatio !== null && chipsData.marginShortRatio !== undefined) ? safeFix(chipsData.marginShortRatio, 1) + '%' : 'N/A')}
                 ${renderStatRow('融資餘額', marginData?.marginPurchase ? marginData.marginPurchase.toLocaleString() + ' 張' : 'N/A')}
                 ${renderStatRow('融券餘額', marginData?.shortSale ? marginData.shortSale.toLocaleString() + ' 張' : 'N/A')}
                 ${renderStatRow('融資使用率', (marginData?.marginUseRate !== null && marginData?.marginUseRate !== undefined) ? marginData.marginUseRate + '%' : 'N/A')}
+                ${renderStatRow('融資維持率', (() => {
+                    if (marginData?.marginMaintenance) return safeFix(marginData.marginMaintenance, 1) + '%';
+                    if (marginData?.estimatedMMR) return safeFix(marginData.estimatedMMR, 1) + '% (估)';
+                    return 'N/A';
+                })())}
                 
-                <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:6px;">📈 法人動態</div>
+                <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:6px;">
+                    📈 法人動態 
+                    <span style="font-size:9px; font-weight:normal; opacity:0.7; margin-left:4px;">(資料日期: ${institutionalData?.date || 'N/A'})</span>
+                </div>
                 <div style="display:flex; gap:8px; margin-bottom:8px;">
                     <div style="flex:1; background:rgba(255,255,255,0.03); padding:8px; border-radius:6px; text-align:center;">
                         <div style="font-size:10px; color:#cbd5e1;">外資連買/賣</div>
@@ -2598,19 +2752,17 @@ async function fetchInstitutionalMoneyDJ(symbol) {
                 ${renderNetBuyRow('外資 5日', institutionalData?.fiveDayTotal?.foreign)}
                 ${renderNetBuyRow('投信 5日', institutionalData?.fiveDayTotal?.trust)}
                 ${(() => {
-                    // 重新計算法人買賣超佔比 (需搭配最新成交量)
                     const latestDay = institutionalData?.latestDay;
-                    const vol = chartData?.latestVol || 0; // 股數
-                    const volLots = vol / 1000; // 張數
+                    const vol = chartData?.latestVol || 0;
+                    const volLots = vol / 1000;
                     const netPct = (latestDay && vol > 0) ? ((latestDay.foreign + latestDay.trust + latestDay.dealer) * 1000 / vol * 100) : (institutionalData?.latestDayNetPct || 0);
                     
-                    // 計算分點集中度
                     let concentration = 'N/A';
-                    const d1 = brokerData?.d1 || brokerData; // 兼容舊格式或提取 1 日數據
+                    const d1 = brokerData?.d1 || brokerData;
                     if (d1 && volLots > 0 && d1.topBuySum !== undefined) {
                         const concVal = ((d1.topBuySum + d1.topSellSum) / volLots) * 100;
                         concentration = safeFix(concVal, 1) + '%';
-                        d1.concentration = concVal; // 注入供後續診斷使用
+                        d1.concentration = concVal;
                     }
                     
                     return `
@@ -2659,12 +2811,13 @@ async function fetchInstitutionalMoneyDJ(symbol) {
                 <div style="font-size:11px; color:#cbd5e1; margin:12px 0 6px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px;">🚀 價格與中長期動能</div>
                 <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:6px; margin-bottom:12px;">
                     ${(() => {
-                        // 處理緩存數據缺少 price10d 的情況
                         let p10d = chartData.price10d;
                         if (p10d === undefined && chartData.prices && chartData.prices.length >= 10) {
-                            const curP = chartData.prices[chartData.prices.length - 1].close;
-                            const preP = chartData.prices[chartData.prices.length - 10].close;
-                            p10d = (curP - preP) / preP * 100;
+                            const curObj = chartData.prices[chartData.prices.length - 1];
+                            const preObj = chartData.prices[chartData.prices.length - 10];
+                            const curP = curObj ? (curObj.close || curObj.Close) : 0;
+                            const preP = preObj ? (preObj.close || preObj.Close) : 0;
+                            if (preP > 0) p10d = (curP - preP) / preP * 100;
                         }
 
                         const mItems = [
@@ -2751,7 +2904,7 @@ async function fetchInstitutionalMoneyDJ(symbol) {
                 <div class="analysis-card-title">🔍 杜邦分析 (ROE 拆解)</div>
                 <div style="font-size:11px; color:#cbd5e1; margin-bottom:10px;">ROE = 淨利率 × 資產週轉 × 權益乘數</div>
                 <div style="display:flex; flex-direction:column; gap:8px; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.05);">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div class="comparison-row" style="display:flex; justify-content:space-between; align-items:center;">
                         <span class="has-info" style="font-size:12px; color:#cbd5e1;" onclick="showTermExplainer('淨利率 (獲利)', '${finData?.netMargin !== undefined ? safeFix(finData.netMargin, 2) + '%' : 'N/A'}')">1. 淨利率 (獲利)</span>
                         <span style="font-size:12px; font-weight:700; color:#ffffff;">${finData?.netMargin !== undefined ? safeFix(finData.netMargin, 2) + '%' : 'N/A'}</span>
                     </div>
@@ -2815,7 +2968,11 @@ async function fetchInstitutionalMoneyDJ(symbol) {
                         const positiveFcfCount = finData.fcfTrend.filter(x => x.fcf > 0).length;
                         if (positiveFcfCount >= 7) return "🔥 極其優異：近 8 季幾乎全數維持正向現金流，獲利含金量極高。";
                         if (positiveFcfCount >= 4) return "現金流尚屬穩定，多數季度能產生盈餘現金。";
-                        return "⚠️ 警告：自由現金流長期處於負值或不穩定，需注意公司是否有入不敷出或過度擴張風險。";
+                        let diag = "⚠️ 警告：自由現金流長期處於負值或不穩定，需注意公司是否有入不敷出或過度擴張風險。";
+                        if (finData?.fcfContinuity) {
+                            diag += ` (10年內有 ${finData.fcfContinuity.positiveCount} 年為正)`;
+                        }
+                        return diag;
                     })()
                 )}
             </div>
@@ -2894,16 +3051,17 @@ async function fetchInstitutionalMoneyDJ(symbol) {
             <div class="analysis-card">
                 <div class="analysis-card-title">⚙️ 營運效率與獲利品質</div>
                 <div style="font-size:11px; color:#cbd5e1; margin-bottom:10px;">營運天數與現金循環 (CCC)</div>
-                ${renderStatRow('存貨週轉天數', finData?.inventoryDays !== undefined ? safeFix(finData.inventoryDays, 1) + ' 天' : 'N/A')}
-                ${renderStatRow('應收帳款天數', finData?.receivableDays !== undefined ? safeFix(finData.receivableDays, 1) + ' 天' : 'N/A')}
-                ${renderStatRow('應付帳款天數', finData?.payableDays !== undefined ? safeFix(finData.payableDays, 1) + ' 天' : 'N/A')}
-                ${renderStatRow('現金週期 (CCC)', finData?.ccc !== undefined ? safeFix(finData.ccc, 1) + ' 天' : 'N/A')}
+                ${renderStatRow('存貨週轉天數 (Q)', finData?.inventoryDays !== undefined ? safeFix(finData.inventoryDays, 1) + ' 天' : 'N/A')}
+                ${renderStatRow('應收帳款天數 (Q)', finData?.receivableDays !== undefined ? safeFix(finData.receivableDays, 1) + ' 天' : 'N/A')}
+                ${renderStatRow('應付帳款天數 (Q)', finData?.payableDays !== undefined ? safeFix(finData.payableDays, 1) + ' 天' : 'N/A')}
+                ${renderStatRow('現金週期 (CCC, Q)', finData?.ccc !== undefined ? safeFix(finData.ccc, 1) + ' 天' : 'N/A')}
+                <div style="font-size:9px; color:#64748b; margin-top:4px; margin-left:2px;">* 以上指標均以「單季 (90天)」為計算基準</div>
 
 
 
                 <!-- 強化：存貨與應收帳款天數 8 季趨勢 (SVG 折線圖) -->
                 <div style="font-size:11px; color:#cbd5e1; margin:15px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); padding-top:8px; display:flex; justify-content:space-between; align-items:center;">
-                    <span>📅 營運天數 8 季趨勢 (<span class="has-info" onclick="showTermExplainer('DIO (存貨週轉天數)', '${Math.round(finData?.inventoryDays || 0)}天')">DIO</span> / <span class="has-info" onclick="showTermExplainer('DSO (應收帳款天數)', '${Math.round(finData?.receivableDays || 0)}天')">DSO</span>)</span>
+                    <span>📅 營運天數 (Q) 8 季趨勢 (<span class="has-info" onclick="showTermExplainer('DIO (存貨週轉天數)', '${Math.round(finData?.inventoryDays || 0)}天')">DIO</span> / <span class="has-info" onclick="showTermExplainer('DSO (應收帳款天數)', '${Math.round(finData?.receivableDays || 0)}天')">DSO</span>)</span>
                     <span style="font-size:9px; color:#94a3b8;">藍: DIO / 灰: DSO</span>
                 </div>
                 
@@ -3181,9 +3339,9 @@ async function fetchInstitutionalMoneyDJ(symbol) {
                                         <span style="color:#fbbf24; font-weight:800;">ROE: ${m.roe ? safeFix(m.roe, 2)+'%' : 'N/A'}</span>
                                     </div>
                                     <div style="display:flex; flex-direction:column; gap:3px; margin:4px 0;">
-                                        <div style="width:${Math.max(0, Math.min(100, ((m.grossMargin || 0) / maxVal * 100)))}%; background:#f87171; height:3px; border-radius:2px;"></div>
-                                        <div style="width:${Math.max(0, Math.min(100, ((m.operatingMargin || 0) / maxVal * 100)))}%; background:#60a5fa; height:3px; border-radius:2px;"></div>
-                                        <div style="width:${Math.max(0, Math.min(100, ((m.netMargin || 0) / maxVal * 100)))}%; background:#f8fafc; height:3px; border-radius:2px; opacity:0.8;"></div>
+                                        <div style="width:${Math.max(0, Math.min(100, ((m.grossMargin || 0) / maxVal * 100)))}%; background:#f87171; height:5px; border-radius:2px;"></div>
+                                        <div style="width:${Math.max(0, Math.min(100, ((m.operatingMargin || 0) / maxVal * 100)))}%; background:#60a5fa; height:5px; border-radius:2px;"></div>
+                                        <div style="width:${Math.max(0, Math.min(100, ((m.netMargin || 0) / maxVal * 100)))}%; background:#f8fafc; height:5px; border-radius:2px; opacity:0.8;"></div>
                                     </div>
                                     <div style="display:flex; justify-content:space-between; font-size:8.5px; margin-top:2px; gap:2px;">
                                         <span style="color:#f87171;">毛:${safeFix(m.grossMargin, 2)}%</span>
@@ -3285,8 +3443,8 @@ async function fetchInstitutionalMoneyDJ(symbol) {
                 <div class="analysis-card-title">👥 ${insiderActivity?.type === 'fallback_chips' ? '內部人大戶籌碼趨勢' : '內部人申報轉讓紀錄'}</div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:15px;">
                     ${insiderActivity && insiderActivity.history.length > 0 ? insiderActivity.history.map(h => `
-                        <div style="background:rgba(255,255,255,0.03); padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05); display:flex; flex-direction:column; justify-content:space-between; min-height:60px;">
-                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                        <div style="background:rgba(255,255,255,0.03); padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05); display:flex; flex-direction:column; min-height:60px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
                                 <span style="font-size:10px; color:#94a3b8; font-family:monospace;">${h.date}</span>
                                 <span style="font-size:12px; font-weight:800; color:${h.totalChange > 0 ? '#f87171' : (h.totalChange < 0 ? '#4ade80' : '#fff')}">
                                     ${h.totalChange > 0 ? '+' : ''}${h.isPercent ? h.totalChange.toFixed(2) + '%' : Math.round(h.totalChange) + '張'}
@@ -3462,29 +3620,47 @@ async function fetchInstitutionalMoneyDJ(symbol) {
         <!-- 15. 數據診斷面板 (Visible Debugging) -->
         <div id="analysisDiagnostic" style="margin-top:20px; padding:15px; background:rgba(0,0,0,0.3); border-radius:10px; border:1px solid rgba(255,255,255,0.1); font-family:monospace; font-size:11px;">
             <div style="color:#fbbf24; margin-bottom:8px; font-weight:bold; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:4px;">🔍 數據來源診斷 (Diagnostic Console)</div>
-            <div style="color:${chartData ? '#10b981' : '#ef4444'}">● 股價歷史 (Price): ${chartData ? 'OK' : 'FAIL'}</div>
-            <div style="color:${twseBasic ? '#10b981' : '#ef4444'}">● 估值指標 (Basic): ${twseBasic ? 'OK' : 'FAIL'}</div>
-            <div style="color:${chipsData ? '#10b981' : '#ef4444'}">● 籌碼結構 (Shareholding): ${chipsData ? 'OK' : 'FAIL'}</div>
-            <div style="color:${revData ? '#10b981' : '#ef4444'}">● 營收數據 (Revenue): ${revData ? 'OK' : 'FAIL'}</div>
-            <div style="color:${finData && finData.equity > 1 ? '#10b981' : '#ef4444'}">● 財報數據 (Financial): ${finData ? (finData.equity > 1 ? 'OK' : 'EMPTY DATA') : 'FAIL'}</div>
-            <div style="color:${institutionalData ? '#10b981' : '#ef4444'}">● 法人動態 (Inst.): ${institutionalData ? `OK (${institutionalData.daily?.length || 0} 筆)` : 'FAIL'}</div>
-            <div style="color:${riskMetrics ? '#10b981' : '#ef4444'}">● 風險指標 (Risk): ${riskMetrics ? 'OK' : 'FAIL'}</div>
-            <div style="color:${(insiderActivity && insiderActivity.type !== 'none') ? '#10b981' : '#ef4444'}">● 內部人持股 (Insider): ${(insiderActivity && insiderActivity.type !== 'none') ? 'OK' : 'FAIL'}</div>
+            
+            ${(() => {
+                const getRetryBtn = (idx) => `<span onclick="retryAnalysisTask('${symbol}', '${name}', '${avgCost || ''}', ${idx})" style="text-decoration:underline; cursor:pointer; margin-left:5px; color:#fbbf24;">[重試]</span>`;
+                return `
+                <div style="color:${chartData ? '#10b981' : '#ef4444'}">● 股價歷史 (Price): ${chartData ? 'OK' : 'FAIL' + getRetryBtn(0)}</div>
+                <div style="color:${twseBasic ? '#10b981' : '#ef4444'}">● 估值指標 (Basic): ${twseBasic ? 'OK' : 'FAIL' + getRetryBtn(1)}</div>
+                <div style="color:${chipsData ? '#10b981' : '#ef4444'}">● 籌碼結構 (Shareholding): ${chipsData ? 'OK' : 'FAIL' + getRetryBtn(2)}</div>
+                <div style="color:${revData ? '#10b981' : '#ef4444'}">● 營收數據 (Revenue): ${revData ? 'OK' : 'FAIL' + getRetryBtn(3)}</div>
+                <div style="color:${finData && finData.equity > 1 ? '#10b981' : '#ef4444'}">● 財報數據 (Financial): ${finData ? (finData.equity > 1 ? 'OK' : 'EMPTY' + getRetryBtn(6)) : 'FAIL' + getRetryBtn(6)}</div>
+                <div style="color:${institutionalData ? '#10b981' : '#ef4444'}">● 法人動態 (Inst.): ${institutionalData ? `OK (${institutionalData.daily?.length || 0} 筆)` : 'FAIL' + getRetryBtn(5)}</div>
+                <div style="color:${riskMetrics ? '#10b981' : '#ef4444'}">● 風險指標 (Risk): ${riskMetrics ? 'OK' : 'FAIL' + getRetryBtn('[0, 7]')}</div>
+                <div style="color:${(insiderActivity && insiderActivity.type !== 'none') ? '#10b981' : '#ef4444'}">● 內部人持股 (Insider): ${(insiderActivity && insiderActivity.type !== 'none') ? 'OK' : 'FAIL' + getRetryBtn(8)}</div>
+                `;
+            })()}
+
             <div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(255,255,255,0.1); color:#fbbf24; font-size:10px; word-break:break-all;">
                 [INTEGRITY] Equity:${finData?.equity ? 'YES' : 'NO'}, Shares:${shares ? 'YES' : 'NO'}, Holders:${chipsData?.holderTrend?.length || 0}, Norway:${chipsData?.norwayStatus || 'N/A'}
             </div>
             <div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(255,255,255,0.1); color:#fbbf24; font-size:10px; word-break:break-all;">
                 [INSIDER SAMPLE] ${insiderActivity ? insiderActivity.sample : `FAIL (DJ:${debugInfo?.dj}, DIR:${debugInfo?.dir}, CHIPS:${debugInfo?.holders || 0})`}
             </div>
-            <div style="margin-top:8px; color:#94a3b8;">* 如果顯示 FAIL，請嘗試點擊下方按鈕或視窗邊緣重新開啟。</div>
+            <div style="margin-top:8px; color:#94a3b8;">* 如果個別項目顯示 FAIL，可點擊該項目的 [重試] 進行局部更新。</div>
             <div style="margin-top:12px; padding-top:12px; border-top:1px dashed rgba(255,255,255,0.1); display:flex; justify-content:center;">
                 <button onclick="openAnalysisModal('${symbol}', '${name}', '${avgCost || ''}', true)" 
                         style="background:rgba(59, 130, 246, 0.2); color:#60a5fa; border:1px solid rgba(59, 130, 246, 0.3); padding:6px 15px; border-radius:6px; cursor:pointer; font-size:11px; font-weight:700; transition:all 0.2s;">
-                    🔄 強制重新載入數據
+                    🔄 全數重抓 (跳過快取)
                 </button>
             </div>
         </div>
     `;
+}
+
+function retryAnalysisTask(symbol, name, avgCost, index) {
+    if (!window._lastAnalysisResults) return;
+    const results = [...window._lastAnalysisResults];
+    if (Array.isArray(index)) {
+        index.forEach(i => results[i] = null);
+    } else {
+        results[index] = null;
+    }
+    openAnalysisModal(symbol, name, avgCost, false, results);
 }
 
 function renderStatRow(label, value, percentVal = null) {
@@ -3564,7 +3740,7 @@ function renderNetBuyRow(label, netLots) {
     return `
         <div class="analysis-stat-row">
             <span class="analysis-label">${label}</span>
-            <span class="analysis-val" style="color:${color}; font-size:13px;">${sign}${rounded.toLocaleString()} 張</span>
+            <span class="analysis-val" style="color:${color};">${sign}${rounded.toLocaleString()} 張</span>
         </div>
     `;
 }
@@ -3626,12 +3802,12 @@ function renderValuationRiverMap(label, current, percentile, bands) {
     const pos = Math.max(0, Math.min(100, percentile));
     
     return `
-        <div class="analysis-stat-row" style="flex-direction: column; align-items: flex-start; gap: 6px; padding: 10px 0;">
+        <div class="analysis-stat-row chart-internal" style="flex-direction: column; align-items: flex-start; gap: 6px; padding: 10px 0;">
             <div style="display:flex; justify-content:space-between; width:100%; font-size:12px;">
                 <span class="${labelClass}" ${clickAttr}>${label}: <b style="color:#ffffff;">${safeFix(current, 2)}</b></span>
                 <span style="color:${color}; font-weight:800;">${safeFix(percentile, 1)}% (位階)</span>
             </div>
-            <div class="river-map-container" style="width:100%; height:14px; background:rgba(255,255,255,0.05); border-radius:7px; position:relative; margin:10px 0 5px; border:1px solid rgba(255,255,255,0.1);">
+            <div class="river-map-container" style="width:100%; height:14px; background:rgba(255,255,255,0.05); border-radius:7px; position:relative; margin:10px 0 -2px; border:1px solid rgba(255,255,255,0.1);">
                 <!-- Scale markers -->
                 <div style="position:absolute; left:0%; top:-12px; font-size:8px; color:#94a3b8;">${safeFix(bands.min, 1)}</div>
                 <div style="position:absolute; left:25%; top:0; bottom:0; width:1px; background:rgba(255,255,255,0.1);"></div>
@@ -3646,7 +3822,7 @@ function renderValuationRiverMap(label, current, percentile, bands) {
                 <!-- Background Gradient (Green to Red) -->
                 <div style="position:absolute; left:0; top:0; bottom:0; width:100%; background:linear-gradient(90deg, rgba(74,222,128,0.2) 0%, rgba(251,191,36,0.2) 50%, rgba(248,113,113,0.2) 100%); border-radius:7px;"></div>
             </div>
-            <div style="display:flex; justify-content:space-between; width:100%; font-size:8px; color:#94a3b8; padding:0 2px;">
+            <div class="legend-horizontal" style="display:flex; justify-content:space-between; width:100%; font-size:8px; color:#94a3b8; padding:0 2px; margin-top:-8px;">
                 <span>低估</span>
                 <span>合理</span>
                 <span>昂貴</span>
@@ -3728,7 +3904,7 @@ function renderSectorComparison(industry, stats) {
 
     return `
         <div class="analysis-card" style="margin-top:16px; border: 1px solid rgba(59, 130, 246, 0.3); background: linear-gradient(180deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%);">
-            <div class="analysis-card-title" style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="analysis-card-title chart-internal" style="display:flex; justify-content:space-between; align-items:center;">
                 <span>📊 產業對比：${finalIndustryName}</span>
                 <span style="font-size:10px; color:#94a3b8; font-weight:normal;">基準: 2025 產業年度報告 (最新)</span>
             </div>
@@ -3745,18 +3921,18 @@ function renderSectorComparison(industry, stats) {
                     const avgPos = hasAvg ? (Math.abs(item.avg) / barMax) * 100 : -10; // 隱藏
                     
                     return `
-                        <div onclick="showTermExplainer('${item.label}', '${(item.unit === '次' || item.unit === '倍' ? item.val.toFixed(2) : item.val.toFixed(1))}${item.unit}', ${item.avg})" style="display:flex; flex-direction:column; gap:4px; background:rgba(255,255,255,0.02); padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05); cursor:pointer; transition:all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
-                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div class="chart-internal" onclick="showTermExplainer('${item.label}', '${(item.unit === '次' || item.unit === '倍' ? item.val.toFixed(2) : item.val.toFixed(1))}${item.unit}', ${item.avg})" style="display:flex; flex-direction:column; gap:4px; background:rgba(255,255,255,0.02); padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05); cursor:pointer; transition:all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
+                            <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
                                 <span style="font-size:11px; font-weight:700; color:#cbd5e1;">${item.label}</span>
                                 <span style="font-size:11px; color:${color}; font-weight:800;">
                                     ${(item.unit === '次' || item.unit === '倍' ? item.val.toFixed(2) : item.val.toFixed(1))}${item.unit}
                                 </span>
                             </div>
-                            <div style="height:6px; background:rgba(255,255,255,0.05); border-radius:3px; position:relative; margin:4px 0;">
-                                <div style="position:absolute; left:0; top:0; bottom:0; width:${stockPos}%; background:${color}; border-radius:3px; opacity:0.6;"></div>
+                            <div style="height:8px; background:rgba(255,255,255,0.05); border-radius:4px; position:relative; margin:6px 0; width:100%;">
+                                <div style="position:absolute; left:0; top:0; bottom:0; width:${stockPos}%; background:${color}; border-radius:4px; opacity:0.8; box-shadow: 0 0 8px ${color}44;"></div>
                                 ${hasAvg ? `<div style="position:absolute; left:${avgPos}%; top:-3px; bottom:-3px; width:2px; background:#fbbf24; z-index:2; box-shadow: 0 0 5px #fbbf24;"></div>` : ''}
                             </div>
-                            <div style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8;">
+                            <div style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8; width:100%;">
                                 <span>行業平均: ${hasAvg ? item.avg + item.unit : 'N/A'}</span>
                                 ${hasAvg ? `<span style="color:${color}; opacity:0.8;">${diff >= 0 ? '超額' : '落後'} ${Math.abs(diff).toFixed(1)}</span>` : ''}
                             </div>
@@ -3765,7 +3941,7 @@ function renderSectorComparison(industry, stats) {
                 }).join('')}
             </div>
 
-            <div style="margin-top:15px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.05); display:flex; justify-content:center; gap:15px;">
+            <div class="legend-horizontal chart-internal" style="margin-top:15px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.05); display:flex; justify-content:center; gap:15px;">
                 <div style="display:flex; align-items:center; gap:5px; font-size:9px; color:#94a3b8;">
                     <span style="width:8px; height:8px; background:#4ade80; border-radius:2px;"></span> 優於標竿
                 </div>
@@ -4314,6 +4490,46 @@ const termDefinitions = {
             return "警訊！公司現金流入不足以支撐投資支出，需留意是否入不敷出。";
         }
     },
+    'FCF 連貫性 (10年)': {
+        type: '現金流',
+        desc: '衡量公司在長達 5-10 年的期間內，是否能穩定產生正向的自由現金流。',
+        rule: '專業分析師通常要求連續 5-10 年 FCF 為正。',
+        advice: '這是區分「印鈔機」與「燒錢坑」的終極指標。即便 EPS 再好，若 FCF 長期為負且 5 年總和為負，代表公司一直在舉債燒錢，風險極大。',
+        analyze: (v, raw) => {
+            if (!raw) return "穩定且連貫的現金流是企業長期生存與發放股息的基石。";
+            const matches = String(raw).match(/(\d+)\s*\/\s*(\d+)/);
+            if (matches) {
+                const pos = parseInt(matches[1]);
+                const total = parseInt(matches[2]);
+                const ratio = pos / total;
+                if (ratio >= 0.8) return "🔥 頂尖現金產生能力！長期穩定貢獻現金，是具備強大護城河的象徵。";
+                if (ratio >= 0.5) return "現金產生能力尚屬穩定，多數年份能維持正向營運資金。";
+                return "⚠️ 現金流連貫性欠佳，需留意公司是否頻繁需要外部融資或增資。";
+            }
+            return "分析長期的現金流規律，可有效過濾掉帳面獲利 but 實際入不敷出的企業。";
+        }
+    },
+    '董監持股質押比例': {
+        type: '風險',
+        desc: '董事與監察人將手中的股票拿去向銀行質押借錢的比例。',
+        rule: '通常 > 30% 為警戒線，> 50% 為高風險。',
+        advice: '質押比例過高代表內部人資金吃緊，若股價大跌可能引發斷頭賣壓，形成連鎖反應。',
+        analyze: (v) => {
+            if (v > 50) return "⚠️ 警訊！董監質押比例極高，需慎防股價波動引發的質押品斷頭賣壓風險。";
+            if (v > 30) return "董監質押比例偏高，顯示內部人財務槓桿較大。";
+            return "董監質押比例處於安全範圍。";
+        }
+    },
+    '5年累計自由現金流': {
+        type: '現金流',
+        desc: '公司過去 5 年（20 季）所產生的自由現金流總和。',
+        rule: '應大於 0。數值越高代表公司產生的實質現金越多。',
+        advice: '這是判斷公司是否在「假獲利、真賠錢」的最佳工具。若獲利很好但 5 年 FCF 為負，代表賺的錢都拿去填補營運缺口或資本支出了。',
+        analyze: (v) => {
+            if (v < 0) return "⚠️ 嚴重警訊！近 5 年累計現金流為負值，公司長期處於入不敷出的狀態。";
+            return "公司具備長期產生剩餘現金的能力，財務結構相對健康。";
+        }
+    },
     '布林位置': {
         type: '技術面',
         desc: '反映股價在布林通道（2 倍標準差軌道）中的相對位置。',
@@ -4737,6 +4953,24 @@ const termDefinitions = {
             
             if (avg && val < avg * 0.85) diag += ` 收帳速度優於同業 (${Math.round(avg)}天)，展現對下游強大的議價地位。`;
             return diag;
+        }
+    },
+    '融資使用率': {
+        type: '籌碼風險',
+        desc: '融資餘額 / 融資限額。反映散戶使用槓桿買進股票的飽和程度。',
+        rule: '通常 > 20% 代表散戶參與度高；> 40% 則需留意賣壓集中。',
+        advice: '融資使用率過高時，若遇到股價重挫，容易觸發連鎖性斷頭賣壓。',
+        analyze: (v) => v > 40 ? "融資使用率偏高，散戶槓桿較重，需防範融資多殺多風險。" : "融資槓桿尚在安全範圍。"
+    },
+    '融資維持率': {
+        type: '籌碼風險',
+        desc: '（融資擔保品市值 / 融資金額）× 100%。衡量融資部位安全性的指標。若 API 未提供即時數值，系統將以「當前股價 / (60日均價 × 0.6)」進行估算。',
+        rule: '台灣法規規定維持率低於 130% 會收到追繳通知。',
+        advice: '維持率愈高（如 > 160%）愈安全；低於 140% 時即進入斷頭警戒區，需留意融資多殺多風險。',
+        analyze: (v) => {
+            if (v < 135) return "‼️ 極度危險！融資維持率逼近斷頭線 (130%)，大盤稍有震盪即可能引發追繳賣壓。";
+            if (v < 150) return "⚠️ 警訊：融資維持率偏低，顯示多數融資戶處於虧損狀態，賣壓轉趨沈重。";
+            return "融資維持率處於安全區間，暫無追繳風險。";
         }
     }
 };
