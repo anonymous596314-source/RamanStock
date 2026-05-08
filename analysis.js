@@ -1045,10 +1045,27 @@ async function fetchStockChips(symbol) {
             exDivDate = sortedHistory[0].date;
             exDivAmt = sortedHistory[0].cash;
             divHistory = sortedHistory.slice(0, 8);
-            if (sortedHistory.length >= 3) {
+            // 最終優化：採用 360 天時間窗，精確捕捉 4 季 (或 12 個月) 且避免重複計入週年日
+            const getRelDate = (base, y, d) => {
+                const dt = new Date(base);
+                dt.setFullYear(dt.getFullYear() + y);
+                dt.setDate(dt.getDate() + d);
+                return dt.toISOString().split('T')[0];
+            };
+            const anchor = sortedHistory[0].date;
+            const nowLimit = getRelDate(anchor, 0, -360); // 滾動一年 (稍短於 365 以避開重複日)
+            const prevAnchor = getRelDate(anchor, -3, 0); 
+            const prevLimit = getRelDate(anchor, -3, -360); 
+            
+            const ttmNow = sortedHistory.filter(h => h.date > nowLimit && h.date <= anchor).reduce((s, x) => s + x.cash, 0);
+            const ttmPrev = sortedHistory.filter(h => h.date > prevLimit && h.date <= prevAnchor).reduce((s, x) => s + x.cash, 0);
+            
+            if (ttmPrev > 0 && ttmNow > 0) {
+                divGrowth3y = (Math.pow(ttmNow / ttmPrev, 1 / 3) - 1) * 100;
+            } else if (sortedHistory.length >= 2) {
                 const latest = sortedHistory[0].cash;
-                const threeYearsAgo = sortedHistory[Math.min(sortedHistory.length-1, 2)].cash;
-                if (threeYearsAgo > 0) divGrowth3y = ((latest - threeYearsAgo) / threeYearsAgo) * 100;
+                const prev = sortedHistory[sortedHistory.length - 1].cash;
+                if (prev > 0) divGrowth3y = ((latest - prev) / prev) * 100;
             }
             const divYears = [...new Set(sortedHistory.map(d => new Date(d.date).getFullYear()))].sort((a,b) => b-a);
             let streak = 0;
@@ -3093,7 +3110,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 </div>
                 ${renderStatRow('最近現金股利', chipsData?.exDivAmt ? chipsData.exDivAmt + ' 元' : 'N/A')}
                 ${renderStatRow('連續配息年數', (chipsData?.divConsecutiveYears !== undefined) ? chipsData.divConsecutiveYears + ' 年' : 'N/A')}
-                ${renderPercentRow('三年股利成長', chipsData?.divGrowth3y)}
+                ${renderPercentRow('股利 3年 CAGR', chipsData?.divGrowth3y)}
                 <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:6px;">📈 獲利分配與永續性</div>
                 ${(() => {
                     const payout = (totalDiv12m && finData?.epsLTM) ? (totalDiv12m / finData.epsLTM * 100) : null;
@@ -4528,6 +4545,19 @@ const termDefinitions = {
             if (v > 25) return "盈餘成長動能爆發，是標準的高成長績優股。";
             if (v > 0) return "獲利維持正成長。";
             return "獲利出現衰退，需探究是短期因素還是競爭力下滑。";
+        }
+    },
+    '股利 3年 CAGR': {
+        type: '股利',
+        desc: '股利年化複合成長率 (Compound Annual Growth Rate)。衡量過去三年內，公司年度總配息金額的平均年成長速度。',
+        rule: '> 0% 代表股利在成長；> 5% 為穩健成長型配息股；< 0% 則為衰退。',
+        advice: '投資人應優先選擇 CAGR 為正且穩定的公司。若為負值，需注意公司是否在「吃老本」發放股利或獲利轉差。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (val > 10) return "🚀 股利成長動能強勁！公司展現極佳的獲利能力與慷慨的配息政策。";
+            if (val > 0) return "✅ 股利維持正向成長，屬於典型的「成長型配息股」。";
+            if (val < 0) return "⚠️ 警訊：股利呈現負成長（衰退），需留意公司基本面是否惡化。";
+            return "股利發放水平與三年前持平。";
         }
     },
     '年化波動率': {
