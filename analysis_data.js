@@ -89,10 +89,10 @@ const termDefinitions = {
     },
     '💰 獲利大戶': {
         type: '籌碼',
-        desc: '目前持倉處於大幅獲利狀態的大型分點。',
-        rule: '條件：過去 60 日平均買入成本比目前市價低 5% 以上。',
-        advice: '獲利大戶雖具備成本優勢，但若其開始反手出貨（出現在賣超名單），需提防獲利了結壓垮股價。',
-        analyze: () => "該大戶目前處於贏家圈，需留意其後續是否反手轉賣。"
+        desc: '目前持倉處於獲利狀態的大型分點。⚠️ 注意：「獲利」判斷是基於「前 15 大買超分點的合計加權均價」，為群體平均成本，非各分點的個別進貨成本。若某分點以高於群體均價買入，仍可能被歸類此標籤。',
+        rule: '條件：過去 60 日前 15 大買超分點的合計加權均價，低於目前市價 5% 以上。',
+        advice: '獲利大戶雖具備整體成本優勢，但若其開始反手出貨（出現在賣超名單），需提防獲利了結壓垮股價。此標籤基於分點集合均值判斷，僅供趨勢參考。',
+        analyze: () => "該大戶群體目前整體處於獲利圈，需留意其後續是否出現在賣超名單。"
     },
     '🔥 積極佈局': {
         type: '籌碼',
@@ -775,6 +775,51 @@ const termDefinitions = {
             if (val < 1.5) return "財務結構極其保守，幾乎不使用槓桿，抗風險能力強但資金效率較低。";
             return "槓桿運用適中，財務結構與獲利效率平衡良好。";
         }
+    },
+    '營業費用率': {
+        type: '費用控管',
+        desc: '營業費用（如推銷、管理、研發費用） / 營業收入。反映公司日常營運成本的控制效率。',
+        rule: '越低越好。若毛利率高但此比例過高，代表公司可能將過多資源浪費在非核心價值上。',
+        advice: '對於新創或轉型期公司，高費用率可容忍；但成熟企業費用率若異常攀升，是管理效率惡化的警訊。',
+        analyze: (v) => {
+            if (v > 40) return `⚠️ 營業費用負擔過重 (${v}%)，可能大幅侵蝕本業獲利，需檢視是研發擴張還是管理失控。`;
+            if (v < 10) return "費用控管極為精實，展現高度的管理效率。";
+            return "營業費用率處於一般健康區間。";
+        }
+    },
+    'ROIC (投入資本回報)': {
+        type: '營運效率',
+        desc: '稅後營業利益 (NOPAT) / 投入資本 (總資產 - 流動負債)。華爾街與巴菲特最重視的「終極護城河指標」。',
+        rule: '剔除了財務槓桿(舉債)的干擾，真實反映本業賺錢的效率。穩定 > 15% 屬極品護城河。',
+        advice: '若 ROE 很高但 ROIC 很低，代表公司是靠大量借貸來美化 ROE，實際上本業創造價值的能力平庸。',
+        analyze: (v) => {
+            if (v > 20) return `🏆 驚人的護城河！ROIC 高達 ${v}%，顯示本業具備極強的壟斷定價權與資本效率。`;
+            if (v > 10) return "資本運用效率優異，本業持續創造真實的經濟價值。";
+            if (v < 5) return "⚠️ 資本回報偏弱，公司擴張可能正在摧毀股東價值，需警惕過度投資。";
+            return "投入資本回報表現平穩。";
+        }
+    },
+    '企業價值倍數 (EV/EBIT)': {
+        type: '估值位階',
+        desc: '企業真實價值 (市值+負債-現金) / 稅前息前獲利。私募基金併購時最愛的估值法。',
+        rule: '比 P/E 準確，因為它排除了資本結構 (借債多寡) 與各國稅率差異的干擾。',
+        advice: '一般認為 < 10 倍屬便宜，> 20 倍屬昂貴 (仍需視產業特性而定)。',
+        analyze: (v) => {
+            if (v < 8) return "🔥 企業真實併購估值極度低估！目前 EV/EBIT 僅不到 8 倍，具備強烈吸引力。";
+            if (v > 25) return "估值已被市場充分發掘且偏昂貴，需有強大成長動能才能支撐。";
+            return "企業價值倍數處於合理區間。";
+        }
+    },
+    '盈餘殖利率 (Earnings Yield)': {
+        type: '估值位階',
+        desc: '每股盈餘 / 股價 (等同於 1 / PE)。反映你買入這間公司，理論上每年能獲得的實質報酬率。',
+        rule: '作為「股權風險溢酬 (ERP)」的基準。必須與無風險利率 (如美國十年期公債) 比較。',
+        advice: '若盈餘殖利率低於公債殖利率，代表買股票承擔高風險卻拿較少報酬，除非爆發性成長否則極度不划算。',
+        analyze: (v) => {
+            if (v > 8) return `🏆 極高實質報酬！盈餘殖利率達 ${v}%，具備極強的下檔保護與投資吸引力。`;
+            if (v < 2) return `⚠️ 估值警訊：盈餘殖利率僅 ${v}%，報酬可能不如無風險公債，市場預期已極度樂觀。`;
+            return "盈餘殖利率處於正常水準。";
+        }
     }
 };
 
@@ -1255,10 +1300,28 @@ function calculateInstitutionalCosts(dailyData, prices) {
 
 function identifyWinnerBrokers(brokerData, currentPrice) {
     const winners = [];
-    const sellers = brokerData?.d60?.topSellers || [];
+    const sellers = [];
     if (!brokerData?.d60?.topBrokers) return { winners, sellers };
+
+    const d5BuyNames  = new Set((brokerData.d5?.topBrokers  || []).map(b => b.name));
+    const d20BuyNames = new Set((brokerData.d20?.topBrokers || []).map(b => b.name));
+    const d5SellNames  = new Set((brokerData.d5?.topSellers  || []).map(b => b.name));
+    const d20SellNames = new Set((brokerData.d20?.topSellers || []).map(b => b.name));
+
+    // ✅ 保留所有 60 日前五大買超券商，用標籤標示連續性
     brokerData.d60.topBrokers.forEach(b => {
-        winners.push({ name: b.name, buyNet: b.buyNet });
+        const isHot = d5BuyNames.has(b.name) || d20BuyNames.has(b.name);
+        winners.push({ name: b.name, label: isHot ? '🔥持續買進' : null, buyNet: b.buyNet });
     });
-    return { winners: winners.slice(0, 5), sellers: sellers.slice(0, 5) };
+
+    // ✅ 保留所有 60 日前五大賣超券商，用標籤標示連續性
+    (brokerData.d60.topSellers || []).forEach(b => {
+        const isHot = d5SellNames.has(b.name) || d20SellNames.has(b.name);
+        sellers.push({ name: b.name, label: isHot ? '⚠️持續賣出' : null, sellNet: b.sellNet });
+    });
+
+    return {
+        winners: winners.sort((a, b) => b.buyNet - a.buyNet).slice(0, 5),
+        sellers: sellers.sort((a, b) => b.sellNet - a.sellNet).slice(0, 5)
+    };
 }
