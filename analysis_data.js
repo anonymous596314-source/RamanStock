@@ -75,10 +75,10 @@ const termDefinitions = {
     },
     'FCF (自由現金流)': {
         type: '現金流',
-        desc: '營業現金流扣除資本支出後的餘額 (OCF - CapEx)。',
-        rule: '大於 0 代表公司入大於出。FCF 越充沛，公司發放股息或還債的能力就越強。',
-        advice: '這是投資人「真正能拿到的錢」。如果 FCF 長期為負，公司可能需要增資或舉債來維持營運。',
-        analyze: (v) => "自由現金流是評價企業價值的核心，代表公司在不影響營運下能自由分配的現金。"
+        desc: '營業現金流扣除資本支出後的餘額 (公式：OCF - CapEx)。這代表公司扣除必要投資後，真正能自由支配的「真錢」。',
+        rule: '大於 0 代表公司入大於出。將此數值除以市值即為「FCF 殖利率」，是用來衡量投資回報含金量的核心指標。',
+        advice: '這是投資人真正能拿到的錢。若 FCF 長期為負且殖利率下滑，需警惕公司是否處於過度擴張或本業衰退。',
+        analyze: (v) => "自由現金流是評價企業價值的核心，結合市值計算出的殖利率能反映當前股價的現金回報能力。"
     },
     '🏆 明星分點': {
         type: '籌碼',
@@ -820,6 +820,31 @@ const termDefinitions = {
             if (v < 2) return `⚠️ 估值警訊：盈餘殖利率僅 ${v}%，報酬可能不如無風險公債，市場預期已極度樂觀。`;
             return "盈餘殖利率處於正常水準。";
         }
+    },
+    'FCF_YIELD_TREND_ANALYSIS': {
+        title: '📊 FCF 殖利率趨勢',
+        type: '現金流/估值',
+        desc: '衡量每一季產生的自由現金流相對於目前市值的比例。公式為：<b>(營業現金流 OCF - 資本支出 CapEx) / 目前市值</b>。<br><span style="color:#94a3b8; font-size:11px;">註：分母統一使用「目前市值」計算，以排除股價波動干擾，純粹反映公司產生現金能力的變化。</span>',
+        rule: '殖利率上升代表公司的創現能力（扣除必要投資後的淨現金）相對於股價正在增強，具備更高的投資吸引力。',
+        advice: '若 FCF 殖利率呈上升趨勢，代表公司不僅賺錢，且扣除廠房設備投資後剩下的「真錢」越來越多。',
+        analyze: (v) => {
+            if (!v) return "觀察 FCF 殖利率的趨勢，可以判斷公司產生現金的效率是否在改善。";
+            // 嘗試解析數值趨勢，例如 "0.23% -> 0.62% (📈 趨勢向上)"
+            const matches = String(v).match(/([\d.]+)%\s*->\s*([\d.]+)%/);
+            if (matches) {
+                const start = parseFloat(matches[1]);
+                const end = parseFloat(matches[2]);
+                const diff = (end - start).toFixed(2);
+                if (end > start) {
+                    return `🔥 創現能力顯著增強！殖利率從 ${start}% 攀升至 ${end}% (增加了 ${diff}%)。這代表在相同股價成本下，公司能為您產出的現金回報正在快速擴張。`;
+                } else if (end < start) {
+                    return `⚠️ 創現能力轉趨弱勢。殖利率從 ${start}% 下降至 ${end}%。需留意公司是否因研發或擴產導致自由現金流收縮。`;
+                }
+            }
+            if (String(v).includes('📈') || String(v).includes('🔥')) return "🔥 趨勢向上！公司的現金產生能力持續轉強，對股價具備強力支撐。";
+            if (String(v).includes('📉')) return "⚠️ 趨勢向下：需留意公司是否進入資本支出擴張期，或是本業獲現能力出現衰退。";
+            return "趨勢平穩。";
+        }
     }
 };
 
@@ -1267,6 +1292,12 @@ function showTermExplainer(term, currentVal = null, avgVal = null) {
                 <div class="term-explainer-subtitle">💡 判斷準則</div>
                 <div class="term-explainer-body">${def.rule}</div>
             </div>
+            ${def.analyze ? `
+            <div class="term-explainer-section" style="background:rgba(59, 130, 246, 0.05); border:1px solid rgba(59, 130, 246, 0.15); padding:10px; border-radius:8px; margin-top:10px;">
+                <div class="term-explainer-subtitle" style="color:#60a5fa;">🤖 AI 深度診斷</div>
+                <div class="term-explainer-body" style="color:#ffffff; font-weight:700;">${def.analyze(currentVal, avgVal)}</div>
+            </div>
+            ` : ''}
         </div>
     `;
     setTimeout(() => overlay.classList.add('active'), 10);

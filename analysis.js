@@ -597,7 +597,7 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
 }
 
 // === Caching Helper ===
-const ANALYSIS_CACHE_PREFIX = 'stock_analysis_cache_v3_'; // 升級版本以刷新法人明細快取
+const ANALYSIS_CACHE_PREFIX = 'stock_analysis_cache_v4_'; // 升級版本以刷新毛利率改善季數與法人快取
 function getCachedAnalysis(key, ttlHours = 24) {
     try {
         const cached = localStorage.getItem(ANALYSIS_CACHE_PREFIX + key);
@@ -1109,6 +1109,7 @@ async function fetchStockChips(symbol) {
     let divGrowth3y = null;
     let divConsecutiveYears = 0;
     let divHistory = [];
+    let currentTtmDiv = 0;
     if (jsonDiv && jsonDiv.data && jsonDiv.data.length > 0) {
         const processed = jsonDiv.data.map(d => {
             const cash = (d.CashDividend || d.StockDividendCash || d.CashEarningsDistribution || 0) + 
@@ -1127,28 +1128,38 @@ async function fetchStockChips(symbol) {
         const sortedHistory = Array.from(historyMap.values()).sort((a,b) => new Date(b.date) - new Date(a.date));
         if (sortedHistory.length > 0) {
             exDivDate = sortedHistory[0].date;
-            exDivAmt = sortedHistory[0].cash;
+            // 優先尋找最近一次有發放現金股利的紀錄，避免因「股票股利較晚單獨發放」導致最近現金股利顯示為 0 (如富邦金案例)
+            const latestCashObj = sortedHistory.find(h => h.cash > 0);
+            exDivAmt = latestCashObj ? latestCashObj.cash : sortedHistory[0].cash;
             divHistory = sortedHistory.slice(0, 8);
-            // 最終優化：採用 360 天時間窗，精確捕捉 4 季 (或 12 個月) 且避免重複計入週年日
-            const getRelDate = (base, y, d) => {
-                const dt = new Date(base);
-                dt.setFullYear(dt.getFullYear() + y);
-                dt.setDate(dt.getDate() + d);
-                return dt.toISOString().split('T')[0];
+            // --- 強化版 CAGR 計算：偵測配息頻率並以「週期」為單位計算 ---
+            const getTtmSum = (startIndex, count) => {
+                if (sortedHistory.length < startIndex + count) return 0;
+                return sortedHistory.slice(startIndex, startIndex + count).reduce((s, x) => s + x.cash, 0);
             };
-            const anchor = sortedHistory[0].date;
-            const nowLimit = getRelDate(anchor, 0, -360); // 滾動一年 (稍短於 365 以避開重複日)
-            const prevAnchor = getRelDate(anchor, -3, 0); 
-            const prevLimit = getRelDate(anchor, -3, -360); 
+
+            // 1. 偵測頻率 (透過前 4 筆紀錄的平均間隔天數)
+            let payoutsPerYear = 1;
+            if (sortedHistory.length >= 4) {
+                const totalDays = (new Date(sortedHistory[0].date) - new Date(sortedHistory[3].date)) / (1000 * 60 * 60 * 24);
+                const avgGap = totalDays / 3;
+                if (avgGap < 120) payoutsPerYear = 4;      // 季配 (約 90 天)
+                else if (avgGap < 240) payoutsPerYear = 2; // 半年配 (約 180 天)
+                else payoutsPerYear = 1;                   // 年配 (約 360 天)
+            }
             
-            const ttmNow = sortedHistory.filter(h => h.date > nowLimit && h.date <= anchor).reduce((s, x) => s + x.cash, 0);
-            const ttmPrev = sortedHistory.filter(h => h.date > prevLimit && h.date <= prevAnchor).reduce((s, x) => s + x.cash, 0);
+            // 2. 計算 TTM (目前週期的總和與三年前週期的總和)
+            const ttmNow = getTtmSum(0, payoutsPerYear);
+            const ttmPrev = getTtmSum(payoutsPerYear * 3, payoutsPerYear);
             
-            if (ttmPrev > 0 && ttmNow > 0) {
+            currentTtmDiv = ttmNow;
+
+            if (ttmPrev > 0 && ttmNow > 0 && sortedHistory.length >= payoutsPerYear * 4) {
                 divGrowth3y = (Math.pow(ttmNow / ttmPrev, 1 / 3) - 1) * 100;
             } else if (sortedHistory.length >= 2) {
-                const latest = sortedHistory[0].cash;
-                const prev = sortedHistory[sortedHistory.length - 1].cash;
+                // 備援：若資料長度不足計算 3 年 CAGR，則計算最近兩次有意義紀錄的變動率
+                const latest = sortedHistory[0].cash > 0 ? sortedHistory[0].cash : (sortedHistory[1]?.cash || 0);
+                const prev = sortedHistory.find((h, i) => i > 0 && h.cash > 0)?.cash || 0;
                 if (prev > 0) divGrowth3y = ((latest - prev) / prev) * 100;
             }
             const divYears = [...new Set(sortedHistory.map(d => new Date(d.date).getFullYear()))].sort((a,b) => b-a);
@@ -1331,7 +1342,7 @@ async function fetchStockChips(symbol) {
     const apiRawCount = (jsonHolders && jsonHolders.data) ? jsonHolders.data.length : 0;
     if (institutionalTotal === null && foreign !== null) institutionalTotal = foreign + (trust || 0) + (dealer || 0);
 
-    return { foreign, trust, dealer, institutionalTotal, large, retail, exDivDate, exDivAmt, sharesIssued, divGrowth3y, divConsecutiveYears, divHistory, holderTrend, marginShortRatio, industry, stockName: stockNameFromAPI, apiRawCount, norwayStatus, pledgeRatio };
+    return { foreign, trust, dealer, institutionalTotal, large, retail, exDivDate, exDivAmt, sharesIssued, divGrowth3y, divConsecutiveYears, divHistory, holderTrend, marginShortRatio, industry, stockName: stockNameFromAPI, apiRawCount, norwayStatus, pledgeRatio, currentTtmDiv };
 }
 
 // --- 4. FinMind 月營收 ---
@@ -1617,6 +1628,19 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 };
             });
 
+            // 新增：毛利率連續改善季數 (Margin Momentum Count)
+            let marginMomentumCount = 0;
+            if (marginTrend4.length >= 2) {
+                // 從最新一季開始往前比對 (marginTrend4 已按日期排序)
+                for (let i = marginTrend4.length - 1; i > 0; i--) {
+                    if (marginTrend4[i].grossMargin > marginTrend4[i - 1].grossMargin) {
+                        marginMomentumCount++;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
             // 獲利品質 (OCF / NI)
             const ocf = getVal(latestC, ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities', 'Cash_flows_from_used_in_operating_activities', 'Net_cash_generated_from_used_in_operating_activities', 'OperatingCashFlow', 'Operating_cash_flow', 'Net_cash_inflow_from_operating_activities']);
             const investingCF = getVal(latestC, ['CashProvidedByInvestingActivities', 'CashFlowsFromInvestingActivities', 'NetCashInflowFromInvestingActivities', 'InvestingCashFlow', 'Investing_cash_flow', 'Net_cash_used_in_investing_activities', 'PropertyAndPlantAndEquipment', 'Acquisition_of_property_plant_and_equipment']);
@@ -1721,6 +1745,7 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 nonOpRate:   nonOpRate,
                 dol:         (opIncome > 0 && grossProfit > 0) ? (grossProfit / opIncome) : null,
                 grossImproveYoY: grossMarginYoYImprove,
+                marginMomentumCount: marginMomentumCount,
                 eps:         getVal(latestS, 'EPS'),
                 epsLTM:      allDates.slice(-4).reduce((sum, date) => {
                     const qd = getQData(jsonS.data, date);
@@ -2417,17 +2442,22 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     // 市值
     const marketCap = shares ? (currentPrice * shares / 100000000) : null; // 億元
     
+    const totalDiv12m = chipsData?.currentTtmDiv || 0;
+
     // 市銷率 (P/S)
     const psRatio = (marketCap && revData?.cum12m) ? (marketCap * 100000000 / revData.cum12m) : null;
     
-    // 股利趨勢分析
+    // 股利趨勢分析 (優化：使用 TTM 12個月累計數據進行比較，避免單次除權息(如僅發放股票)導致誤判)
     let divTrendAnalysis = "數據不足以進行趨勢分析";
     if (chipsData?.divHistory && chipsData.divHistory.length >= 2) {
-        const latest = chipsData.divHistory[0].amount || chipsData.divHistory[0].cash || 0;
-        const avg = chipsData.divHistory.reduce((s, x) => s + (x.amount || x.cash || 0), 0) / chipsData.divHistory.length;
-        if (latest > avg * 1.1) divTrendAnalysis = "🚀 近期股利發放顯著優於平均，顯示獲利能力進入成長期。";
-        else if (latest < avg * 0.9) divTrendAnalysis = "⚠️ 近期股利發放低於長期平均，需觀察營運是否進入衰退期或保留資金擴張。";
-        else divTrendAnalysis = "📊 股利政策維持極高穩定性，具備定存股核心特質。";
+        // 使用計算好的 totalDiv12m (目前年度) 與 過去 8 次紀錄的平均值(年化) 進行比較
+        const historicalAvg = chipsData.divHistory.reduce((s, x) => s + x.cash, 0) / (chipsData.divHistory.length / (chipsData.divConsecutiveYears || 1) || 1);
+        const currentSum = totalDiv12m || 0;
+        
+        if (currentSum > historicalAvg * 1.1) divTrendAnalysis = "🚀 近期股利發放顯著優於平均，顯示獲利能力進入成長期。";
+        else if (currentSum > 0 && currentSum < historicalAvg * 0.8) divTrendAnalysis = "⚠️ 近期股利發放低於長期平均，需觀察營運是否進入衰退期或保留資金擴張。";
+        else if (currentSum > 0) divTrendAnalysis = "📊 股利政策維持極高穩定性，具備定存股核心特質。";
+        else divTrendAnalysis = "目前處於無息狀態或數據尚未更新。";
     }
     
     // 計算歷史 PE 分布與分位數
@@ -2464,15 +2494,6 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
         else { zRiskLevel = '風險區'; zColor = '#ef4444'; }
     }
 
-    // --- Valuations (加強版：加總近 12 個月股利) ---
-    const now = new Date();
-    const oneYearAgo = new Date();
-    oneYearAgo.setFullYear(now.getFullYear() - 1);
-    
-    const totalDiv12m = (chipsData.divHistory || []).reduce((sum, d) => {
-        const divDate = new Date(d.date);
-        return (divDate >= oneYearAgo) ? (sum + d.cash) : sum;
-    }, 0);
     
     // 如果 API 沒給殖利率，則根據近一年股利自行計算
     const calcYield = (totalDiv12m > 0 && currentPrice > 0) ? (totalDiv12m / currentPrice * 100) : null;
@@ -2544,7 +2565,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
         if (pbP < 20) summaryText += `且股價淨值比亦處於歷史低位 (${safeFix(pbP, 1)}%)。`;
     }
 
-    // --- 2. 籌碼面深度分析 (含明星分點與賣超主力) ---
+    // --- 2. 籌碼面深度分析 (含主力動向與賣超壓力) ---
     const fStreak = institutionalData?.streaks?.foreign || 0;
     const tStreak = institutionalData?.streaks?.trust || 0;
 
@@ -2634,9 +2655,6 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
         summaryText += `⚠️ 籌碼現<b>轉賣警訊</b>！今日主力由買轉賣，需防範短線走弱。`;
     }
 
-    if (winnerBrokers.length > 0) {
-        summaryText += `發現 ${winnerBrokers.length} 個高勝率明星分點 (贏家) 近 60 日積極佈局，有利於股價支撐。`;
-    }
     if (topSellers60.length > 0) {
         const topS = topSellers60[0];
         summaryText += `注意：近 60 日賣超最重分點為「${topS.name}」，賣超達 ${topS.sellNet.toLocaleString()} 張，需留意賣壓。`;
@@ -2857,6 +2875,98 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     (finalYield > 5 ? "殖利率高於 5%，具備防禦屬性與收息誘因。" : (twseBasic?.pe > 25 ? "本益比偏高，估值面已有過熱跡象。" : "當前估值尚屬合理，未見明顯泡沫。")) +
                     (currentPrice < bps ? " 股價低於每股淨值 (P/B < 1)，具極高安全邊際。" : "")
                 )}
+            </div>
+            
+            <!-- 2.5 52週價量換手分析 (籌碼位階) -->
+            <div class="analysis-card">
+                <div class="analysis-card-title">🎯 52週價量換手分析</div>
+                ${(() => {
+                    const prices = chartData?.prices || [];
+                    if (prices.length < 20) return '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:20px;">歷史數據不足，無法進行換手分析</div>';
+                    
+                    // 直接使用 fetchStockChart 已經算好且具備容錯處理的高低點
+                    const high52w = chartData?.high52w || 0;
+                    const low52w = chartData?.low52w || 0;
+                    
+                    // 為了計算 VWAP，我們需要使用相同的欄位容錯邏輯
+                    const getP = (item) => (item.close || item.Close || item.price || item.Price || 0);
+                    const getV = (item) => (item.Trading_Volume || item.trading_volume || item.volume || item.Volume || item.Trading_Turnover || 0);
+                    const getH = (item) => (item.max || item.High || item.Max || item.high || getP(item));
+                    const getL = (item) => (item.min || item.Low || item.Min || item.low || getP(item));
+
+                    let totalVol = 0;
+                    let totalValue = 0;
+                    const p52w = prices.slice(-250);
+                    
+                    p52w.forEach(d => {
+                        const vol = getV(d);
+                        const close = getP(d);
+                        const high = getH(d);
+                        const low = getL(d);
+                        const typicalPrice = (high + low + close) / 3;
+                        
+                        if (vol > 0 && typicalPrice > 0) {
+                            totalVol += vol;
+                            totalValue += (typicalPrice * vol);
+                        }
+                    });
+                    
+                    const vwap52w = totalVol > 0 ? (totalValue / totalVol) : (p52w.reduce((s, x) => s + getP(x), 0) / p52w.length);
+                    
+                    const p = currentPrice || (p52w.length > 0 ? getP(p52w[p52w.length-1]) : 0);
+                    const distHigh = high52w > 0 ? ((p - high52w) / high52w * 100).toFixed(1) : "0.0";
+                    const vwapDiff = vwap52w > 0 ? ((p - vwap52w) / vwap52w * 100).toFixed(1) : "0.0";
+                    const posPercent = (high52w !== low52w) ? ((p - low52w) / (high52w - low52w) * 100).toFixed(1) : 50;
+                    const vwapPos = (high52w !== low52w) ? ((vwap52w - low52w) / (high52w - low52w) * 100).toFixed(1) : 50;
+
+                    return `
+                        <div style="background:rgba(255,255,255,0.03); padding:12px; border-radius:12px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.05);">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                                <span style="font-size:12px; color:#cbd5e1;">52週價格位階 (盤中高低點)</span>
+                                <span style="font-size:14px; font-weight:800; color:#ffffff;">${posPercent}%</span>
+                            </div>
+                            
+                            <!-- 52週高低點進度條 -->
+                            <div style="position:relative; height:24px; width:100%; background:rgba(255,255,255,0.05); border-radius:6px; margin:15px 0 25px; border:1px solid rgba(255,255,255,0.1);">
+                                <!-- VWAP 標記線 -->
+                                <div style="position:absolute; left:${Math.max(0, Math.min(100, vwapPos))}% ; top:0; bottom:0; width:2px; background:#fbbf24; z-index:1; opacity:0.8;"></div>
+                                <div style="position:absolute; left:${Math.max(0, Math.min(100, vwapPos))}% ; top:-18px; transform:translateX(-50%); font-size:9px; color:#fbbf24; white-space:nowrap; font-weight:700;">市場加權成本: ${vwap52w.toFixed(0)}</div>
+                                
+                                <!-- 目前股價標記 -->
+                                <div style="position:absolute; left:${Math.max(0, Math.min(100, posPercent))}% ; top:50%; transform:translate(-50%, -50%); width:10px; height:10px; background:#fff; border-radius:50%; box-shadow:0 0 10px #fff; z-index:2; border:2px solid #3b82f6;"></div>
+                                <div style="position:absolute; left:${Math.max(0, Math.min(100, posPercent))}% ; bottom:-18px; transform:translateX(-50%); font-size:10px; font-weight:900; color:#3b82f6; white-space:nowrap;">目前價: ${p}</div>
+                                
+                                <!-- 區間填色 -->
+                                <div style="position:absolute; left:0; top:0; bottom:0; width:${Math.max(0, Math.min(100, posPercent))}% ; background:linear-gradient(90deg, rgba(59,130,246,0.1) 0%, rgba(59,130,246,0.3) 100%); border-radius:6px 0 0 6px;"></div>
+                            </div>
+                            
+                            <div style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8; padding:0 2px;">
+                                <span>52W 最低: ${low52w.toFixed(1)}</span>
+                                <span>52W 最高: ${high52w.toFixed(1)}</span>
+                            </div>
+                        </div>
+
+                        ${renderStatRow('52週 加權平均成本', safeFix(vwap52w, 2) + ' 元')}
+                        ${renderStatRow('距 52週 高點距離', distHigh + '%')}
+                        ${renderStatRow('距 加權成本 偏離', (vwapDiff > 0 ? '+' : '') + vwapDiff + '%')}
+
+                        ${renderDiagnostic(
+                            (() => {
+                                let diag = "";
+                                if (p > vwap52w) {
+                                    diag = `🟢 <b>強勢：</b>目前股價高於 52 週加權成本 (${vwap52w.toFixed(0)})，代表過去一年買進的人多數獲利，上檔籌碼穩定。`;
+                                } else {
+                                    diag = `🟡 <b>偏弱：</b>目前股價低於 52 週加權成本 (${vwap52w.toFixed(0)})，代表過去一年買進者多數套牢，上漲時可能面臨解套賣壓。`;
+                                }
+                                
+                                if (posPercent > 85) diag += " <br>⚠️ 注意：目前處於 52 週最高價區，需留意追高風險。";
+                                else if (posPercent < 15) diag += " <br>💎 機會：目前處於 52 週最低價區，若基本面無虞則具備長線價值。";
+                                
+                                return diag;
+                            })()
+                        )}
+                    `;
+                })()}
             </div>
 
             <!-- 3. 獲利能力 -->
@@ -3216,16 +3326,16 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         }).join('');
                     })()}
                 </div>
-                ${renderDiagnostic(
-                    (currentPrice > ma.ma60 ? "股價在季線之上，趨勢偏多。" : "股價在季線之下，處於空頭格局。") +
-                    (rsi14 > 70 ? " RSI 進入超買，慎防回檔。" : (rsi14 < 30 ? " RSI 進入超賣，醞釀跌深反彈。" : "")) +
-                    (chartData.bbSqueeze ? " ⚡ 注意：目前處於布林帶縮排（Squeeze），近期可能出現大波動突破。" : "")
-                )}
                 <div style="font-size:10px; color:#94a3b8; margin-top:8px;">
                     均線狀態: ${chartData.maStatus}<br>
                     ${chartData.goldenCross ? '<span style="color:#ef4444;">🔥 短中長期均線呈現多頭排列（黃金交叉區域）</span>' : ''}
                     ${chartData.deathCross ? '<span style="color:#10b981;">❄️ 均線呈現空頭排列（死亡交叉區域）</span>' : ''}
                 </div>
+                ${renderDiagnostic(
+                    (currentPrice > ma.ma60 ? "股價在季線之上，趨勢偏多。" : "股價在季線之下，處於空頭格局。") +
+                    (rsi14 > 70 ? " RSI 進入超買，慎防回檔。" : (rsi14 < 30 ? " RSI 進入超賣，醞釀跌深反彈。" : "")) +
+                    (chartData.bbSqueeze ? " ⚡ 注意：目前處於布林帶縮排（Squeeze），近期可能出現大波動突破。" : "")
+                )}
             </div>
 
             <!-- 8. 股利與分配 -->
@@ -3247,7 +3357,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     <div style="font-size:10px; color:#cbd5e1; margin-bottom:4px; font-weight:700;">分析結論:</div>
                     ${divTrendAnalysis}
                 </div>
-                ${renderStatRow('最近現金股利', chipsData?.exDivAmt ? chipsData.exDivAmt + ' 元' : 'N/A')}
+                ${renderStatRow('最近現金股利', (chipsData?.exDivAmt !== null && chipsData?.exDivAmt !== undefined) ? chipsData.exDivAmt + ' 元' : 'N/A')}
                 ${renderStatRow('連續配息年數', (chipsData?.divConsecutiveYears !== undefined) ? chipsData.divConsecutiveYears + ' 年' : 'N/A')}
                 ${renderPercentRow('股利 3年 CAGR', chipsData?.divGrowth3y)}
                 <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:6px;">📈 獲利分配與永續性</div>
@@ -3301,14 +3411,17 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             
             <!-- 10. 現金流量趨勢 (FCF Analysis) -->
             <div class="analysis-card">
-                <div class="analysis-card-title">🌊 自由現金流 (FCF) 8季趨勢</div>
+                <div class="analysis-card-title">💰 現金產生能力分析 (Cash Flow Analysis)</div>
+                <div style="font-size:13px; font-weight:700; color:#60a5fa; margin-bottom:8px; display:flex; align-items:center; gap:5px;">
+                    <span>🌊 自由現金流 (FCF) 8季趨勢</span>
+                </div>
                 <div style="font-size:11px; color:#cbd5e1; margin-bottom:12px;">
                     單位: 億元 (
                     <span class="has-info" style="text-decoration:underline dashed; cursor:pointer;" onclick="showTermExplainer('OCF (營業現金流)', '本業獲取之現金')">OCF</span> - 
                     <span class="has-info" style="text-decoration:underline dashed; cursor:pointer;" onclick="showTermExplainer('CapEx (資本支出)', '投資廠房設備之支出')">CapEx</span> = 
                     <span class="has-info" style="text-decoration:underline dashed; cursor:pointer;" onclick="showTermExplainer('FCF (自由現金流)', '剩餘可支配現金')">FCF</span>)
                 </div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:15px;">
                     ${[...(finData?.fcfTrend || [])].reverse().map(d => {
                         const ocfB = d.ocf / 100000000;
                         const capB = Math.abs(d.capex / 100000000);
@@ -3333,17 +3446,75 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         `;
                     }).join('')}
                 </div>
+
+                <!-- 新增：FCF 殖利率趨勢 (近 4 季) -->
+                <div style="font-size:11px; color:#cbd5e1; margin:15px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); padding-top:10px; display:flex; justify-content:space-between; align-items:flex-start;">
+                    <span class="has-info" style="cursor:pointer; text-decoration:underline dashed;" onclick="showTermExplainer('FCF_YIELD_TREND_ANALYSIS', '${(() => {
+                        const trend = [...(finData?.fcfTrend || [])].slice(-4);
+                        if (trend.length < 2) return 'N/A';
+                        const startY = (trend[0].fcf / 100000000) / marketCap * 100;
+                        const endY = (trend[trend.length-1].fcf / 100000000) / marketCap * 100;
+                        const icon = endY > startY ? '📈 趨勢向上' : (endY < startY ? '📉 趨勢向下' : '趨勢持平');
+                        return `${safeFix(startY, 2)}% -> ${safeFix(endY, 2)}% (${icon})`;
+                    })()}')">📈 FCF 殖利率趨勢 (近 4 季)</span>
+                    <div style="text-align:right;">
+                        <div style="font-size:9px; color:#94a3b8;">(單季 FCF / 目前市值)</div>
+                        <div style="font-size:9px; color:#64748b; line-height:1.2; margin-top:2px;">註：分母統一使用「目前市值」計算，以排除股價干擾。</div>
+                    </div>
+                </div>
+                <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:6px; margin-bottom:12px;">
+                    ${(() => {
+                        const trend = [...(finData?.fcfTrend || [])].slice(-4);
+                        if (!trend || trend.length === 0 || !marketCap) return '<div style="grid-column: span 4; text-align:center; color:#64748b; font-size:11px;">數據不足</div>';
+                        
+                        return trend.map((d, i) => {
+                            const yieldVal = (d.fcf / 100000000) / marketCap * 100;
+                            let arrow = '';
+                            let arrowColor = '#94a3b8';
+                            if (i > 0) {
+                                const prevYield = (trend[i-1].fcf / 100000000) / marketCap * 100;
+                                if (yieldVal > prevYield) { arrow = '↑'; arrowColor = '#f87171'; }
+                                else if (yieldVal < prevYield) { arrow = '↓'; arrowColor = '#4ade80'; }
+                            }
+                            // 修正日期格式：將 2024-12-31 轉換為 2024 Q4
+                            const dateParts = d.date.split('-');
+                            const year = dateParts[0];
+                            const month = parseInt(dateParts[1]);
+                            const quarter = Math.ceil(month / 3);
+                            const qLabel = `${year} Q${quarter}`;
+
+                            return `
+                                <div style="background:rgba(255,255,255,0.03); padding:6px 4px; border-radius:6px; text-align:center; border:1px solid rgba(255,255,255,0.05);">
+                                    <div style="font-size:9px; color:#94a3b8; margin-bottom:2px;">${qLabel}</div>
+                                    <div style="font-size:12px; font-weight:800; color:#ffffff;">${safeFix(yieldVal, 2)}%</div>
+                                    ${arrow ? `<div style="font-size:9px; color:${arrowColor}; font-weight:bold;">${arrow}</div>` : '<div style="height:11px;"></div>'}
+                                </div>
+                            `;
+                        }).join('');
+                    })()}
+                </div>
+
                 ${renderDiagnostic(
                     (() => {
                         if (!finData?.fcfTrend || finData.fcfTrend.length === 0) return "數據不足。";
+                        const trend = [...finData.fcfTrend].slice(-4);
+                        const yieldLatest = (trend[trend.length-1].fcf / 100000000) / marketCap * 100;
+                        const yieldFirst = (trend[0].fcf / 100000000) / marketCap * 100;
+                        
+                        let yieldText = "";
+                        if (yieldLatest > yieldFirst) yieldText = "🔥 FCF 殖利率呈上升趨勢，顯示公司創現能力增強。";
+                        else if (yieldLatest < yieldFirst) yieldText = "⚠️ FCF 殖利率趨勢下滑，需留意現金回收效率。";
+                        
                         const positiveFcfCount = finData.fcfTrend.filter(x => x.fcf > 0).length;
-                        if (positiveFcfCount >= 7) return "🔥 極其優異：近 8 季幾乎全數維持正向現金流，獲利含金量極高。";
-                        if (positiveFcfCount >= 4) return "現金流尚屬穩定，多數季度能產生盈餘現金。";
-                        let diag = "⚠️ 警告：自由現金流長期處於負值或不穩定，需注意公司是否有入不敷出或過度擴張風險。";
-                        if (finData?.fcfContinuity) {
-                            diag += ` (5年內有 ${finData.fcfContinuity.positiveCount} 年為正)`;
+                        let diag = "";
+                        if (positiveFcfCount === 8) {
+                            diag = "🏆 極其優異：近 8 季「全數」維持正向現金流，展現強勁的現金產生能力。 ";
+                        } else if (positiveFcfCount >= 6) {
+                            diag = "✅ 表現優異：近 8 季幾乎全數維持正向現金流。 ";
+                        } else {
+                            diag = "現金流狀況尚可。 ";
                         }
-                        return diag;
+                        return yieldText + diag;
                     })()
                 )}
             </div>
@@ -3725,6 +3896,13 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         </div>
                     `;
                 })()}
+                <div style="margin-top:10px; padding:10px; background:rgba(59, 130, 246, 0.05); border-radius:10px; border:1px dashed rgba(59, 130, 246, 0.2); display:flex; justify-content:space-between; align-items:center;">
+                    <span class="analysis-label has-info" onclick="showTermExplainer('毛利率連續改善季數', '${finData?.marginMomentumCount || 0}')" style="font-size:12px; color:#cbd5e1; font-weight:700;">📈 毛利率連續改善季數</span>
+                    <span style="font-size:16px; font-weight:800; color:${(finData?.marginMomentumCount || 0) >= 2 ? '#4ade80' : '#ffffff'};">
+                        ${finData?.marginMomentumCount || 0} 季
+                        ${(finData?.marginMomentumCount || 0) >= 2 ? '🔥' : ''}
+                    </span>
+                </div>
                 ${renderDiagnostic(
                     (finData?.marginTrend?.length >= 2 && finData.marginTrend[finData.marginTrend.length-1].grossMargin > finData.marginTrend[finData.marginTrend.length-2].grossMargin ? "毛利率呈現回升，產品競爭力或成本控制轉佳。" : "獲利能力尚屬穩定，需觀察淨利是否受業外影響。")
                 )}
@@ -3937,9 +4115,25 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 <div style="margin-bottom:20px; border-top:1px dashed rgba(255,255,255,0.05); padding-top:12px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                         <span style="font-size:12px; color:#cbd5e1;">集保大戶 vs 散戶持股比例</span>
-                        <div style="display:flex; gap:8px; font-size:10px;">
-                            <span style="color:#ef4444;">● >400</span>
-                            <span style="color:#10b981;">● &lt;50</span>
+                        <div style="display:flex; align-items:center; gap:12px;">
+                            ${(() => {
+                                const trend = chipsData?.holderTrend || [];
+                                if (trend.length < 3) return '';
+                                const last3 = trend.slice(-3);
+                                const slope = (last3[2].large - last3[0].large) / 2;
+                                const color = slope > 0 ? '#f87171' : (slope < 0 ? '#4ade80' : '#cbd5e1');
+                                return `
+                                    <div class="has-info" onclick="showTermExplainer('大戶持股速度', '${slope.toFixed(3)}%/期')" style="font-size:10px; background:rgba(255,255,255,0.05); padding:2px 8px; border-radius:12px; border:1px solid ${color}40; display:flex; align-items:center; gap:4px; cursor:pointer;">
+                                        <span style="color:#94a3b8;">持股速度:</span>
+                                        <span style="color:${color}; font-weight:800;">${slope > 0 ? '+' : ''}${slope.toFixed(3)}%</span>
+                                        <span style="color:${color};">${slope > 0 ? '📈' : (slope < 0 ? '📉' : '━')}</span>
+                                    </div>
+                                `;
+                            })()}
+                            <div style="display:flex; gap:8px; font-size:10px;">
+                                <span style="color:#ef4444;">● >400</span>
+                                <span style="color:#10b981;">● &lt;50</span>
+                            </div>
                         </div>
                     </div>
                     <div style="display:flex; flex-direction:column; gap:6px;">
@@ -3988,7 +4182,6 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                             diag += "目前股價處於法人成本區間上方，籌碼結構健康。";
                         }
                         
-                        if (winnerBrokers.length > 0) diag += ` 發現 ${winnerBrokers.length} 個高勝率明星分點正在護盤。`;
                         
                         return diag;
                     })()
@@ -4345,6 +4538,19 @@ function renderSectorComparison(industry, stats) {
 
 
 const termDefinitions = {
+    '毛利率連續改善季數': {
+        type: '獲利能力',
+        desc: '追蹤公司毛利率是否呈現連續季度回升。毛利率是企業競爭力的核心指標，連續改善通常代表產品組合優化、漲價成功或成本控制得宜。',
+        rule: '連續 2 季以上改善：視為「基本面向上拐點」；連續 3 季以上：強勢成長訊號。',
+        advice: '當毛利率連續改善且營收同步成長時，通常是股價進入長線多頭的強烈訊號。',
+        analyze: (v) => {
+            const count = parseInt(v);
+            if (count >= 3) return "🔥 極其強悍！毛利率已連續 3 季以上改善，基本面正處於爆發性向上的黃金拐點。";
+            if (count >= 2) return "🚀 基本面轉折訊號出現！毛利率連續 2 季回升，顯示競爭力正在強化，股價具備上行潛力。";
+            if (count === 1) return "毛利率本季出現初步回溫，需觀察下一季是否能延續改善態勢。";
+            return "目前毛利率尚未出現連續改善趨勢，基本面動能尚待觀察。";
+        }
+    },
     '土洋共識度': {
         type: '籌碼',
         desc: '統計近 20 個交易日中，外資（洋）與投信（土）買賣方向**同向**的天數佔比。方向以單日淨買超/淨賣超判斷，均為淨買超則為「同向做多」，均為淨賣超則為「同向做空」，一方為零則該日不計入。',
@@ -4403,20 +4609,6 @@ const termDefinitions = {
         rule: '大於 0 代表公司入大於出。FCF 越充沛，公司發放股息或還債的能力就越強。',
         advice: '這是投資人「真正能拿到的錢」。如果 FCF 長期為負，公司可能需要增資或舉債來維持營運。',
         analyze: (v) => "自由現金流是評價企業價值的核心，代表公司在不影響營運下能自由分配的現金。"
-    },
-    '🏆 明星分點': {
-        type: '籌碼',
-        desc: '分點籌碼中的頂級指標。代表該分點在 60 日內「買得準」且「買得久」。',
-        rule: '條件：1. 過去 60 日平均成本低於現價 5% 以上 (獲利中)；2. 近 5 日或 20 日持續出現在買超前五名 (具連續性)。',
-        advice: '明星分點的持續加碼通常是強力的股價支撐，代表真正看好後市的資金正在護盤。',
-        analyze: () => "這是具備高勝率與操作連續性的關鍵分點，值得高度追蹤。"
-    },
-    '💰 獲利大戶': {
-        type: '籌碼',
-        desc: '目前持倉處於大幅獲利狀態的大型分點。',
-        rule: '條件：過去 60 日平均買入成本比目前市價低 5% 以上。',
-        advice: '獲利大戶雖具備成本優勢，但若其開始反手出貨（出現在賣超名單），需提防獲利了結壓垮股價。',
-        analyze: () => "該大戶目前處於贏家圈，需留意其後續是否反手轉賣。"
     },
     '🔥 積極佈局': {
         type: '籌碼',
@@ -4713,6 +4905,27 @@ const termDefinitions = {
             return "股利發放水平與三年前持平。";
         }
     },
+    '52週 加權平均成本': {
+        type: '籌碼',
+        desc: '全名 52-Week Volume Weighted Average Price (VWAP)。計算過去一年（約 250 個交易日）中，每一筆成交金額相對於成交量的加權平均值。',
+        rule: '這是判斷市場「平均持有成本」最重要的參考線。',
+        advice: '當股價站在這條線之上時，代表這一年買進的人平均是賺錢的，籌碼面較為穩定；反之則代表多數人處於套牢狀態。',
+        analyze: (v) => "這是市場一整年交易的「心理重心」，是判斷長期支撐與壓力的核心指標。"
+    },
+    '距 52週 高點距離': {
+        type: '技術面',
+        desc: '目前股價距離過去 52 週最高價的百分比差距。',
+        rule: '數值愈接近 0% 代表股價正處於巔峰；數值負值愈大代表回檔愈深。',
+        advice: '若股價距高點僅剩 3-5% 且成交量放大，通常是準備「創歷史新高」的噴發前兆。',
+        analyze: (v) => "這反映了目前股價的「高度」，可結合 VWAP 判斷上方是否有大量解套賣壓。"
+    },
+    '距 加權成本 偏離': {
+        type: '籌碼',
+        desc: '目前股價與 52 週 VWAP（加權平均成本）的百分比差距。',
+        rule: '反映市場短期的盈虧情緒。',
+        advice: '偏離率過高（如 > 20%）代表短線漲幅已大，獲利了結壓力增加；偏離率為負且數值過大，則可能存在超跌後的報復性反彈機會。',
+        analyze: (v) => "透過此指標可以一眼看出現在買進的人，成本是比一整年的平均參與者貴還是便宜。"
+    },
     '年化波動率': {
         type: '風險',
         desc: '衡量股價波動劇烈程度的指標。',
@@ -4929,7 +5142,7 @@ const termDefinitions = {
     },
     '自由現金流 (FCF)': {
         type: '現金流',
-        desc: '公司賺進來的現金（OCF）扣除掉維持成長所需的投資（CapEx）後，剩下的閒置資金。',
+        desc: '營業現金流扣除資本支出後的餘額 (公式：OCF - CapEx)。這代表公司扣除必要投資後，真正能自由支配的「真錢」。',
         rule: '越多越好。這是公司可以用來發股利、還債 or 買庫藏股的真正資金。',
         advice: '擁有充沛 FCF 的公司，就像擁有了強大的戰略後備庫。',
         analyze: (v) => {
@@ -5305,7 +5518,7 @@ const termDefinitions = {
     },
     '自由現金流 (FCF)': {
         type: '獲利品質',
-        desc: '營業現金流減去資本支出。代表公司真正可以自由動用、發放股利或再投資的現金。',
+        desc: '營業現金流扣除資本支出後的餘額 (公式：OCF - CapEx)。這代表公司扣除必要投資後，真正能自由支配的「真錢」。',
         rule: '長期為正值且穩定增長是卓越公司的特徵。',
         advice: '淨利可能是「帳面數字」，但自由現金流才是「真錢」。',
         analyze: (v) => (v > 0) ? "具備創造真金白銀的能力，支持股利發放與未來擴張。" : "現金流呈現流出，需留意公司是否過度投資或營運入不敷出。"
@@ -5465,6 +5678,44 @@ const termDefinitions = {
             if (v < 150) return "⚠️ 警訊：融資維持率偏低，顯示多數融資戶處於虧損狀態，賣壓轉趨沈重。";
             return "融資維持率處於安全區間，暫無追繳風險。";
         }
+    },
+    'FCF_YIELD_TREND_ANALYSIS': {
+        title: '📊 FCF 殖利率趨勢',
+        type: '現金流/估值',
+        desc: '衡量每一季產生的自由現金流相對於目前市值的比例。公式為：<b>(營業現金流 OCF - 資本支出 CapEx) / 目前市值</b>。<br><span style="color:#94a3b8; font-size:11px;">註：分母統一使用「目前市值」計算，以排除股價波動干擾，純粹反映公司產生現金能力的變化。</span>',
+        rule: '殖利率上升代表公司的創現能力（扣除必要投資後的淨現金）相對於股價正在增強，具備更高的投資吸引力。',
+        advice: '若 FCF 殖利率呈上升趨勢，代表公司不僅賺錢，且扣除廠房設備投資後剩下的「真錢」越來越多。',
+        analyze: (v) => {
+            if (!v) return "觀察 FCF 殖利率的趨勢，可以判斷公司產生現金的效率是否在改善。";
+            const matches = String(v).match(/([\d.]+)%\s*->\s*([\d.]+)%/);
+            if (matches) {
+                const start = parseFloat(matches[1]);
+                const end = parseFloat(matches[2]);
+                const diff = (end - start).toFixed(2);
+                if (end > start) {
+                    return `🔥 創現能力顯著增強！殖利率從 ${start}% 攀升至 ${end}% (增加了 ${diff}%)。這代表在相同股價成本下，公司能為您產出的現金回報正在快速擴張。`;
+                } else if (end < start) {
+                    return `⚠️ 創現能力轉趨弱勢。殖利率從 ${start}% 下降至 ${end}%。需留意公司是否因研發或擴產導致自由現金流收縮。`;
+                }
+            }
+            if (String(v).includes('📈') || String(v).includes('🔥')) return "🔥 趨勢向上！公司的現金產生能力持續轉強，對股價具備強力支撐。";
+            if (String(v).includes('📉')) return "⚠️ 趨勢向下：需留意公司是否進入資本支出擴張期，或是本業獲現能力出現衰退。";
+            return "趨勢平穩。";
+        }
+    },
+    '大戶持股速度': {
+        type: '籌碼',
+        desc: '利用最近 3 期大戶持股比例計算出的線性斜率。衡量大戶持股變化的「動能」。',
+        rule: '正值代表籌碼持續集中；負值代表大戶正在出貨（賣給散戶）。',
+        advice: '正值越大代表籌碼集中速度越快，通常是強勢股起漲的特徵；若由負轉正，則可能是主力開始進場吸籌的訊號。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (val > 0.1) return "🚀 大戶極速掃貨中！籌碼呈現高度集中趨勢，極具噴發潛力。";
+            if (val > 0) return "✅ 籌碼穩定集中，大戶心態轉趨積極。";
+            if (val < -0.1) return "⚠️ 大戶極速出貨中！籌碼嚴重渙散，賣壓沉重，建議避開風險。";
+            if (val < 0) return "📉 籌碼逐漸轉向散戶，大戶（主力）心態偏向賣出調節。";
+            return "大戶持股比例維持平衡。";
+        }
     }
 };
 
@@ -5477,11 +5728,20 @@ const termDefinitions = {
 function showTermExplainer(term, currentVal = null, avgVal = null) {
     let def = termDefinitions[term];
     if (!def) {
-        // 模糊匹配：嘗試在 key 中尋找包含 term 的項，或 term 包含 key (去括號) 的項
-        const bestKey = Object.keys(termDefinitions).find(k => 
-            k.includes(term) || term.includes(k.split('(')[0].trim())
-        );
-        if (bestKey) def = termDefinitions[bestKey];
+        // 修正：優先進行精確匹配，如果失敗才進行受控的模糊匹配
+        const keys = Object.keys(termDefinitions);
+        // 先找完全包含的（長度最接近的優先）
+        const bestKey = keys.find(k => k === term || k.replace(/\s/g,'') === term.replace(/\s/g,''));
+        if (bestKey) {
+            def = termDefinitions[bestKey];
+        } else {
+            // 只有在完全找不到時，才嘗試包含關係，但要排除掉像 FCF 這種過短的關鍵字誤抓
+            const fuzzyKey = keys.find(k => 
+                (k.length > 3 && term.includes(k)) || 
+                (term.length > 3 && k.includes(term))
+            );
+            if (fuzzyKey) def = termDefinitions[fuzzyKey];
+        }
     }
     if (!def) return;
 
@@ -5598,7 +5858,7 @@ function showTermExplainer(term, currentVal = null, avgVal = null) {
             <div class="term-explainer-badge" style="background:${badgeColor}20; color:${badgeColor}; border:1px solid ${badgeColor}40;">
                 ${def.type}
             </div>
-            <div class="term-explainer-title">${term}</div>
+            <div class="term-explainer-title">${def.title || term}</div>
             <div class="term-explainer-body">${def.desc}</div>
             
             ${analysisHtml}
