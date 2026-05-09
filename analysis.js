@@ -49,9 +49,39 @@ window.addEventListener('stockPricesUpdated', (e) => {
 // Caches for APIs to avoid repeated large fetches
 let twseBasicCache = null;
 
-// === FinMind API Mutex Queue ===
-// Prevents HTTP 429 Too Many Requests by serializing FinMind API calls
-let finmindQueue = Promise.resolve();
+// === 智能並行限制器 (取代舊的 finmindQueue 單一串行鎖) ===
+function createRateLimiter(maxConcurrent, minIntervalMs) {
+    let running = 0;
+    const queue = [];
+
+    const tryRun = () => {
+        while (running < maxConcurrent && queue.length > 0) {
+            const { fn, resolve, reject } = queue.shift();
+            running++;
+            fn().then(
+                (result) => { 
+                    running--; 
+                    setTimeout(tryRun, minIntervalMs); 
+                    resolve(result); 
+                },
+                (err) => { 
+                    running--; 
+                    setTimeout(tryRun, minIntervalMs); 
+                    reject(err); 
+                }
+            );
+        }
+    };
+
+    return (fn) => new Promise((resolve, reject) => {
+        queue.push({ fn, resolve, reject });
+        tryRun();
+    });
+}
+
+// 各 domain 獨立限制，互不影響
+const finmindLimiter  = createRateLimiter(2, 250);  // 回調穩定參數
+const scrapingLimiter = createRateLimiter(1, 600);  // 回調穩定參數
 
 // === Global Connection Engine (Moved to Top for Reliability) ===
 async function analysisFetchProxy(url, isJson = false) {
@@ -73,36 +103,50 @@ async function analysisFetchProxy(url, isJson = false) {
         (url) => `https://cors-proxy.org/?url=${encodeURIComponent(url)}`
     ];
 
-    async function tryFetch(targetUrl, useHeaders = true) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 12000); 
-        try {
-            const fetchOptions = { 
-                signal: controller.signal
-            };
-            if (useHeaders) {
-                fetchOptions.headers = { 'Cache-Control': 'no-cache' };
+    async function tryFetch(targetUrl, useHeaders = true, retries = 0, timeout = 5000) {
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeout); 
+            try {
+                const fetchOptions = { signal: controller.signal };
+                if (useHeaders) {
+                    fetchOptions.headers = { 'Cache-Control': 'no-cache' };
+                }
+                const res = await fetch(targetUrl, fetchOptions);
+                clearTimeout(timeoutId);
+
+                // ✅ 僅在 429 時重試
+                if (res.status === 429) {
+                    if (attempt < retries) {
+                        const backoff = 1000 * Math.pow(2, attempt);
+                        log(`⏳ 429 速率限制，${backoff}ms 後重試...`);
+                        await new Promise(r => setTimeout(r, backoff));
+                        continue;
+                    }
+                    throw new Error(`HTTP 429`);
+                }
+
+                const buffer = await res.arrayBuffer();
+                let encoding = 'utf-8';
+                if (targetUrl.includes('moneydj.com') || targetUrl.includes('fbs.com.tw')) encoding = 'big5';
+                let text = new TextDecoder(encoding).decode(buffer).trim();
+                
+                if (targetUrl.includes('allorigins.win/get')) {
+                    try { const outer = JSON.parse(text); text = outer.contents; } catch(e) {}
+                }
+                
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return text;
+            } catch (e) {
+                clearTimeout(timeoutId);
+                // 直接連線失敗時 (CORS/Timeout)，不在此處重試，交由 Proxy 處理
+                if (attempt < retries && e.message?.includes('429')) {
+                    const backoff = 1000 * Math.pow(2, attempt);
+                    await new Promise(r => setTimeout(r, backoff));
+                    continue;
+                }
+                throw e;
             }
-            const res = await fetch(targetUrl, fetchOptions);
-            clearTimeout(timeoutId);
-              const buffer = await res.arrayBuffer();
-            let encoding = 'utf-8';
-            if (targetUrl.includes('moneydj.com') || targetUrl.includes('fbs.com.tw')) encoding = 'big5';
-            let text = new TextDecoder(encoding).decode(buffer).trim();
-            
-            // 處理 AllOrigins 的 JSON 模式
-            if (targetUrl.includes('allorigins.win/get')) {
-                try {
-                    const outer = JSON.parse(text);
-                    text = outer.contents;
-                } catch(e) {}
-            }
-            
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return text;
-        } catch (e) {
-            clearTimeout(timeoutId);
-            throw e;
         }
     }
 
@@ -128,25 +172,16 @@ async function analysisFetchProxy(url, isJson = false) {
         }
     };
 
-    // Attempt 1: Direct
+    // Attempt 1: Direct (with per-domain rate limiting)
     try {
         let dText;
         if (url.includes('finmindtrade.com')) {
-            // Apply Mutex Queue to serialize FinMind requests with 400ms spacing
-            dText = await new Promise((resolve, reject) => {
-                finmindQueue = finmindQueue.then(async () => {
-                    try {
-                        const res = await tryFetch(url, true);
-                        await new Promise(r => setTimeout(r, 400));
-                        resolve(res);
-                    } catch(e) {
-                        await new Promise(r => setTimeout(r, 400));
-                        reject(e);
-                    }
-                });
-            });
+            // ✅ Direct 階段不重試，快速失敗以切換 Proxy
+            dText = await finmindLimiter(() => tryFetch(url, true, 0));
+        } else if (url.includes('moneydj.com') || url.includes('fbs.com.tw') || url.includes('norway.twsthr.info')) {
+            dText = await scrapingLimiter(() => tryFetch(url, true, 0));
         } else {
-            dText = await tryFetch(url, true);
+            dText = await tryFetch(url, true, 0, 5000);
         }
         log(`✅ 直連成功`);
         return parseResponse(dText);
@@ -159,7 +194,8 @@ async function analysisFetchProxy(url, isJson = false) {
         const proxyUrl = proxies[i](url);
         try {
             log(`🔄 嘗試代理節點 ${i+1}...`);
-            const pText = await tryFetch(proxyUrl, false);
+            // ✅ 在 Proxy 階段增加超時至 10s，因為代理站點解析大數據（如全台股清單）需要時間
+            const pText = await tryFetch(proxyUrl, false, 1, 10000);
             log(`✅ 節點 ${i+1} 連線成功`);
             return parseResponse(pText);
         } catch (e) {
@@ -298,7 +334,8 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
     analysisBody.innerHTML = `
         <div class="analysis-loading">
             <div class="analysis-spinner"></div>
-            <span id="analysisLoadingStatus">${partialResults ? '正在修補缺失數據...' : '正在建立安全連線...'}</span>
+            <span id="analysisLoadingStatus">${partialResults ? '正在修補缺失數據...' : '正在初始化數據引擎...'}</span>
+            <div id="analysisTimer" style="font-size:14px; color:#60a5fa; margin-top:8px; font-family:monospace; font-weight:bold;">已耗時: 0.0s</div>
             <div style="margin-top:15px;">
                 <div id="analysisProgressBar" style="width:200px; height:4px; background:rgba(255,255,255,0.1); border-radius:2px; margin:0 auto 10px; overflow:hidden;">
                     <div id="analysisProgressInner" style="width:${partialResults ? '50' : '10'}%; height:100%; background:#3b82f6; transition:width 0.3s;"></div>
@@ -311,6 +348,16 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
         </div>
     `;
 
+    const startTime = Date.now();
+    const timerInterval = setInterval(() => {
+        const el = document.getElementById('analysisTimer');
+        if (el) {
+            el.textContent = `已耗時: ${((Date.now() - startTime) / 1000).toFixed(1)}s`;
+        } else {
+            clearInterval(timerInterval);
+        }
+    }, 100);
+
     const updateStatus = (msg, progress) => {
         const el = document.getElementById('analysisLoadingStatus');
         const bar = document.getElementById('analysisProgressInner');
@@ -321,21 +368,28 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
     let finalSymbol = symbol.trim().toUpperCase();
     let displayName = name;
     
-    // 全域緩存與名稱解析邏輯：確保輸入代號時也能顯示正確名稱
+    // 全域緩存與名稱解析邏輯
     try {
+        // 嘗試從 localStorage 恢復台股清單 (快取 7 天)
         if (!window.allStockInfoCache) {
-            const json = await analysisFetchProxy(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo`, true);
-            if (json && json.data) window.allStockInfoCache = json.data;
+            const stored = localStorage.getItem('all_stock_info_cache_v1');
+            if (stored) {
+                const { data, timestamp } = JSON.parse(stored);
+                if (Date.now() - timestamp < 7 * 24 * 60 * 60 * 1000) {
+                    window.allStockInfoCache = data;
+                }
+            }
         }
+
+        const isNumeric = /^\d{4,6}$/.test(finalSymbol);
         
+        // 1. 如果有快取，優先從快取找
         if (window.allStockInfoCache) {
-            // 優先比對代號，其次比對名稱
             const found = window.allStockInfoCache.find(x => x.stock_id === finalSymbol || x.stock_name === symbol);
             if (found) {
                 finalSymbol = found.stock_id;
                 displayName = found.stock_name;
-            } else if (!/^\d{4,6}$/.test(finalSymbol)) {
-                // 如果輸入不是數字且完全匹配失敗，嘗試模糊比對
+            } else if (!isNumeric) {
                 const fuzzy = window.allStockInfoCache.find(x => x.stock_name.includes(symbol));
                 if (fuzzy) {
                     finalSymbol = fuzzy.stock_id;
@@ -343,11 +397,43 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
                 }
             }
         }
+        
+        // 2. 如果還是沒名稱 (例如輸入 2330 且無快取)，發起單一 ID 的快速查詢
+        if (displayName === finalSymbol || !displayName) {
+            analysisFetchProxy(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id=${finalSymbol}`, true)
+                .then(json => {
+                    if (json && json.data && json.data[0]) {
+                        displayName = json.data[0].stock_name;
+                        const dName = (displayName && displayName !== finalSymbol) ? displayName : "股票";
+                        analysisTitle.textContent = `📊 ${dName} (${finalSymbol}) 分析報告`;
+                    }
+                }).catch(() => {});
+        }
+
+        if (!isNumeric && !window.allStockInfoCache) {
+            updateStatus("正在建立安全連線與下載股票清單 (大型數據預計 5-10 秒)...", 5);
+            const json = await analysisFetchProxy(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo`, true);
+            if (json && json.data) {
+                window.allStockInfoCache = json.data;
+                localStorage.setItem('all_stock_info_cache_v1', JSON.stringify({
+                    data: json.data,
+                    timestamp: Date.now()
+                }));
+            }
+            if (window.allStockInfoCache) {
+                const found = window.allStockInfoCache.find(x => x.stock_id === finalSymbol || x.stock_name === symbol);
+                if (found) {
+                    finalSymbol = found.stock_id;
+                    displayName = found.stock_name;
+                }
+            }
+        }
     } catch(e) {
         console.warn("Stock info resolution failed", e);
     }
 
-    analysisTitle.textContent = `📊 ${displayName} (${finalSymbol}) 分析報告`;
+    const displayTitleName = (displayName && displayName !== finalSymbol && !/^\d+$/.test(displayName)) ? displayName : "股票";
+    analysisTitle.textContent = `📊 ${displayTitleName} (${finalSymbol}) 分析報告`;
     const headerPrice = document.getElementById('analysisHeaderPrice');
     if (headerPrice) headerPrice.textContent = ''; // 清空等待載入
     window._fetchLogs = window._fetchLogs || [];
@@ -385,14 +471,13 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
 
             const fetchers = [
                 () => { pChart = (async () => { if (results[0]) { taskDone("跳過已載入股價"); return results[0]; } const r = await fetchStockChart(finalSymbol); taskDone("股價數據 OK"); return r; })(); return pChart; },
-                async () => { if (results[1]) { taskDone("跳過基本資料"); return results[1]; } await wait(50); const r = await fetchTWSEBasic(finalSymbol); taskDone("基本資料 OK"); return r; },
-                () => { pChips = (async () => { if (results[2]) { taskDone("跳過籌碼數據"); return results[2]; } await wait(100); const r = await fetchStockChips(finalSymbol); taskDone("籌碼數據 OK"); return r; })(); return pChips; },
-                async () => { if (results[3]) { taskDone("跳過營收數據"); return results[3]; } await wait(150); const r = await fetchFinMindRevenue(finalSymbol); taskDone("營收數據 OK"); return r; },
-                async () => { if (results[4]) { taskDone("跳過融資融券"); return results[4]; } await wait(200); const r = await fetchFinMindMargin(finalSymbol); taskDone("融資融券 OK"); return r; },
-                async () => { if (results[5]) { taskDone("跳過法人動態"); return results[5]; } await wait(250); const r = await fetchFinMindInstitutional(finalSymbol, 0); taskDone("法人動態 OK"); return r; },
+                async () => { if (results[1]) { taskDone("跳過基本資料"); return results[1]; } const r = await fetchTWSEBasic(finalSymbol); taskDone("基本資料 OK"); return r; },
+                () => { pChips = (async () => { if (results[2]) { taskDone("跳過籌碼數據"); return results[2]; } const r = await fetchStockChips(finalSymbol); taskDone("籌碼數據 OK"); return r; })(); return pChips; },
+                async () => { if (results[3]) { taskDone("跳過營收數據"); return results[3]; } const r = await fetchFinMindRevenue(finalSymbol); taskDone("營收數據 OK"); return r; },
+                async () => { if (results[4]) { taskDone("跳過融資融券"); return results[4]; } const r = await fetchFinMindMargin(finalSymbol); taskDone("融資融券 OK"); return r; },
+                async () => { if (results[5]) { taskDone("跳過法人動態"); return results[5]; } const r = await fetchFinMindInstitutional(finalSymbol, 0); taskDone("法人動態 OK"); return r; },
                 async () => { 
                     if (results[6]) { taskDone("跳過財務指標"); return results[6]; } 
-                    await wait(300); 
                     const chart = await pChart;
                     const chips = await pChips;
                     const cp = chart?.currentPrice || 0;
@@ -403,7 +488,6 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
                 },
                 async () => { 
                     if (results[7]) { taskDone("跳過市場數據"); return results[7]; }
-                    await wait(350);
                     const d = new Date(); d.setDate(d.getDate() - 500);
                     const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=TAIEX&start_date=${d.toISOString().split('T')[0]}&cb=${Date.now()}`;
                     const res = await analysisFetchProxy(url, true).catch(() => null);
@@ -412,13 +496,12 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
                 },
                 async () => {
                     if (results[8]) { taskDone("跳過內部人"); return results[8]; }
-                    await wait(400);
                     const res = { moneydj: null, director: null };
                     try { const url = `https://concords.moneydj.com/z/zc/zck/zck_${finalSymbol}.djhtm`; res.moneydj = await analysisFetchProxy(url, false); } catch(e) {}
                     taskDone("內部人數據 OK");
                     return res;
                 },
-                async () => { if (results[9]) { taskDone("跳過分點籌碼"); return results[9]; } await wait(450); const r = await fetchBrokerConcentration(finalSymbol); taskDone("分點籌碼 OK"); return r; }
+                async () => { if (results[9]) { taskDone("跳過分點籌碼"); return results[9]; } const r = await fetchBrokerConcentration(finalSymbol); taskDone("分點籌碼 OK"); return r; }
             ];
             
             results = await Promise.all(fetchers.map(f => f()));
@@ -484,7 +567,8 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
             setCachedAnalysis(cacheKey, results);
         }
 
-        renderAnalysis(finalSymbol, displayName, chartData, twseBasic, chipsData, revData, finData, marginData, institutionalData, avgCost, riskMetrics, insiderActivity, debugInfo, brokerData, peerCCCData, chipCosts, winnerBrokers, topSellers60);
+        const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+        renderAnalysis(finalSymbol, displayName, chartData, twseBasic, chipsData, revData, finData, marginData, institutionalData, avgCost, riskMetrics, insiderActivity, debugInfo, brokerData, peerCCCData, chipCosts, winnerBrokers, topSellers60, totalTime);
     } catch (err) {
         // 發生錯誤時也確保放大鏡關閉
         if (window.toggleMagnifierMode) window.toggleMagnifierMode(false);
@@ -965,20 +1049,20 @@ async function fetchStockChips(symbol) {
         (async () => {
             try {
                 const dDiv = new Date(); dDiv.setDate(dDiv.getDate() - 7000); 
-                const urlDiv = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividend&data_id=${rawSymbol}&start_date=${dDiv.toISOString().split('T')[0]}`;
+                const urlDiv = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividend&data_id=${rawSymbol}&start_date=${dDiv.toISOString().split('T')[0]}&cb=${Date.now()}`;
                 return await analysisFetchProxy(urlDiv, true);
             } catch(e) { return null; }
         })(),
         (async () => {
             try {
-                const urlInfo = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id=${rawSymbol}`;
+                const urlInfo = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id=${rawSymbol}&cb=${Date.now()}`;
                 return await analysisFetchProxy(urlInfo, true);
             } catch(e) { return null; }
         })(),
         (async () => {
             try {
                 const dShare = new Date(); dShare.setDate(dShare.getDate() - 45);
-                const urlShare = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockShareholding&data_id=${rawSymbol}&start_date=${dShare.toISOString().split('T')[0]}`;
+                const urlShare = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockShareholding&data_id=${rawSymbol}&start_date=${dShare.toISOString().split('T')[0]}&cb=${Date.now()}`;
                 return await analysisFetchProxy(urlShare, true);
             } catch(e) { return null; }
         })(),
@@ -993,14 +1077,14 @@ async function fetchStockChips(symbol) {
         (async () => {
             try {
                 const dMargin = new Date(); dMargin.setDate(dMargin.getDate() - 30);
-                const urlMargin = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMarginPurchaseShortSale&data_id=${rawSymbol}&start_date=${dMargin.toISOString().split('T')[0]}`;
+                const urlMargin = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMarginPurchaseShortSale&data_id=${rawSymbol}&start_date=${dMargin.toISOString().split('T')[0]}&cb=${Date.now()}`;
                 return await analysisFetchProxy(urlMargin, true);
             } catch(e) { return null; }
         })(),
         (async () => {
             try {
                 const dHolders = new Date(); dHolders.setDate(dHolders.getDate() - 100); 
-                const urlHolders = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockHoldingSharesPer&data_id=${rawSymbol}&start_date=${dHolders.toISOString().split('T')[0]}`;
+                const urlHolders = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockHoldingSharesPer&data_id=${rawSymbol}&start_date=${dHolders.toISOString().split('T')[0]}&cb=${Date.now()}`;
                 return await analysisFetchProxy(urlHolders, true);
             } catch(e) { return null; }
         })(),
@@ -1326,7 +1410,7 @@ async function fetchFinMindRevenue(symbol) {
 async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips = 0) {
     const rawSymbol = symbol.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
     const d = new Date();
-    d.setDate(d.getDate() - 2500); // 調整至 7 年左右，平衡數據量與載入速度
+    d.setDate(d.getDate() - 1825); // 調整至 5 年，平衡數據量與載入速度 (加速)
     const startDate = d.toISOString().split('T')[0];
     
     const datasets = [
@@ -1342,16 +1426,11 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 const url = `https://api.finmindtrade.com/api/v4/data?dataset=${ds}&data_id=${rawSymbol}&start_date=${startDate}&cb=${Date.now()}`;
                 let res = await analysisFetchProxy(url, true).catch(() => null);
                 
-                if (!res || !res.data || res.data.length === 0) {
+                // 只有在「連線成功但數據為空」時才嘗試縮短日期，這代表數據可能太大被 API 限制
+                if (res && (!res.data || res.data.length === 0)) {
                     const dShort = new Date(); dShort.setDate(dShort.getDate() - 1200);
                     const urlShort = `https://api.finmindtrade.com/api/v4/data?dataset=${ds}&data_id=${rawSymbol}&start_date=${dShort.toISOString().split('T')[0]}&retry=1&cb=${Date.now()}`;
                     res = await analysisFetchProxy(urlShort, true).catch(() => null);
-                }
-                
-                if (!res || !res.data || res.data.length === 0) {
-                    const dVS = new Date(); dVS.setDate(dVS.getDate() - 500);
-                    const urlVS = `https://api.finmindtrade.com/api/v4/data?dataset=${ds}&data_id=${rawSymbol}&start_date=${dVS.toISOString().split('T')[0]}&retry=2&cb=${Date.now()}`;
-                    res = await analysisFetchProxy(urlVS, true).catch(() => null);
                 }
                 
                 if (res && res.data && res.data.length > 0) return res;
@@ -1361,11 +1440,13 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             }
         };
 
-        // Modify to sequential fetching to further ensure stability
-        const jsonS = await fetchDataset('TaiwanStockFinancialStatements');
-        const jsonB = await fetchDataset('TaiwanStockBalanceSheet');
-        const jsonC = await fetchDataset('TaiwanStockCashFlowsStatement');
-        const jsonInfo = await analysisFetchProxy(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id=${rawSymbol}`, true).catch(() => null);
+        // ✅ 改為平行獲取以大幅提速
+        const [jsonS, jsonB, jsonC, jsonInfo] = await Promise.all([
+            fetchDataset('TaiwanStockFinancialStatements'),
+            fetchDataset('TaiwanStockBalanceSheet'),
+            fetchDataset('TaiwanStockCashFlowsStatement'),
+            analysisFetchProxy(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id=${rawSymbol}`, true).catch(() => null)
+        ]);
         
         const results = [jsonS, jsonB, jsonC, jsonInfo];
         
@@ -1375,9 +1456,15 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
         let sharesFromInfo = 0;
         if (jsonInfo && jsonInfo.data && jsonInfo.data[0]) {
             industry = jsonInfo.data[0].industry_category;
-            sharesFromInfo = jsonInfo.data[0].shares_issued || jsonInfo.data[0].number_of_shares_issued || 0;
+            sharesFromInfo = jsonInfo.data[0].shares_issued || jsonInfo.data[0].number_of_shares_issued || jsonInfo.data[0].SharesIssued || 0;
         }
-        // 備援：若 TaiwanStockInfo 缺失股數，嘗試從外部傳入的 chipsData 補完
+        // 備援：若仍缺失，從資產負債表「股本」反算 (股本 / 10)
+        if (!sharesFromInfo && jsonB?.data) {
+            const latestB = jsonB.data.filter(x => x.type === 'Equity' || x.type === 'TotalEquity' || x.type === 'CapitalStock' || x.type === 'OrdinaryShareCapital').pop();
+            const capital = jsonB.data.filter(x => x.type.includes('Capital')).pop()?.value || 0;
+            if (capital > 0) sharesFromInfo = capital / 10;
+        }
+
         if (!sharesFromInfo && sharesFromChips) sharesFromInfo = sharesFromChips;
 
         
@@ -2260,7 +2347,7 @@ async function fetchInstitutionalMoneyDJ(symbol) {
 
 // === Rendering Logic ===
 
-function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, finData, marginData, institutionalData, avgCost = null, riskMetrics = null, insiderActivity = null, debugInfo = null, brokerData = null, peerCCCData = [], chipCosts = null, winnerBrokers = [], topSellers60 = []) {
+function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, finData, marginData, institutionalData, avgCost = null, riskMetrics = null, insiderActivity = null, debugInfo = null, brokerData = null, peerCCCData = [], chipCosts = null, winnerBrokers = [], topSellers60 = [], totalTime = null) {
     if (!chartData) {
         analysisBody.innerHTML = `
             <div style="text-align:center; padding:60px 20px; background:rgba(255,255,255,0.02); border-radius:15px; border:1px dashed rgba(255,255,255,0.1);">
@@ -2309,9 +2396,11 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     }
     
     // 更新表頭名稱與價格
-    const displayName = chipsData?.stockName || name || symbol;
+    const displayTitleName = (chipsData?.stockName || name || "股票");
+    const finalDisplayName = (displayTitleName !== symbol && !/^\d+$/.test(displayTitleName)) ? displayTitleName : "股票";
+    
     if (analysisTitle) {
-        analysisTitle.textContent = `📊 ${displayName} (${symbol}) 分析報告`;
+        analysisTitle.textContent = `📊 ${finalDisplayName} (${symbol}) 分析報告`;
     }
     const headerPrice = document.getElementById('analysisHeaderPrice');
     if (headerPrice && currentPrice) {
@@ -2406,7 +2495,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     const grahamValue = (eps && bps && eps > 0 && bps > 0) ? Math.sqrt(22.5 * eps * bps) : null;
 
     // AI Summary logic
-    let summaryText = `【${displayName}】目前股價 ${safeFix(currentPrice, 2)} 元。`;
+    let summaryText = `【${finalDisplayName}】目前股價 ${safeFix(currentPrice, 2)} 元。`;
     
     // --- 0. 投資屬性歸類 ---
     let profile = "穩健型";
@@ -2515,6 +2604,35 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
         m6:   calcPeriodTotal(120),
         y1:   calcPeriodTotal(240)
     };
+
+    // === 籌碼動能加速偵測 (D1 vs D20) ===
+    let momentumRatio = null;
+    let momentumStatus = null; // 1: 買盤加速, -1: 賣壓加速, 2: 轉買, -2: 轉賣
+    if (brokerData?.d1?.mainNetBuy !== undefined && brokerData?.d20?.mainNetBuy !== undefined) {
+        const d1 = brokerData.d1.mainNetBuy;
+        const d20Avg = brokerData.d20.mainNetBuy / 20;
+        
+        if (d20Avg !== 0) {
+            momentumRatio = d1 / d20Avg;
+            if (d1 > 0) {
+                if (d20Avg > 0 && momentumRatio > 2) momentumStatus = 1; // 買盤加速
+                else if (d20Avg < 0) momentumStatus = 2; // 轉買
+            } else if (d1 < 0) {
+                if (d20Avg < 0 && momentumRatio > 2) momentumStatus = -1; // 賣壓加速
+                else if (d20Avg > 0) momentumStatus = -2; // 轉賣
+            }
+        }
+    }
+
+    if (momentumStatus === 1) {
+        summaryText += `🔥 偵測到<b>買盤動能加速</b>！今日主力買超為 20 日均值的 ${safeFix(momentumRatio, 1)} 倍，大戶正積極吸籌。`;
+    } else if (momentumStatus === -1) {
+        summaryText += `❄️ 偵測到<b>賣壓動能加速</b>！今日主力賣超為 20 日均值的 ${safeFix(momentumRatio, 1)} 倍，需留意主力撤出。`;
+    } else if (momentumStatus === 2) {
+        summaryText += `✨ 籌碼現<b>轉買訊號</b>！今日主力由賣轉買，且買盤力道顯著。`;
+    } else if (momentumStatus === -2) {
+        summaryText += `⚠️ 籌碼現<b>轉賣警訊</b>！今日主力由買轉賣，需防範短線走弱。`;
+    }
 
     if (winnerBrokers.length > 0) {
         summaryText += `發現 ${winnerBrokers.length} 個高勝率明星分點 (贏家) 近 60 日積極佈局，有利於股價支撐。`;
@@ -2866,9 +2984,9 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderStatRow('5年累計自由現金流', (finData?.totalFCF5Y !== undefined) ? formatCurrency(finData.totalFCF5Y) : 'N/A')}
                 ${(() => {
                     const cont = finData?.fcfContinuity;
-                    if (!cont) return renderStatRow('FCF 連貫性 (10年)', 'N/A');
+                    if (!cont) return renderStatRow('FCF 連貫性 (5年)', 'N/A');
                     const text = `${cont.positiveCount} / ${cont.totalYears} 年正向` + (cont.continuousPositiveYears >= 5 ? ` (連 ${cont.continuousPositiveYears} 年 🔥)` : "");
-                    return renderStatRow('FCF 連貫性 (10年)', text);
+                    return renderStatRow('FCF 連貫性 (5年)', text);
                 })()}
 
                 <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:6px;">💸 現金流量 (年化估算)</div>
@@ -3003,6 +3121,27 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     `;
                 })()}
                 ${renderStatRow('主力買超 (Top15)', (brokerData?.d1?.mainNetBuy !== undefined) ? brokerData.d1.mainNetBuy.toLocaleString() + ' 張' : (brokerData?.mainNetBuy ? brokerData.mainNetBuy.toLocaleString() + ' 張' : 'N/A'))}
+                ${(() => {
+                    const d1 = brokerData?.d1 || brokerData;
+                    const volLots = (chartData?.latestVol || 0) / 1000;
+                    if (d1 && d1.mainNetBuy !== undefined && volLots > 0) {
+                        const pct = (d1.mainNetBuy / volLots) * 100;
+                        return renderPercentRow('主力買超佔比', pct);
+                    }
+                    return '';
+                })()}
+                ${(() => {
+                    if (momentumRatio === null) return '';
+                    let label = '';
+                    let color = '#ffffff';
+                    if (momentumStatus === 1) { label = '🔥 買盤加速'; color = '#ef4444'; }
+                    else if (momentumStatus === -1) { label = '❄️ 賣壓加速'; color = '#10b981'; }
+                    else if (momentumStatus === 2) { label = '✨ 轉買發力'; color = '#ef4444'; }
+                    else if (momentumStatus === -2) { label = '⚠️ 轉賣警訊'; color = '#fbbf24'; }
+                    
+                    const ratioText = (momentumRatio !== null) ? `${safeFix(Math.abs(momentumRatio), 1)} 倍 ` : '';
+                    return renderStatRow('籌碼動能加速', `<span style="color:${color}; font-weight:800;">${ratioText}${label}</span>`);
+                })()}
                 ${renderDiagnostic(
                     (institutionalData?.streaks?.foreign > 3 ? "外資持續吸籌，大戶心態偏多。" : (institutionalData?.streaks?.foreign < -3 ? "外資持續提款，短線需防範賣壓。" : "法人進出互有勝負，籌碼面處於觀望狀態。")) +
                     ((brokerData?.d1?.concentration || brokerData?.concentration) > 20 ? " 分點集中度高，主力收貨力道強勁。" : "") +
@@ -3202,7 +3341,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         if (positiveFcfCount >= 4) return "現金流尚屬穩定，多數季度能產生盈餘現金。";
                         let diag = "⚠️ 警告：自由現金流長期處於負值或不穩定，需注意公司是否有入不敷出或過度擴張風險。";
                         if (finData?.fcfContinuity) {
-                            diag += ` (10年內有 ${finData.fcfContinuity.positiveCount} 年為正)`;
+                            diag += ` (5年內有 ${finData.fcfContinuity.positiveCount} 年為正)`;
                         }
                         return diag;
                     })()
@@ -3882,13 +4021,14 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             })()}
 
             <div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(255,255,255,0.1); color:#fbbf24; font-size:10px; word-break:break-all;">
-                [INTEGRITY] Equity:${finData?.equity ? 'YES' : 'NO'}, Shares:${shares ? 'YES' : 'NO'}, Holders:${chipsData?.holderTrend?.length || 0}, Norway:${chipsData?.norwayStatus || 'N/A'}
+                [INTEGRITY] Equity:${finData?.equity ? 'YES' : 'NO'}, Shares:${shares ? 'YES' : (sharesFromInfo ? 'YES(B)' : 'NO')}, Holders:${chipsData?.holderTrend?.length || 0}, Norway:${chipsData?.norwayStatus || 'N/A'}
             </div>
             <div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(255,255,255,0.1); color:#fbbf24; font-size:10px; word-break:break-all;">
                 [INSIDER SAMPLE] ${insiderActivity ? insiderActivity.sample : `FAIL (DJ:${debugInfo?.dj}, DIR:${debugInfo?.dir}, CHIPS:${debugInfo?.holders || 0})`}
             </div>
             <div style="margin-top:8px; color:#94a3b8;">* 如果個別項目顯示 FAIL，可點擊該項目的 [重試] 進行局部更新。</div>
-            <div style="margin-top:12px; padding-top:12px; border-top:1px dashed rgba(255,255,255,0.1); display:flex; justify-content:center;">
+            <div style="margin-top:12px; padding-top:12px; border-top:1px dashed rgba(255,255,255,0.1); display:flex; justify-content:space-between; align-items:center;">
+                <div style="font-size:10px; color:#94a3b8;">本次分析總耗時: <span style="color:#60a5fa; font-weight:bold;">${totalTime || 'N/A'}s</span></div>
                 <button onclick="openAnalysisModal('${symbol}', '${name}', '${avgCost || ''}', true)" 
                         style="background:rgba(59, 130, 246, 0.2); color:#60a5fa; border:1px solid rgba(59, 130, 246, 0.3); padding:6px 15px; border-radius:6px; cursor:pointer; font-size:11px; font-weight:700; transition:all 0.2s;">
                     🔄 全數重抓 (跳過快取)
@@ -3912,7 +4052,8 @@ function retryAnalysisTask(symbol, name, avgCost, index) {
 function renderStatRow(label, value, percentVal = null) {
     const hasDef = termDefinitions && termDefinitions[label];
     const labelClass = hasDef ? 'analysis-label has-info' : 'analysis-label';
-    const clickAttr = hasDef ? `onclick="showTermExplainer('${label}', '${value}')"` : '';
+    const cleanVal = String(value).replace(/<[^>]*>/g, '').replace(/'/g, "\\'");
+    const clickAttr = hasDef ? `onclick="showTermExplainer('${label}', '${cleanVal}')"` : '';
 
     let barHtml = '';
     if (percentVal !== null && !isNaN(percentVal)) {
@@ -4214,6 +4355,18 @@ const termDefinitions = {
             if (val >= 60) return '土洋共識方向高度一致，法人籌碼結構清晰，有利於趨勢延續。';
             if (val >= 40) return '土洋方向互有勝負，籌碼面尚無明顯主導力量。';
             return '⚠️ 土洋背離明顯，外資與投信對後市看法相左，建議觀望。';
+        }
+    },
+    '籌碼動能加速': {
+        type: '籌碼',
+        desc: '統計今日主力買超張數與過去 20 個交易日日均買超張數的比值。這能反映主力是否在近期突然加大吸籌力道。',
+        rule: '> 2 倍 → 視為「動能加速」，主力買盤顯著升溫；< 1 倍 → 買盤動能低於平均；負值 → 主力反手賣超。',
+        advice: '動能加速通常發生在噴出前夕或低檔轉折處，配合「分點集中度」同步升高，準確度更高。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (val > 2) return '🔥 主力動能顯著加速，今日買盤力道極強，利於股價發動。';
+            if (val > 0) return '主力維持小幅買進，動能尚稱穩定。';
+            return '主力買盤動能不足，或處於觀望狀態。';
         }
     },
     'DIO (存貨週轉天數)': {
@@ -4784,7 +4937,7 @@ const termDefinitions = {
             return "警訊！公司現金流入不足以支撐投資支出，需留意是否入不敷出。";
         }
     },
-    'FCF 連貫性 (10年)': {
+    'FCF 連貫性 (5年)': {
         type: '現金流',
         desc: '衡量公司在長達 5-10 年的期間內，是否能穩定產生正向的自由現金流。',
         rule: '專業分析師通常要求連續 5-10 年 FCF 為正。',
