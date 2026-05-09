@@ -785,9 +785,14 @@ function calculateRiskMetrics(stockData, marketData, lookback = 252) {
     covariance /= (recentReturns.length > 1 ? recentReturns.length - 1 : 1);
     
     const beta = mVar !== 0 ? (covariance / mVar) : null;
+    
+    // 3. 計算簡化夏普值 (Sharpe Ratio)
+    // 算法：(年化報酬率 - 無風險利率) / 年化波動率。假設無風險利率為 2%
+    const mom1y = (stockData[stockData.length - 1].close / stockData[Math.max(0, stockData.length - 252)].close - 1) * 100;
+    const sharpeRatio = volatility > 0 ? (mom1y - 2) / volatility : null;
 
-    // 3. 計算 RSR (Relative Strength Ratio)
-    // 算法：(個股漲跌幅) / (大盤同期漲跌幅)，反映相對於大盤的放大倍數
+    // 4. 計算 RSR (Relative Strength Ratio)
+
     const calculateRSR = (days) => {
         if (stockData.length <= days) return null;
         
@@ -821,11 +826,57 @@ function calculateRiskMetrics(stockData, marketData, lookback = 252) {
     const rsr20 = calculateRSR(20);
     const rsr60 = calculateRSR(60);
 
+    // 5. 計算 最大回撤 (MDD) 與 修復期 (Recovery)
+    let mdd = 0;
+    let peak = -Infinity;
+    let maxRecoveryDays = 0;
+    let currentRecoveryDays = 0;
+    const pData = stockData.slice(-lookback);
+    
+    pData.forEach(d => {
+        const price = d.close || d.Close || 0;
+        if (price > peak) {
+            peak = price;
+            currentRecoveryDays = 0;
+        } else {
+            const dd = (price - peak) / peak;
+            if (dd < mdd) mdd = dd;
+            currentRecoveryDays++;
+            if (currentRecoveryDays > maxRecoveryDays) maxRecoveryDays = currentRecoveryDays;
+        }
+    });
+
+    const currentPrice = stockData[stockData.length - 1].close || 0;
+    const currentDrawdown = peak > 0 ? (currentPrice - peak) / peak : 0;
+
+    // 6. 計算 相關係數 (Correlation)
+    const calculateCorrelation = (days) => {
+        const sub = alignedReturns.slice(-days);
+        if (sub.length < 10) return null;
+        const sSub = sub.map(r => r.s), mSub = sub.map(r => r.m);
+        const sM = sSub.reduce((a,b)=>a+b,0)/sSub.length, mM = mSub.reduce((a,b)=>a+b,0)/mSub.length;
+        let cov = 0, sVar = 0, mVar = 0;
+        for (let i=0; i<sub.length; i++) {
+            const sd = sub[i].s-sM, md = sub[i].m-mM;
+            cov += sd*md; sVar += sd*sd; mVar += md*md;
+        }
+        const denom = Math.sqrt(sVar * mVar);
+        return denom !== 0 ? (cov / denom) : 0;
+    };
+    const corr20 = calculateCorrelation(20);
+    const corr60 = calculateCorrelation(60);
+
     return {
         beta: beta !== null ? parseFloat(beta.toFixed(2)) : null,
         volatility: parseFloat(volatility.toFixed(2)),
+        sharpeRatio: sharpeRatio !== null ? parseFloat(sharpeRatio.toFixed(2)) : null,
         rsr20: rsr20 !== null ? parseFloat(rsr20.toFixed(2)) : null,
         rsr60: rsr60 !== null ? parseFloat(rsr60.toFixed(2)) : null,
+        mdd: Math.abs(parseFloat((mdd * 100).toFixed(2))),
+        currentDrawdown: Math.abs(parseFloat((currentDrawdown * 100).toFixed(2))),
+        maxRecoveryDays,
+        corr20: corr20 !== null ? parseFloat(corr20.toFixed(2)) : null,
+        corr60: corr60 !== null ? parseFloat(corr60.toFixed(2)) : null,
         sampleSize: recentReturns.length
     };
 }
@@ -1395,11 +1446,25 @@ async function fetchFinMindRevenue(symbol) {
         const ytd = ytdMonths.reduce((s, x) => s + (x.revenue || x.Revenue || 0), 0);
         
         let yoyUpMonths = 0;
-        for (const m of last12) {
+        let yoySum6m = 0;
+        let yoyCount6m = 0;
+        
+        // 計算近 12 個月的逐月 YoY，並統計近 6 個月的平均值
+        for (let i = 0; i < last12.length; i++) {
+            const m = last12[i];
             const ly = data.find(x => x.revenue_year === m.revenue_year - 1 && x.revenue_month === m.revenue_month);
             const mRev = m.revenue || m.Revenue || 0;
             const lyR = ly ? (ly.revenue || ly.Revenue || 0) : 0;
-            if (lyR > 0 && mRev > lyR) yoyUpMonths++;
+            if (lyR > 0) {
+                const currentYoY = ((mRev - lyR) / lyR) * 100;
+                if (mRev > lyR) yoyUpMonths++;
+                
+                // 取最後 6 筆有效 YoY 計算平均
+                if (i >= last12.length - 6) {
+                    yoySum6m += currentYoY;
+                    yoyCount6m++;
+                }
+            }
         }
 
         return {
@@ -1407,6 +1472,7 @@ async function fetchFinMindRevenue(symbol) {
             revenue: curRev,
             mom,
             yoy,
+            avgYoY6m: yoyCount6m > 0 ? (yoySum6m / yoyCount6m) : yoy,
             cum12m,
             ytd,
             ytdMonthCount: ytdMonths.length,
@@ -1559,6 +1625,11 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             
             const receivables = getVal(latestB, ['Accounts_Receivable', 'AccountsReceivable', 'AccountsReceivableNet', 'NotesAndAccountsReceivableNet', 'accounts_receivable', 'Notes_and_accounts_receivable_net', 'Accounts_receivable_net']);
             const payables = getVal(latestB, ['Accounts_Payable', 'AccountsPayable', 'Notes_Payable', 'NotesPayable', 'accounts_payable', 'Notes_and_accounts_payable', 'Accounts_payable']);
+            
+            const ppe = getVal(latestB, ['Property_plant_and_equipment', 'PropertyPlantAndEquipment', 'PropertyPlantAndEquipmentNet', 'property_plant_and_equipment']);
+            const depr = getVal(latestC, ['Depreciation', 'Depreciation_and_amortization_expense', 'depreciation']);
+            const sga = getVal(latestS, ['Selling_general_and_administrative_expenses', 'OperatingExpenses', 'Total_operating_expenses', 'operating_expenses']);
+            const cfo = getVal(latestC, ['Net_cash_flows_from_used_in_operating_activities', 'CashFlowsFromUsedInOperatingActivities', 'operating_cash_flow']);
 
             const interestExp = Math.abs(getVal(latestS, ['FinancialCost', 'InterestExpense', 'FinanceCosts', 'Finance_Costs', 'interest_expense', 'Interest_expense', 'Financial_costs']));
             const nonOpIncome = getVal(latestS, ['TotalNonoperatingIncomeAndExpense', 'NonOperatingIncome', 'TotalNonOperatingIncomeAndExpenses', 'Total_non_operating_income_and_expenses', 'Non-operating_income_and_expenses', 'Net_non_operating_income_and_expenses']);
@@ -1712,6 +1783,53 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 } 
             }
 
+            // --- 新增：Beneish M-Score 舞弊診斷 (優化版) ---
+            let mScore = null;
+            if (allDates.length >= 2) {
+                const curD = new Date(latestDate);
+                const targetY = curD.getFullYear() - 1;
+                const targetM = curD.getMonth();
+                
+                let prevYearDate = allDates.find(d => {
+                    const dd = new Date(d);
+                    return dd.getFullYear() === targetY && dd.getMonth() === targetM;
+                });
+                
+                if (!prevYearDate && allDates.length >= 5) {
+                    prevYearDate = allDates[allDates.length - 5];
+                }
+
+                if (prevYearDate) {
+                    const prevS = getQData(jsonS.data, prevYearDate);
+                    const prevB = getLatestDataFromDataset(jsonB?.data, prevYearDate);
+                    const prevC = getLatestDataFromDataset(jsonC?.data, prevYearDate);
+
+                    const r_t = rev, r_t1 = getVal(prevS, ['Revenue', 'revenue', 'OperatingRevenue']) || 1;
+                    const ar_t = receivables, ar_t1 = getVal(prevB, ['Accounts_Receivable', 'AccountsReceivable', 'Accounts_receivable_net']) || 1;
+                    const gp_t = grossProfit, gp_t1 = getVal(prevS, ['GrossProfit', 'Gross_Profit']) || 1;
+                    const as_t = assets, as_t1 = getVal(prevB, assetSyns) || 1;
+                    const ca_t = curAssets, ca_t1 = getVal(prevB, ['CurrentAssets', 'TotalCurrentAssets']) || 1;
+                    const ppe_t = ppe, ppe_t1 = getVal(prevB, ['Property_plant_and_equipment', 'PropertyPlantAndEquipment', 'property_plant_and_equipment']) || 1;
+                    const depr_t = depr, depr_t1 = getVal(prevC, ['Depreciation', 'Depreciation_and_amortization_expense']) || 0;
+                    const sga_t = sga, sga_t1 = getVal(prevS, ['Selling_general_and_administrative_expenses', 'OperatingExpenses', 'operating_expenses']) || 1;
+                    const lb_t = liabilities, lb_t1 = getVal(prevB, ['TotalLiabilities', 'Liabilities']) || 1;
+                    const ni_t = netIncome, cfo_t = cfo || 0;
+
+                    const safeDiv = (a, b) => (b && b !== 0) ? a / b : 1;
+
+                    const dsri = safeDiv(ar_t / r_t, ar_t1 / r_t1);
+                    const gmi = safeDiv(gp_t1 / r_t1, gp_t / r_t);
+                    const aqi = safeDiv(1 - (ca_t + ppe_t) / as_t, 1 - (ca_t1 + ppe_t1) / as_t1);
+                    const sgi = safeDiv(r_t, r_t1);
+                    const depi = safeDiv(depr_t1 / (ppe_t1 + depr_t1), depr_t / (ppe_t + depr_t));
+                    const sgai = safeDiv(sga_t / r_t, sga_t1 / r_t1);
+                    const lvgi = safeDiv(lb_t / as_t, lb_t1 / as_t1);
+                    const tata = (ni_t - cfo_t) / as_t;
+
+                    mScore = -4.84 + 0.92*dsri + 0.528*gmi + 0.404*aqi + 0.892*sgi + 0.115*depi - 0.172*sgai + 4.679*tata - 0.327*lvgi;
+                }
+            }
+
             // 計算歷史 TTM EPS 用於河流圖
             const historicalTTM = [];
             for (let i = 3; i < allDates.length; i++) {
@@ -1781,6 +1899,7 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 zComponents: { zA, zB, zC, zE },
                 fScore,
                 fDetails,
+                mScore,
                 ttmEps: (() => {
                     if (allDates.length < 4) return null;
                     const latest4 = allDates.slice(-4);
@@ -2494,6 +2613,38 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
         else { zRiskLevel = '風險區'; zColor = '#ef4444'; }
     }
 
+    // --- 新增：Beneish M-Score 舞弊診斷 ---
+    let mStatus = '正常', mColor = '#4ade80';
+    if (finData?.mScore !== undefined && finData?.mScore !== null) {
+        if (finData.mScore > -1.78) { mStatus = '舞弊機率高'; mColor = '#ef4444'; }
+        else if (finData.mScore > -2.22) { mStatus = '警戒'; mColor = '#fbbf24'; }
+    }
+
+    // --- 新增：營收質量診斷 (Accrual Quality) ---
+    let accrualDiagnosis = { flags: [], arStatus: '正常', invStatus: '正常' };
+    if (finData?.receivableDays !== undefined && finData?.inventoryDays !== undefined) {
+        const trend = finData.dioDsoTrend || [];
+        if (trend.length >= 4) {
+            const current = trend[trend.length - 1];
+            const prevYear = trend[trend.length - 5] || trend[0];
+            
+            // 應收帳款天數大幅增加 (>20%)
+            if (current.dso > prevYear.dso * 1.2) {
+                accrualDiagnosis.arStatus = '惡化';
+                accrualDiagnosis.flags.push('⚠️ 應收帳款回收變慢，需留意營收含金量。');
+            }
+            // 存貨天數大幅增加 (>20%)
+            if (current.dio > prevYear.dio * 1.2) {
+                accrualDiagnosis.invStatus = '惡化';
+                accrualDiagnosis.flags.push('⚠️ 存貨週轉天數拉長，需防範產品滯銷或跌價風險。');
+            }
+        }
+        // OCF vs NI 診斷
+        if (finData.earningsQuality !== null && finData.earningsQuality < 80) {
+            accrualDiagnosis.flags.push('⚠️ 獲利含金量不足 (OCF < 淨利 80%)，獲利多存在於帳面上。');
+        }
+    }
+
     
     // 如果 API 沒給殖利率，則根據近一年股利自行計算
     const calcYield = (totalDiv12m > 0 && currentPrice > 0) ? (totalDiv12m / currentPrice * 100) : null;
@@ -2514,6 +2665,18 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
 
     // 葛拉漢公式內在價值 (Graham Value)
     const grahamValue = (eps && bps && eps > 0 && bps > 0) ? Math.sqrt(22.5 * eps * bps) : null;
+
+    // --- 新增：籌碼擁擠度與壓力診斷 ---
+    let crowdMetrics = { marginRatio: 0, marginStress: '安全', distToCall: null };
+    if (marginData && shares > 0) {
+        // 融資佔比 = (融資餘額(張) * 1000 / 發行股數) * 100%
+        crowdMetrics.marginRatio = (marginData.marginPurchase * 1000 / shares) * 100;
+        if (marginData.marginMaintenance) {
+            crowdMetrics.distToCall = marginData.marginMaintenance - 130;
+            if (marginData.marginMaintenance < 140) crowdMetrics.marginStress = '極高';
+            else if (marginData.marginMaintenance < 160) crowdMetrics.marginStress = '警戒';
+        }
+    }
 
     // AI Summary logic
     let summaryText = `【${finalDisplayName}】目前股價 ${safeFix(currentPrice, 2)} 元。`;
@@ -2746,6 +2909,11 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
         else if (trend < -500) summaryText += `⚠️ 警訊：近期董監事合計減持約 ${Math.round(Math.abs(trend))} 張，需留意是否為高位套現 or 營運轉折訊號。`;
     }
 
+    // --- 6.1 專業排雷警訊彙整 ---
+    if (accrualDiagnosis.flags.length > 0) {
+        summaryText += `<br>🚩 <b>專業排雷預警：</b>${accrualDiagnosis.flags.join(' ')}`;
+    }
+
     // --- 7. 產業競爭力對比 ---
     const bench = sectorBenchmarks[chipsData?.industry];
     if (bench && finData) {
@@ -2779,6 +2947,14 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderStatRow('外資持股比', chipsData?.foreign ? safeFix(chipsData.foreign, 2) + '%' : 'N/A')}
                 ${renderStatRow('投信持股比', chipsData?.trust ? safeFix(chipsData.trust, 3) + '%' : 'N/A')}
                 ${renderStatRow('自營商持股比', chipsData?.dealer ? safeFix(chipsData.dealer, 3) + '%' : 'N/A')}
+                <div style="font-size:11px; color:#cbd5e1; margin-top:8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px;">⚖️ 風險調整後表現</div>
+                ${renderStatRow('簡化夏普值', riskMetrics?.sharpeRatio !== undefined ? safeFix(riskMetrics.sharpeRatio, 2) : 'N/A')}
+                ${renderStatRow('籌碼擁擠度 (融資佔比)', crowdMetrics.marginRatio ? safeFix(crowdMetrics.marginRatio, 2) + '%' : 'N/A')}
+                ${renderStatRow('52週最大回撤 (MDD)', riskMetrics?.mdd !== undefined ? safeFix(riskMetrics.mdd, 2) + '%' : 'N/A')}
+                ${renderStatRow('目前回撤幅度', riskMetrics?.currentDrawdown !== undefined ? safeFix(riskMetrics.currentDrawdown, 2) + '%' : 'N/A')}
+                ${renderStatRow('套牢修復天數 (MAX)', riskMetrics?.maxRecoveryDays !== undefined ? riskMetrics.maxRecoveryDays + ' 天' : 'N/A')}
+                ${renderStatRow('與大盤相關性 (20日)', riskMetrics?.corr20 !== undefined ? safeFix(riskMetrics.corr20, 2) : 'N/A')}
+                ${renderStatRow('與大盤相關性 (60日)', riskMetrics?.corr60 !== undefined ? safeFix(riskMetrics.corr60, 2) : 'N/A')}
                 ${renderDiagnostic(
                     (marketCap > 1000 ? "大型權值股，流動性與防禦力強。" : (marketCap < 100 ? "小型標的，波動大且需防範流動性。" : "中型規模，兼具成長動能與基礎穩定性。")) +
                     (latestVol > avgVol5 * 2 ? " 今日爆量，市場熱度極高。" : "")
@@ -2979,6 +3155,9 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderPercentRow('營業利益率', finData?.opMargin, false, false)}
                 ${renderPercentRow('稅後淨利率', finData?.netMargin, false, false)}
                 ${renderStatRow('業外損益佔比', finData?.nonOpRate !== undefined ? safeFix(finData.nonOpRate, 1) + '%' : 'N/A')}
+                <div style="font-size:11px; color:#cbd5e1; margin-top:8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px;">🚩 專業排雷診斷</div>
+                ${renderStatRow('應收帳款狀態', `<span style="color:${accrualDiagnosis.arStatus === '惡化' ? '#ef4444' : '#4ade80'};">${accrualDiagnosis.arStatus}</span>`)}
+                ${renderStatRow('存貨管理狀態', `<span style="color:${accrualDiagnosis.invStatus === '惡化' ? '#ef4444' : '#4ade80'};">${accrualDiagnosis.invStatus}</span>`)}
                 <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px;">📈 三率趨勢 (近四季)</div>
                 <div class="chart-internal" style="display:flex; justify-content:space-between; font-size:10px; color:#94a3b8; margin-bottom:4px; padding-bottom:2px; border-bottom:1px solid rgba(255,255,255,0.05);">
                     <span style="width:60px; font-size:10px;">季度</span>
@@ -3025,15 +3204,15 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
 
             <!-- 5. 估值河流與位階 (PE River) -->
             <div class="analysis-card">
-                <div class="analysis-card-title">📈 估值河流位階 (5年 TTM PE)</div>
+                <div class="analysis-card-title">💎 估值動態與成長預測 (TTM vs Forward)</div>
                 <div style="background:rgba(255,255,255,0.05); padding:12px; border-radius:10px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.1);">
                     <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:8px;">
                         <div>
-                            <div style="font-size:10px; color:#cbd5e1; margin-bottom:2px;">當前 TTM 本益比</div>
+                            <div style="font-size:10px; color:#cbd5e1; margin-bottom:2px;">當前 TTM 本益比 (近 4 季累計)</div>
                             <div style="font-size:22px; font-weight:800; color:#ffffff;">${safeFix(twseBasic?.pe || currentPE, 1)} <span style="font-size:12px; font-weight:400; color:#cbd5e1;">倍</span></div>
                         </div>
                         <div style="text-align:right;">
-                            <div style="font-size:10px; color:#cbd5e1; margin-bottom:2px;">歷史百分位數</div>
+                            <div style="font-size:10px; color:#cbd5e1; margin-bottom:2px;">歷史百分位數 (5年)</div>
                             <div style="font-size:16px; font-weight:700; color:${(twseBasic?.pePercentile || pePercentile) > 80 ? '#f87171' : ((twseBasic?.pePercentile || pePercentile) < 30 ? '#4ade80' : '#fbbf24')};">${safeFix(twseBasic?.pePercentile || pePercentile, 0)}%</div>
                         </div>
                     </div>
@@ -3052,18 +3231,50 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:12px;">
                     <div style="background:rgba(255,255,255,0.03); padding:8px; border-radius:6px;">
-                        <div style="font-size:9px; color:#cbd5e1;">便宜價 (PE ${valuationBands ? safeFix(valuationBands.p20, 1) : 'N/A'})</div>
+                        <div style="font-size:9px; color:#cbd5e1;">歷史便宜價 (PE ${valuationBands ? safeFix(valuationBands.p20, 1) : 'N/A'})</div>
                         <div style="font-size:13px; font-weight:700; color:#4ade80;">${valuationBands ? safeFix(valuationBands.p20 * epsLTM, 1) : 'N/A'}</div>
                     </div>
                     <div style="background:rgba(255,255,255,0.03); padding:8px; border-radius:6px;">
-                        <div style="font-size:9px; color:#cbd5e1;">昂貴價 (PE ${valuationBands ? safeFix(valuationBands.p80, 1) : 'N/A'})</div>
+                        <div style="font-size:9px; color:#cbd5e1;">歷史昂貴價 (PE ${valuationBands ? safeFix(valuationBands.p80, 1) : 'N/A'})</div>
                         <div style="font-size:13px; font-weight:700; color:#f87171;">${valuationBands ? safeFix(valuationBands.p80 * epsLTM, 1) : 'N/A'}</div>
                     </div>
                 </div>
+
+                <!-- 新增：Forward PE 成長預測區塊 -->
+                ${(() => {
+                    const revGrowth = revData?.avgYoY6m || revData?.yoy || 0;
+                    const forwardEPS = epsLTM * (1 + (revGrowth / 100));
+                    const forwardPE = forwardEPS > 0 ? (currentPrice / forwardEPS) : 0;
+                    const growthColor = revGrowth >= 0 ? '#f87171' : '#4ade80';
+                    const peComparison = forwardPE < (twseBasic?.pe || currentPE);
+                    
+                    return `
+                    <div style="background:linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(37, 99, 235, 0.05) 100%); padding:12px; border-radius:10px; margin-bottom:12px; border:1px solid rgba(59, 130, 246, 0.2); position:relative; overflow:hidden;">
+                        <div style="position:absolute; top:-10px; right:-10px; font-size:40px; opacity:0.05; transform:rotate(-15deg);">🚀</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px;">
+                            <span style="font-size:11px; color:#60a5fa; font-weight:bold;">🔭 未來 12 個月成長預測</span>
+                            <span style="font-size:9px; color:#94a3b8; background:rgba(255,255,255,0.05); padding:2px 6px; border-radius:4px;">依近半年營收動能</span>
+                        </div>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                            <div>
+                                <div style="font-size:9px; color:#cbd5e1; margin-bottom:2px;">預估 Forward EPS</div>
+                                <div style="font-size:16px; font-weight:800; color:#ffffff;">${safeFix(forwardEPS, 2)} <span style="font-size:10px; font-weight:400; color:${growthColor};">(${revGrowth >= 0 ? '+' : ''}${safeFix(revGrowth, 1)}%)</span></div>
+                            </div>
+                            <div style="text-align:right;">
+                                <div style="font-size:9px; color:#cbd5e1; margin-bottom:2px;">預估 Forward PE</div>
+                                <div style="font-size:16px; font-weight:800; color:${peComparison ? '#4ade80' : '#ffffff'};">${safeFix(forwardPE, 1)} <span style="font-size:10px; font-weight:400;">倍</span></div>
+                            </div>
+                        </div>
+                        <div style="margin-top:8px; font-size:10px; color:${peComparison ? '#4ade80' : '#94a3b8'};">
+                            ${peComparison ? '✅ 獲利成長中，預估本益比將進一步下降，目前具備長期潛力。' : '⚠️ 營收動能放緩，預期本益比可能墊高，需注意評價修正。'}
+                        </div>
+                    </div>
+                    `;
+                })()}
                 
                 <div style="font-size:11px; cursor:pointer;" onclick="showTermExplainer('估值位階 (PE River)', '${pePercentile}')">
                     ${renderDiagnostic(
-                        (pePercentile < 20 ? "⚠️ 估值進入極低區，具備高度長線投資價值。" : (pePercentile > 80 ? "⚠️ 估值進入極高區，需警惕過熱回檔風險。" : "目前估值處於歷史合理範圍內。")) +
+                        (pePercentile < 20 ? "⚠️ 估值進入歷史極低區，具備高度長線投資價值。" : (pePercentile > 80 ? "⚠️ 估值進入歷史極高區，需警惕過熱回檔風險。" : "目前估值處於歷史合理範圍內。")) +
                         " 點擊查看 AI 深度位階分析 🔍"
                     )}
                 </div>
@@ -3080,6 +3291,17 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
                         <span style="font-size:10px; color:#94a3b8;">風險等級</span>
                         <span style="font-size:11px; font-weight:700; color:${zColor};">${zRiskLevel}</span>
+                    </div>
+                </div>
+                <!-- Beneish M-Score 舞弊診斷 -->
+                <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.1);">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span class="analysis-label has-info" style="font-size:12px; color:#cbd5e1;" onclick="showTermExplainer('Beneish M-Score', '${finData?.mScore !== undefined ? safeFix(finData.mScore, 2) : 'N/A'}')">Beneish M-Score</span>
+                        <span style="font-size:18px; font-weight:800; color:${mColor};">${finData?.mScore !== undefined ? safeFix(finData.mScore, 2) : 'N/A'}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+                        <span style="font-size:10px; color:#94a3b8;">舞弊診斷</span>
+                        <span style="font-size:11px; font-weight:700; color:${mColor};">${mStatus}</span>
                     </div>
                 </div>
                 ${renderStatRow('流動比率', finData?.currentRatio !== undefined ? safeFix(finData?.currentRatio, 1) + '%' : 'N/A')}
@@ -4549,6 +4771,122 @@ const termDefinitions = {
             if (count >= 2) return "🚀 基本面轉折訊號出現！毛利率連續 2 季回升，顯示競爭力正在強化，股價具備上行潛力。";
             if (count === 1) return "毛利率本季出現初步回溫，需觀察下一季是否能延續改善態勢。";
             return "目前毛利率尚未出現連續改善趨勢，基本面動能尚待觀察。";
+        }
+    },
+    '簡化夏普值': {
+        type: '風險與回報',
+        desc: '衡量「每承受一單位風險，所能獲得的超額報酬」。這反映了投資的「性價比」。',
+        rule: '> 1.0 代表表現優異，< 0.5 則代表冒險與收益不成比例。',
+        advice: '對於波段投資人來說，高夏普值的標的通常走勢較穩健，不會頻繁出現讓人受不了的回檔。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (val > 1.0) return "回報效率極佳！這是一檔高勝率且走勢穩健的標的。";
+            if (val > 0) return "具備正向回報，但回報效率尚有進步空間。";
+            return "⚠️ 回報效率欠佳，承受的波動風險可能高於實際收益。";
+        }
+    },
+    '籌碼擁擠度 (融資佔比)': {
+        type: '籌碼風險',
+        desc: '反映「融資」等槓桿資金佔發行股數的比例。',
+        rule: '融資佔比 > 10% 通常被視為擁擠。過高的擁擠度代表浮額多，一旦股價下跌，容易引發「斷頭追繳」的多殺多。',
+        advice: '當擁擠度處於高位且股價跌破關鍵支撐時，通常是賣壓爆發的信號。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (val > 10) return "⚠️ 籌碼極度擁擠！融資比例過高，需防範融資多殺多的連鎖反應。";
+            if (val > 5) return "籌碼略顯擁擠，融資餘額佔比偏高。";
+            return "籌碼環境單純，無過度槓桿擁擠風險。";
+        }
+    },
+    '應收帳款狀態': {
+        type: '營運風險',
+        desc: '比較當前應收帳款回收天數 (DSO) 與去年同期的變化。',
+        rule: '若天數較去年同期增加超過 20%，則標註為「惡化」。',
+        advice: '應收帳款惡化代表公司收錢變慢，可能是放寬信用條件來衝營收，或客戶還款能力出問題。',
+        analyze: (v) => {
+            if (v.includes('惡化')) return "⚠️ 警訊！收錢速度明顯變慢，需留意獲利是否只是帳面數字，防範呆帳風險。";
+            return "資金回收狀況正常，營運現金流入穩健。";
+        }
+    },
+    '存貨管理狀態': {
+        type: '營運風險',
+        desc: '比較當前存貨週轉天數 (DIO) 與去年同期的變化。',
+        rule: '若天數較去年同期增加超過 20%，則標註為「惡化」。',
+        advice: '存貨狀態惡化通常是景氣反轉的先行指標，代表東西賣不動或客戶砍單。',
+        analyze: (v) => {
+            if (v.includes('惡化')) return "⚠️ 警訊！存貨積壓風險上升，需留意後續毛利率是否因跌價損失而受損。";
+            return "存貨控管良好，產品銷售動能維持正常。";
+        }
+    },
+    'Beneish M-Score': {
+        type: '財報診斷',
+        desc: '由貝尼許 (Beneish) 教授提出的舞弊偵測模型，透過營收、應收帳款、資產質量、折舊等 8 個指標的連動性，判斷企業是否操縱盈餘。',
+        rule: '基準值為 -1.78。數值大於 -1.78（例如 -1.50）代表公司極可能存在人為操縱財報的跡象；數值越小（例如 -2.50）代表財報越可信。',
+        advice: '這是華爾街專業機構過濾地雷股的神器。即便獲利再好，若 M-Score 超標，通常暗示其獲利可能只是「帳面數字」。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (val > -1.78) return "⚠️ 嚴重警告！M-Score 顯示公司具備極高的財報操縱風險，獲利真實性存疑。";
+            if (val > -2.22) return "🟡 注意：財務指標出現背離跡象，雖未確診舞弊，但財報透明度有所下降。";
+            return "✅ 財報品質穩健，未偵測到明顯的操縱跡象，獲利含金量可信。";
+        }
+    },
+    '52週最大回撤 (MDD)': {
+        type: '風險評估',
+        desc: '全名 Maximum Drawdown，指過去 52 週內股價從「最高收盤價」跌至最低點的最大幅度。這代表了投資人在這段期間內「最壞情況下」可能承受的損失。',
+        rule: '> 30% 代表波動極大，屬於高風險標的；< 15% 則代表回檔控制良好，防禦力強。',
+        advice: 'MDD 越大，對投資人的心理抗壓能力要求越高。如果您的停損範圍較小，應避開 MDD 過大的標的。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (val > 30) return "⚠️ 該股具備高波動特性，歷史回撤幅度劇烈，操作時需嚴格執行資金管理。";
+            if (val > 20) return "回撤幅度處於中高水準，需留意進場位階，避免在過熱時追高。";
+            return "🛡️ 回撤控制優異，股價表現相對抗跌，具備較佳的下行保護力。";
+        }
+    },
+    '套牢修復天數 (MAX)': {
+        type: '風險評估',
+        desc: '指過去 52 週內，股價從「最高收盤價」跌落後，到重新漲回該價位所花費的最長時間（交易日）。',
+        rule: '天數越短，代表股票「V轉」或修復能力越強；天數過長則代表一旦被套牢，可能需要漫長的等待。',
+        advice: '這項指標可以幫您衡量「解套所需的時間成本」。若修復天數過長，代表該股動能恢復緩慢。',
+        analyze: (v) => {
+            const val = parseInt(v);
+            if (val > 60) return "⚠️ 一旦套牢，修復時間較長。這通常代表股價處於長期修正或築底期。";
+            if (val > 20) return "修復動能尚屬正常。";
+            return "🚀 價格修復力極強，股價具備「抗跌隨即收復」的強勢特性。";
+        }
+    },
+    '目前回撤幅度': {
+        type: '風險評估',
+        desc: '指目前股價與「近期最高收盤價」的差距百分比。',
+        rule: '回撤 > 10% 通常被視為技術面進入修正；回撤 0% 則代表目前正處於（或接近）歷史收盤新高。',
+        advice: '這能幫您判斷目前是否處於「相對低點」或「正在修正中」。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (val === 0) return "🔥 目前正處於收盤價高點，動能極強，但也需留意高檔震盪。";
+            if (val > 10) return "股價已從高位回落超過 10%，目前處於技術面修正區，可留意轉強點。";
+            return "目前處於小幅回檔狀態，趨勢尚稱穩定。";
+        }
+    },
+    '與大盤相關性 (20日)': {
+        type: '風險評估',
+        desc: '統計近 20 個交易日，個股報酬率與大盤 (TAIEX) 報酬率的相關程度。數值介於 -1 到 1 之間。',
+        rule: '> 0.7 代表與大盤高度同步；< 0.3 代表走獨立行情；若為負數則代表與大盤走勢相反。',
+        advice: '如果您希望組合具備分散風險效果，應配置部分低相關性的標的。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (val > 0.8) return "與大盤高度連動，大盤漲跌對該股影響力極大。";
+            if (val < 0.3 && val > -0.3) return "🚀 走獨立行情！該股表現與大盤關聯度低，適合在大盤盤整時操作。";
+            if (val <= -0.3) return "🛡️ 具備逆勢防禦特質！與大盤呈現負相關，是大盤重挫時的避風港。";
+            return "與大盤維持正常的正相關連動。";
+        }
+    },
+    '與大盤相關性 (60日)': {
+        type: '風險評估',
+        desc: '統計近 60 個交易日（約三個月）個股與大盤的長期相關性。',
+        rule: '長期相關性若持續低迷，代表該股具備獨特的產業地位或主力控盤特徵。',
+        advice: '長期指標比短期更具參考價值，可用於判斷標的是否具備穩定的避險屬性。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (val < 0.4) return "長期與大盤相關性低，具備優異的分散風險價值。";
+            return "長期走勢與市場大環境基本保持一致。";
         }
     },
     '土洋共識度': {
