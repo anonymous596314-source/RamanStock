@@ -1133,9 +1133,9 @@ select option {
             <main>
                 <div class="input-section">
                     <div class="input-group">
-                        <label for="stockCode">股票代號 / 名稱</label>
+                        <label for="stockCode">股票代號</label>
                         <div class="input-wrapper">
-                            <input type="text" id="stockCode" placeholder="例如: 2330 或 2330 台積電">
+                            <input type="text" id="stockCode" placeholder="">
                         </div>
                     </div>
 
@@ -2630,9 +2630,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             card.innerHTML = `
                 <div class="inv-header">
-                    <span class="inv-title" style="display:flex; align-items:center;">
-                        <input type="text" data-id="${item.id}" class="live-name-input" value="${item.name || ''}" placeholder="點此輸入名稱" style="font-size:18px; font-weight:700; opacity:0.9; background:transparent; border:none; color:var(--text-primary); width:130px; outline:none; padding:2px 0;">
-                        <span style="font-size:14px; color:var(--text-secondary); margin-left:4px; font-weight:500;">(${item.code})</span>
+                    <span class="inv-title" style="display:flex; align-items:center; gap:6px;">
+                        <span style="font-size:20px; color:var(--text-primary); font-weight:700;">${item.code}</span>
+                        <input type="text" data-id="${item.id}" class="live-name-input" value="${item.name || ''}" placeholder="點此輸入名稱" style="font-size:20px; font-weight:700; background:transparent; border:none; color:var(--text-primary); width:130px; outline:none; padding:2px 0;">
                     </span>
                     <span class="inv-shares" style="display:flex; align-items:center; gap:4px;">
                         <input type="number" step="1" min="0" data-id="${item.id}" class="live-shares-input" value="${item.shares}" style="font-size:20px; font-family:inherit; font-weight:600; color:var(--text-primary); text-align:right; width:90px; background:transparent; border:none; outline:none;">
@@ -2863,9 +2863,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             card.innerHTML = `
                 <div class="inv-header">
-                    <span class="inv-title" style="display:flex; align-items:center;">
-                        <input type="text" data-id="${item.id}" class="live-name-input-st" value="${item.name || ''}" placeholder="點此輸入名稱" style="font-size:18px; font-weight:700; opacity:0.9; background:transparent; border:none; color:var(--text-primary); width:130px; outline:none; padding:2px 0;">
-                        <span style="font-size:14px; color:var(--text-secondary); margin-left:4px; font-weight:500;">(${item.code})</span>
+                    <span class="inv-title" style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:20px; color:var(--text-primary); font-weight:700;">${item.code}</span>
+                        <input type="text" data-id="${item.id}" class="live-name-input-st" value="${item.name || ''}" placeholder="點此輸入名稱" style="font-size:20px; font-weight:700; background:transparent; border:none; color:var(--text-primary); width:140px; outline:none; padding:2px 0;">
                     </span>
                     <span class="inv-shares" style="display:flex; align-items:center; gap:4px;">
                         <input type="number" step="1" min="0" data-id="${item.id}" class="live-shares-input-st" value="${item.shares}" style="font-size:20px; font-family:inherit; font-weight:600; color:var(--text-primary); text-align:right; width:90px; background:transparent; border:none; outline:none;">
@@ -4190,7 +4190,7 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
     </div>
 <link rel="stylesheet" href="analysis.css">
-<script src="analysis.js?v=v24_tech_layout"></script>
+<script src="analysis.js?v=v25_ps_ratio"></script>
 </body>
 
 </html>

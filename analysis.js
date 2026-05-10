@@ -445,7 +445,7 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
             allKeys.forEach(k => { if (k.startsWith(ANALYSIS_CACHE_PREFIX)) localStorage.removeItem(k); });
         }
         
-        const cacheKey = `${finalSymbol}_v13`; 
+        const cacheKey = `${finalSymbol}_v17`; 
         let cachedResults = (forceRefresh || partialResults) ? null : getCachedAnalysis(cacheKey);
         
         if (cachedResults && !cachedResults[0]) cachedResults = null;
@@ -512,6 +512,9 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
         window._lastAnalysisResults = results;
         
         const [chartData, twseBasic, chipsData, revData, marginData, instDataFinMind, finDataRaw, marketDataRaw, insiderDataRaw, brokerData] = results;
+        window._lastChipsData = chipsData;
+        window._lastInstitutionalData = instDataFinMind;
+        window._lastRevData = revData; // 保存營收數據供趨勢圖使用
 
         // 獲取同業專業對比數據 (延後獲取)
         const peerCCCData = await fetchIndustryPeersMetrics(chipsData?.industry, finalSymbol).catch(() => []);
@@ -597,7 +600,7 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
 }
 
 // === Caching Helper ===
-const ANALYSIS_CACHE_PREFIX = 'stock_analysis_cache_v4_'; // 升級版本以刷新毛利率改善季數與法人快取
+const ANALYSIS_CACHE_PREFIX = 'stock_analysis_cache_v5_'; // 升級版本以引入 PS 歷史位階數據
 function getCachedAnalysis(key, ttlHours = 24) {
     try {
         const cached = localStorage.getItem(ANALYSIS_CACHE_PREFIX + key);
@@ -1112,7 +1115,7 @@ async function fetchStockChips(symbol) {
         })(),
         (async () => {
             try {
-                const dShare = new Date(); dShare.setDate(dShare.getDate() - 45);
+                const dShare = new Date(); dShare.setDate(dShare.getDate() - 365);
                 const urlShare = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockShareholding&data_id=${rawSymbol}&start_date=${dShare.toISOString().split('T')[0]}&cb=${Date.now()}`;
                 return await analysisFetchProxy(urlShare, true);
             } catch(e) { return null; }
@@ -1393,7 +1396,7 @@ async function fetchStockChips(symbol) {
     const apiRawCount = (jsonHolders && jsonHolders.data) ? jsonHolders.data.length : 0;
     if (institutionalTotal === null && foreign !== null) institutionalTotal = foreign + (trust || 0) + (dealer || 0);
 
-    return { foreign, trust, dealer, institutionalTotal, large, retail, exDivDate, exDivAmt, sharesIssued, divGrowth3y, divConsecutiveYears, divHistory, holderTrend, marginShortRatio, industry, stockName: stockNameFromAPI, apiRawCount, norwayStatus, pledgeRatio, currentTtmDiv };
+    return { foreign, trust, dealer, institutionalTotal, large, retail, exDivDate, exDivAmt, sharesIssued, divGrowth3y, divConsecutiveYears, divHistory, holderTrend, marginShortRatio, industry, stockName: stockNameFromAPI, apiRawCount, norwayStatus, pledgeRatio, currentTtmDiv, holdingHistory: jsonShare?.data || [] };
 }
 
 // --- 4. FinMind 月營收 ---
@@ -1445,6 +1448,11 @@ async function fetchFinMindRevenue(symbol) {
         const ytdMonths = data.filter(x => x.revenue_year === current.revenue_year);
         const ytd = ytdMonths.reduce((s, x) => s + (x.revenue || x.Revenue || 0), 0);
         
+        // 新增：去年同期累計 (Last Year YTD)
+        const lyYtdMonths = data.filter(x => x.revenue_year === current.revenue_year - 1 && x.revenue_month <= current.revenue_month);
+        const lyYtd = lyYtdMonths.reduce((s, x) => s + (x.revenue || x.Revenue || 0), 0);
+        const cumYoy = lyYtd > 0 ? ((ytd - lyYtd) / lyYtd * 100) : null;
+        
         let yoyUpMonths = 0;
         let yoySum6m = 0;
         let yoyCount6m = 0;
@@ -1476,8 +1484,10 @@ async function fetchFinMindRevenue(symbol) {
             cum12m,
             ytd,
             ytdMonthCount: ytdMonths.length,
+            cumYoy, // 新增累計年增率
             yoyUpMonths,
-            totalMonths: last12.length || 12
+            totalMonths: last12.length || 12,
+            history: data // 新增歷史數據用於繪圖
         };
     }
     return null;
@@ -1830,15 +1840,31 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 }
             }
 
-            // 計算歷史 TTM EPS 用於河流圖
+            // 計算歷史 TTM EPS 與 TTM 營收 (用於估值位階)
             const historicalTTM = [];
+            const historicalPSData = [];
             for (let i = 3; i < allDates.length; i++) {
                 const date = allDates[i];
-                const ttm = (getVal(getQData(jsonS.data, allDates[i]), 'EPS') || 0) +
-                            (getVal(getQData(jsonS.data, allDates[i-1]), 'EPS') || 0) +
-                            (getVal(getQData(jsonS.data, allDates[i-2]), 'EPS') || 0) +
-                            (getVal(getQData(jsonS.data, allDates[i-3]), 'EPS') || 0);
-                if (ttm > 0) historicalTTM.push({ date, ttm });
+                const qDataArray = [
+                    getQData(jsonS.data, allDates[i]),
+                    getQData(jsonS.data, allDates[i-1]),
+                    getQData(jsonS.data, allDates[i-2]),
+                    getQData(jsonS.data, allDates[i-3])
+                ];
+                
+                // TTM EPS
+                const ttmEps = qDataArray.reduce((sum, qd) => sum + (getVal(qd, epsSynonyms) || 0), 0);
+                if (ttmEps > 0) historicalTTM.push({ date, ttm: ttmEps });
+                
+                // TTM Revenue & Shares (for PS Ratio)
+                const ttmRev = qDataArray.reduce((sum, qd) => sum + (getVal(qd, ['Revenue', 'OperatingRevenue', 'Total_Operating_Revenue']) || 0), 0);
+                const qb = getLatestDataFromDataset(jsonB?.data, date);
+                const histShares = getVal(qb, ['Shares_issued', 'NumberOfSharesIssued', 'Total_shares_issued', 'Ordinary_shares_issued', 'Ordinary_shares_outstanding', 'Total_shares_outstanding']) || 
+                                   (getVal(qb, ['Ordinary_share_capital', 'CapitalStock', 'Capital_Stock']) / 10) || 0;
+                
+                if (ttmRev > 0 && histShares > 0) {
+                    historicalPSData.push({ date, ttmRev, shares: histShares });
+                }
             }
             // 進階機構指標計算：ROIC 與 EV/EBIT
             const ttmOpIncome = allDates.slice(-4).reduce((sum, date) => {
@@ -1854,6 +1880,7 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
 
             return {
                 quarter: latestDate,
+                sharesIssued: shares,
                 grossMargin: rev > 0 ? (grossProfit / rev) * 100 : 0,
                 opMargin:    rev > 0 ? (opIncome / rev) * 100 : 0,
                 netMargin:   rev > 0 ? (netIncome / rev) * 100 : 0,
@@ -1906,6 +1933,7 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     return latest4.reduce((sum, date) => sum + (getVal(getQData(jsonS.data, date), 'EPS') || 0), 0);
                 })(),
                 historicalTTM: historicalTTM,
+                historicalPSData: historicalPSData,
                 ttmEpsYoY: (() => {
                     if (allDates.length < 8) return null;
                     const curTTM = (getVal(getQData(jsonS.data, allDates[allDates.length - 1]), 'EPS') || 0) +
@@ -2579,24 +2607,46 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
         else divTrendAnalysis = "目前處於無息狀態或數據尚未更新。";
     }
     
-    // 計算歷史 PE 分布與分位數
+    // 計算歷史 PE 分佈與分位數 (優化：使用 filter().pop() 取得最接近日期的價格)
     const epsLTM = finData?.ttmEps || 0;
     const currentPE = epsLTM > 0 ? currentPrice / epsLTM : 0;
     let pePercentile = 0;
     let valuationBands = null;
     if (finData?.historicalTTM && chartData?.prices) {
         const peSamples = finData.historicalTTM.map(h => {
-            const p = chartData.prices.find(p => p.date <= h.date); 
+            const p = chartData.prices.filter(p => p.date <= h.date).pop(); 
             return (p && p.close > 0) ? p.close / h.ttm : null;
         }).filter(v => v !== null && v > 0).sort((a,b) => a-b);
 
         if (peSamples.length > 5) {
             const getP = (p) => peSamples[Math.floor((peSamples.length - 1) * p)];
-            valuationBands = { p10: getP(0.1), p20: getP(0.2), p50: getP(0.5), p80: getP(0.8), p90: getP(0.9) };
+            valuationBands = { 
+                p10: getP(0.1), p20: getP(0.2), p50: getP(0.5), p80: getP(0.8), p90: getP(0.9),
+                min: peSamples[0], max: peSamples[peSamples.length - 1] 
+            };
             const rank = peSamples.filter(v => v < currentPE).length;
             pePercentile = (rank / peSamples.length) * 100;
         }
     }
+
+    // 計算 PS Ratio 歷史位階 (PS Percentile)
+    const currentPS = psRatio;
+    let psPercentile = null;
+    if (finData?.historicalPSData && chartData?.prices && currentPS > 0) {
+        const psSamples = finData.historicalPSData.map(h => {
+            const p = chartData.prices.filter(p => p.date <= h.date).pop();
+            // PS Ratio = (Price * Shares) / TTM Revenue
+            return (p && p.close > 0 && h.ttmRev > 0) ? (p.close * h.shares / h.ttmRev) : null;
+        }).filter(v => v !== null && v > 0).sort((a, b) => a - b);
+
+        if (psSamples.length > 5) {
+            const rank = psSamples.filter(v => v < currentPS).length;
+            psPercentile = (rank / psSamples.length) * 100;
+            // 為 PS 位階也建立簡單的 bands 結構供圖表顯示 min/max
+            valuationBandsPS = { min: psSamples[0], max: psSamples[psSamples.length - 1] };
+        }
+    }
+    const psBands = valuationBandsPS;
 
     // Z-Score 計算
     let zScore = null;
@@ -2830,6 +2880,11 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
         summaryText += `本益比 ${twseBasic.pe} 倍偏高，需有更高成長性支撐。`;
     }
 
+    if (psPercentile !== null) {
+        if (psPercentile < 20) summaryText += `🔥 <b>PS 位階極低 (${Math.round(psPercentile)}%)</b>，目前股價相對於營收處於歷史極便宜區域，成長股安全邊際顯著。`;
+        else if (psPercentile > 80) summaryText += `⚠️ <b>PS 位階偏高 (${Math.round(psPercentile)}%)</b>，目前市場給予的營收估值較高，需留意獲利成長是否能跟上預期。`;
+    }
+
     if (divCheap && currentPrice < divCheap) {
         summaryText += "目前股價低於系統推算之「便宜價」，具備長期投資安全邊際。";
     } else if (divExpensive && currentPrice > divExpensive) {
@@ -2935,18 +2990,14 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderStatRow('產業分類', chipsData?.industry || 'N/A')}
                 ${renderStatRow('市值', marketCap ? formatCurrency(marketCap * 100000000) : 'N/A')}
                 ${renderStatRow('實收股本', chipsData?.sharesIssued ? formatCurrency(chipsData.sharesIssued * 10) : 'N/A')}
-                ${renderStatRow('每股淨值 (BPS)', bps !== undefined ? safeFix(bps, 2) + ' 元' : 'N/A')}
                 ${renderStatRow('發行股數', chipsData?.sharesIssued ? chipsData.sharesIssued.toLocaleString() + ' 股' : 'N/A')}
+                ${renderStatRow('市值營收比 (PS)', psRatio ? safeFix(psRatio, 2) + ' 倍' : 'N/A')}
+                ${renderStatRow('每股淨值 (BPS)', bps !== undefined ? safeFix(bps, 2) + ' 元' : 'N/A')}
                 ${renderStatRow('5日均量', avgVol5 ? avgVol5.toLocaleString() + ' 股' : 'N/A')}
                 ${renderStatRow('估計量比', (latestVol && avgVol5) ? safeFix(latestVol / avgVol5, 2) + ' 倍' : 'N/A')}
                 ${renderStatRow('52週最高', high52w !== undefined ? safeFix(high52w, 2) + ' 元' : 'N/A')}
                 ${renderStatRow('52週最低', low52w !== undefined ? safeFix(low52w, 2) + ' 元' : 'N/A')}
                 ${renderStatRow('52週位置', posIn52w !== null ? posIn52w + '%' : 'N/A')}
-                <div style="font-size:11px; color:#cbd5e1; margin-top:8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px;">📊 籌碼概況</div>
-                ${renderStatRow('三大法人總持股', chipsData?.institutionalTotal ? safeFix(chipsData.institutionalTotal, 2) + '%' : 'N/A')}
-                ${renderStatRow('外資持股比', chipsData?.foreign ? safeFix(chipsData.foreign, 2) + '%' : 'N/A')}
-                ${renderStatRow('投信持股比', chipsData?.trust ? safeFix(chipsData.trust, 3) + '%' : 'N/A')}
-                ${renderStatRow('自營商持股比', chipsData?.dealer ? safeFix(chipsData.dealer, 3) + '%' : 'N/A')}
                 <div style="font-size:11px; color:#cbd5e1; margin-top:8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px;">⚖️ 風險調整後表現</div>
                 ${renderStatRow('簡化夏普值', riskMetrics?.sharpeRatio !== undefined ? safeFix(riskMetrics.sharpeRatio, 2) : 'N/A')}
                 ${renderStatRow('籌碼擁擠度 (融資佔比)', crowdMetrics.marginRatio ? safeFix(crowdMetrics.marginRatio, 2) + '%' : 'N/A')}
@@ -3022,25 +3073,26 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderValuationRow('昂貴價', `${safeFix(divExpensive, 1)} / ${safeFix(peExpensive, 1)} 元`)}
 
                 <div style="font-size:11px; color:#cbd5e1; margin:12px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px;">📊 歷史估值區間 (5Y River Map)</div>
-                ${renderValuationRiverMap('PE 位階', twseBasic?.pe, twseBasic?.pePercentile, twseBasic?.peBands)}
+                ${renderValuationRiverMap('PE 位階', currentPE, pePercentile, valuationBands)}
+                ${psPercentile !== null ? renderValuationRiverMap('PS 位階', currentPS, psPercentile, psBands) : ''}
                 ${renderValuationRiverMap('PB 位階', twseBasic?.pb, twseBasic?.pbPercentile, twseBasic?.pbBands)}
 
                 <div style="font-size:11px; color:#cbd5e1; margin:12px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px;">🏆 價值投資核心指標</div>
                 ${renderValuationRow('葛拉漢內在價值', grahamValue)}
                 ${(() => {
-                    // 重新計算 FCF Yield (改用 TTM 近四季累計，避免單季未年化導致數值嚴重偏低)
+                    // 重新計算 FCF Yield
                     let ttmFcf = 0;
                     if (finData?.fcfTrend && finData.fcfTrend.length >= 4) {
                         ttmFcf = finData.fcfTrend.slice(-4).reduce((sum, item) => sum + (item.fcf || 0), 0);
                     } else {
-                        ttmFcf = (finData?.freeCashFlow || 0) * 4; // 若無四季歷史資料，則將單季乘 4 估算
+                        ttmFcf = (finData?.freeCashFlow || 0) * 4;
                     }
                     const calculatedFcfYield = (marketCap && marketCap > 0) ? ((ttmFcf / 100000000) / marketCap * 100) : 0;
                     return renderStatRow('自由現金流殖利率', calculatedFcfYield ? safeFix(calculatedFcfYield, 2) + '%' : 'N/A');
                 })()}
 
                 <div style="font-size:11px; color:#cbd5e1; margin:12px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px;">📊 估值倍數與成長</div>
-                ${renderStatRow('市銷率 (P/S)', psRatio !== undefined ? safeFix(psRatio, 2) + ' 倍' : 'N/A')}
+                ${renderStatRow('市值營收比 (PS)', psRatio !== undefined ? safeFix(psRatio, 2) + ' 倍' : 'N/A')}
                 ${renderStatRow('市淨率 (P/B)', (currentPrice && bps) ? safeFix(currentPrice / bps, 2) + ' 倍' : 'N/A')}
                 ${renderStatRow('企業價值倍數 (EV/EBIT)', finData?.evEbit !== undefined && finData?.evEbit !== null ? safeFix(finData.evEbit, 2) + ' 倍' : 'N/A')}
                 ${renderStatRow('盈餘殖利率 (Earnings Yield)', twseBasic?.pe > 0 ? safeFix(100 / twseBasic.pe, 2) + '%' : 'N/A')}
@@ -3048,10 +3100,11 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderStatRow('PEG 比例', (twseBasic?.pe && finData?.ttmEpsYoY && finData?.ttmEpsYoY > 0) ? safeFix(twseBasic.pe / finData?.ttmEpsYoY, 2) : (finData?.ttmEpsYoY <= 0 ? 'N/A (獲利衰退)' : 'N/A'))}
                 ${renderStatRow('營運槓桿度 (DOL)', finData?.dol !== undefined && finData?.dol !== null ? safeFix(finData.dol, 2) + ' 倍' : 'N/A')}
                 ${renderDiagnostic(
-                    (finalYield > 5 ? "殖利率高於 5%，具備防禦屬性與收息誘因。" : (twseBasic?.pe > 25 ? "本益比偏高，估值面已有過熱跡象。" : "當前估值尚屬合理，未見明顯泡沫。")) +
+                    (finalYield > 5 ? "殖利率高於 5%，具備防禦屬性與收息誘因。" : (psPercentile !== null && psPercentile < 20 ? "PS 位階極低，具備成長股安全邊際。" : (twseBasic?.pe > 25 ? "本益比偏高，估值面已有過熱跡象。" : "當前估值尚屬合理，未見明顯泡沫。"))) +
                     (currentPrice < bps ? " 股價低於每股淨值 (P/B < 1)，具極高安全邊際。" : "")
                 )}
             </div>
+
             
             <!-- 2.5 52週價量換手分析 (籌碼位階) -->
             <div class="analysis-card">
@@ -3095,6 +3148,59 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     const posPercent = (high52w !== low52w) ? ((p - low52w) / (high52w - low52w) * 100).toFixed(1) : 50;
                     const vwapPos = (high52w !== low52w) ? ((vwap52w - low52w) / (high52w - low52w) * 100).toFixed(1) : 50;
 
+                    // --- 新增：成交量能特徵 (Volume Profile / POC) 計算 ---
+                    const range = high52w - low52w;
+                    // 邏輯化步長：自動選取 1, 2, 5, 10, 20, 50, 100 這種漂亮數字
+                    let rawStep = range / 20;
+                    let magnitude = Math.pow(10, Math.floor(Math.log10(rawStep || 1)));
+                    let firstDigit = rawStep / magnitude;
+                    let step;
+                    if (firstDigit < 1.5) step = 1 * magnitude;
+                    else if (firstDigit < 3.5) step = 2 * magnitude;
+                    else if (firstDigit < 7.5) step = 5 * magnitude;
+                    else step = 10 * magnitude;
+                    if (step < 0.1) step = 0.1;
+
+                    const bins = {};
+                    let maxBinVol = 0;
+                    let pocBinKey = 0;
+
+                    p52w.forEach(d => {
+                        const vol = getV(d);
+                        const close = getP(d);
+                        if (vol > 0 && close > 0) {
+                            // 以區間結束價格作為 Key (例如 1300)
+                            const binEnd = Math.ceil(close / step) * step;
+                            bins[binEnd] = (bins[binEnd] || 0) + vol;
+                            if (bins[binEnd] > maxBinVol) {
+                                maxBinVol = bins[binEnd];
+                                pocBinKey = binEnd;
+                            }
+                        }
+                    });
+
+                    // 準備分佈圖數據 (計算前 20 個區間)
+                    const sortedBins = Object.keys(bins).map(Number).sort((a, b) => b - a);
+                    const profileHtml = sortedBins.slice(0, 20).map((idxBinEnd, idx) => {
+                        const weight = (bins[idxBinEnd] / maxBinVol * 100);
+                        const isPOC = idxBinEnd === pocBinKey;
+                        const isHidden = idx >= 8;
+                        const binStart = idxBinEnd - step + (step >= 1 ? 1 : 0.01); // 處理整數或小數步長
+                        const label = `${safeFix(binStart, 0)}-${safeFix(idxBinEnd, 0)}`;
+                        
+                        return `
+                            <div class="${isHidden ? 'vp-hidden-row' : ''}" style="display:${isHidden ? 'none' : 'flex'}; align-items:center; gap:8px; margin-bottom:4px;">
+                                <div style="width:75px; font-size:9px; color:${isPOC ? '#fbbf24' : '#94a3b8'}; letter-spacing:-0.5px;">${label}</div>
+                                <div style="flex:1; height:6px; background:rgba(255,255,255,0.05); border-radius:3px; position:relative; overflow:hidden;">
+                                    <div style="position:absolute; left:0; top:0; bottom:0; width:${weight}%; background:${isPOC ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' : 'linear-gradient(90deg, #3b82f6, #2563eb)'}; opacity:${isPOC ? 1 : 0.6};"></div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+
+                    const pocPrice = pocBinKey - (step / 2); // POC 定位在密集區間的中點
+                    const pocDiff = ((p - pocPrice) / pocPrice * 100).toFixed(1);
+
                     return `
                         <div style="background:rgba(255,255,255,0.03); padding:12px; border-radius:12px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.05);">
                             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -3102,11 +3208,15 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                 <span style="font-size:14px; font-weight:800; color:#ffffff;">${posPercent}%</span>
                             </div>
                             
-                            <!-- 52週高低點進度條 -->
-                            <div style="position:relative; height:24px; width:100%; background:rgba(255,255,255,0.05); border-radius:6px; margin:15px 0 25px; border:1px solid rgba(255,255,255,0.1);">
-                                <!-- VWAP 標記線 -->
-                                <div style="position:absolute; left:${Math.max(0, Math.min(100, vwapPos))}% ; top:0; bottom:0; width:2px; background:#fbbf24; z-index:1; opacity:0.8;"></div>
-                                <div style="position:absolute; left:${Math.max(0, Math.min(100, vwapPos))}% ; top:-18px; transform:translateX(-50%); font-size:9px; color:#fbbf24; white-space:nowrap; font-weight:700;">市場加權成本: ${vwap52w.toFixed(0)}</div>
+                            <!-- 52週高低點進度條 (整合 VWAP 與 POC) -->
+                            <div style="position:relative; height:24px; width:100%; background:rgba(255,255,255,0.05); border-radius:6px; margin:22px 0 25px; border:1px solid rgba(255,255,255,0.1);">
+                                <!-- VWAP 標記線 (紅) -->
+                                <div style="position:absolute; left:${Math.max(0, Math.min(100, vwapPos))}% ; top:0; bottom:0; width:2px; background:#ef4444; z-index:1; opacity:0.8;"></div>
+                                <div style="position:absolute; left:${Math.max(0, Math.min(100, vwapPos))}% ; top:-18px; transform:translateX(-50%); font-size:9px; color:#ef4444; white-space:nowrap; font-weight:700;">均價: ${vwap52w.toFixed(0)}</div>
+                                
+                                <!-- POC 標記線 (黃) -->
+                                <div style="position:absolute; left:${Math.max(0, Math.min(100, (pocPrice - low52w) / (high52w - low52w) * 100))}% ; top:0; bottom:0; width:2px; background:#fbbf24; z-index:1; opacity:0.8;"></div>
+                                <div style="position:absolute; left:${Math.max(0, Math.min(100, (pocPrice - low52w) / (high52w - low52w) * 100))}% ; bottom:-18px; transform:translateX(-50%); font-size:9px; color:#fbbf24; white-space:nowrap; font-weight:700;">密集區: ${pocPrice.toFixed(0)}</div>
                                 
                                 <!-- 目前股價標記 -->
                                 <div style="position:absolute; left:${Math.max(0, Math.min(100, posPercent))}% ; top:50%; transform:translate(-50%, -50%); width:10px; height:10px; background:#fff; border-radius:50%; box-shadow:0 0 10px #fff; z-index:2; border:2px solid #3b82f6;"></div>
@@ -3116,31 +3226,71 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                 <div style="position:absolute; left:0; top:0; bottom:0; width:${Math.max(0, Math.min(100, posPercent))}% ; background:linear-gradient(90deg, rgba(59,130,246,0.1) 0%, rgba(59,130,246,0.3) 100%); border-radius:6px 0 0 6px;"></div>
                             </div>
                             
-                            <div style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8; padding:0 2px;">
-                                <span>52W 最低: ${low52w.toFixed(1)}</span>
-                                <span>52W 最高: ${high52w.toFixed(1)}</span>
+                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:15px;">
+                                <div class="has-info" onclick="showTermExplainer('52週成交均價 (VWAP)', '${safeFix(vwap52w, 1)}', '${p}')" style="background:rgba(0,0,0,0.2); padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05); cursor:pointer;">
+                                    <div style="font-size:10px; color:#ef4444; margin-bottom:4px;">52週成交均價 (VWAP) 💡</div>
+                                    <div style="font-size:13px; font-weight:700; color:#ffffff;">
+                                        ${safeFix(vwap52w, 1)} <span style="font-size:10px; font-weight:400; color:${parseFloat(vwapDiff) >= 0 ? '#f87171' : '#4ade80'};">(${parseFloat(vwapDiff) > 0 ? '+' : ''}${vwapDiff}%)</span>
+                                    </div>
+                                </div>
+                                <div class="has-info" onclick="showTermExplainer('籌碼密集區 (POC)', '${safeFix(pocPrice, 1)}', '${p}')" style="background:rgba(255,243,232,0.05); padding:8px; border-radius:8px; border:1px solid rgba(251,191,36,0.2); cursor:pointer;">
+                                    <div style="font-size:10px; color:#fbbf24; margin-bottom:4px;">籌碼密集區 (POC) 💡</div>
+                                    <div style="font-size:13px; font-weight:700; color:#ffffff;">
+                                        ${safeFix(pocPrice, 1)} <span style="font-size:10px; font-weight:400; color:${parseFloat(pocDiff) >= 0 ? '#f87171' : '#4ade80'};">(${parseFloat(pocDiff) > 0 ? '+' : ''}${pocDiff}%)</span>
+                                    </div>
+                                </div>
                             </div>
+
+                            <div style="margin-top:10px; margin-bottom:15px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                    <div style="font-size:11px; color:#cbd5e1;">📊 價格量能分佈 (Volume Profile)</div>
+                                    <div style="font-size:9px; color:#fbbf24;">🟡 籌碼密集區 (POC)</div>
+                                </div>
+                                <div id="vp-container">
+                                    ${(() => {
+                                        return sortedBins.slice(0, 20).map((idxBinEnd, idx) => {
+                                            const weight = (bins[idxBinEnd] / maxBinVol * 100);
+                                            const isPOC = idxBinEnd === pocBinKey;
+                                            const isHidden = idx >= 8;
+                                            const binStart = idxBinEnd - step + (step >= 1 ? 1 : 0.01);
+                                            const isCurrent = (p >= binStart && p <= idxBinEnd);
+                                            const label = `${safeFix(binStart, 0)}-${safeFix(idxBinEnd, 0)}`;
+                                            
+                                            return `
+                                                <div class="${isHidden ? 'vp-hidden-row' : ''}" style="display:${isHidden ? 'none' : 'flex'}; align-items:center; gap:8px; margin-bottom:4px; position:relative;">
+                                                    <div style="width:75px; font-size:9px; color:${isPOC ? '#fbbf24' : (isCurrent ? '#ffffff' : '#94a3b8')}; letter-spacing:-0.5px; font-weight:${isCurrent ? '800' : '400'};">
+                                                        ${label}
+                                                    </div>
+                                                    <div style="flex:1; height:6px; background:rgba(255,255,255,0.05); border-radius:3px; position:relative; overflow:visible;" title="該區間成交量: ${Math.round(bins[idxBinEnd] / 1000).toLocaleString()} 張">
+                                                        <div style="position:absolute; left:0; top:0; bottom:0; width:${weight}%; background:${isPOC ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' : 'linear-gradient(90deg, #3b82f6, #2563eb)'}; opacity:${isPOC ? 1 : 0.6}; border-radius:3px;"></div>
+                                                        ${isCurrent ? `
+                                                            <div style="position:absolute; left:${Math.max(0, Math.min(100, (p - binStart) / step * 100))}%; top:50%; transform:translate(-50%, -50%); width:6px; height:6px; background:#fff; border-radius:50%; box-shadow:0 0 5px #fff; z-index:10;"></div>
+                                                            <div style="position:absolute; left:${Math.max(0, Math.min(100, (p - binStart) / step * 100))}%; top:-12px; transform:translateX(-50%); font-size:8px; color:#fff; white-space:nowrap; font-weight:900; text-shadow:0 0 3px #000;">${p}</div>
+                                                        ` : ''}
+                                                    </div>
+                                                </div>
+                                            `;
+                                        }).join('');
+                                    })()}
+                                </div>
+                                <button onclick="toggleVP(this)" style="width:100%; margin-top:8px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:#94a3b8; font-size:10px; padding:4px; border-radius:4px; cursor:pointer;">看更多 (展開至 20 列) ↓</button>
+                            </div>
+
+                            <div class="analysis-stat-row">
+                                <span class="analysis-label has-info" onclick="showTermExplainer('52週 加權平均成本', '${safeFix(vwap52w, 2)}', '${p}')">52週 加權平均成本</span>
+                                <span class="analysis-val">${safeFix(vwap52w, 2)} 元</span>
+                            </div>
+                            ${renderStatRow('距 52週 高點距離', distHigh + '%')}
+                            ${renderStatRow('距 加權成本 偏離', (parseFloat(vwapDiff) > 0 ? '+' : '') + vwapDiff + '%')}
+
+                            ${renderDiagnostic(
+                                (() => {
+                                    let diag = (p > pocPrice * 1.03 ? "🚀 股價站穩籌碼密集區上方，具備強力支撐。" : (p < pocPrice * 0.97 ? "⚠️ 股價處於籌碼密集區下方，面臨大量解套壓力。" : "🟡 股價正與籌碼密集區拉鋸中，多空方向未明。"));
+                                    diag += (p > vwap52w ? " 且高於年度均價，趨勢偏多。" : " 且低於年度均價，趨勢偏弱。");
+                                    return diag;
+                                })()
+                            )}
                         </div>
-
-                        ${renderStatRow('52週 加權平均成本', safeFix(vwap52w, 2) + ' 元')}
-                        ${renderStatRow('距 52週 高點距離', distHigh + '%')}
-                        ${renderStatRow('距 加權成本 偏離', (vwapDiff > 0 ? '+' : '') + vwapDiff + '%')}
-
-                        ${renderDiagnostic(
-                            (() => {
-                                let diag = "";
-                                if (p > vwap52w) {
-                                    diag = `🟢 <b>強勢：</b>目前股價高於 52 週加權成本 (${vwap52w.toFixed(0)})，代表過去一年買進的人多數獲利，上檔籌碼穩定。`;
-                                } else {
-                                    diag = `🟡 <b>偏弱：</b>目前股價低於 52 週加權成本 (${vwap52w.toFixed(0)})，代表過去一年買進者多數套牢，上漲時可能面臨解套賣壓。`;
-                                }
-                                
-                                if (posPercent > 85) diag += " <br>⚠️ 注意：目前處於 52 週最高價區，需留意追高風險。";
-                                else if (posPercent < 15) diag += " <br>💎 機會：目前處於 52 週最低價區，若基本面無虞則具備長線價值。";
-                                
-                                return diag;
-                            })()
-                        )}
                     `;
                 })()}
             </div>
@@ -3190,8 +3340,9 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 <div class="analysis-card-title">📊 月營收趨勢</div>
                 <div style="font-size:11px; color:#cbd5e1; margin-bottom:8px;">月份: ${revData?.month || 'N/A'}</div>
                 ${renderStatRow('單月營收', revData?.revenue ? formatCurrency(revData.revenue) : 'N/A')}
-                ${renderPercentRow('月增率 (MoM)', revData?.mom)}
-                ${renderPercentRow('年增率 (YoY)', revData?.yoy)}
+                ${renderPercentRow('月增率 (MoM)', revData?.mom, true, true, `showRevenueTrendChart('${symbol}', 'MoM')`)}
+                ${renderPercentRow('年增率 (YoY)', revData?.yoy, true, true, `showRevenueTrendChart('${symbol}', 'YoY')`)}
+                ${renderPercentRow('累計年增率', revData?.cumYoy, true, true, `showRevenueTrendChart('${symbol}', 'CumYoY')`)}
                 ${renderStatRow('近 12 月累計', revData?.cum12m ? formatCurrency(revData.cum12m) : 'N/A')}
                 ${renderPercentRow('營收年複合成長率 (CAGR)', finData?.revCAGR?.value)}
                 ${finData?.revCAGR?.period ? `<div style="font-size:10px; color:#94a3b8; margin-top:-8px; margin-bottom:8px; text-align:right;">🕒 區間: ${finData.revCAGR.period}</div>` : ''}
@@ -3575,10 +3726,6 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         </div>
                     `).join('')}
                 </div>
-                <div style="background:rgba(59, 130, 246, 0.08); border-left:3px solid #3b82f6; padding:10px; border-radius:6px; font-size:12px; color:#ffffff; line-height:1.6; margin-bottom:12px;">
-                    <div style="font-size:10px; color:#cbd5e1; margin-bottom:4px; font-weight:700;">分析結論:</div>
-                    ${divTrendAnalysis}
-                </div>
                 ${renderStatRow('最近現金股利', (chipsData?.exDivAmt !== null && chipsData?.exDivAmt !== undefined) ? chipsData.exDivAmt + ' 元' : 'N/A')}
                 ${renderStatRow('連續配息年數', (chipsData?.divConsecutiveYears !== undefined) ? chipsData.divConsecutiveYears + ' 年' : 'N/A')}
                 ${renderPercentRow('股利 3年 CAGR', chipsData?.divGrowth3y)}
@@ -3592,13 +3739,15 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderDiagnostic(
                     (() => {
                         const payout = (totalDiv12m && finData?.epsLTM) ? (totalDiv12m / finData.epsLTM * 100) : null;
-                        if (payout > 100) return "⚠️ 警告：發放率超過 100%，公司正在「吃老本」發讓股利，長期恐不具永續性。";
-                        if (payout > 80) return "配息率偏高，雖然殖利率誘人，但需留意公司是否缺乏未來投資成長的資金。";
-                        if (payout < 30 && payout > 0) return "配息率較低，公司可能保留較多資金用於擴張，屬成長型特徵。";
-                        if (payout > 0) return "配息政策穩健，獲利與發放比例均衡。";
-                        return "";
-                    })() +
-                    ((chipsData?.divConsecutiveYears || 0) >= 10 ? " 長期連續配息紀錄佳，收息極其穩定。" : "")
+                        let diag = divTrendAnalysis + " ";
+                        if (payout > 100) diag += "⚠️ 警告：發放率超過 100%，公司正在「吃老本」發放股利，長期恐不具永續性。";
+                        else if (payout > 80) diag += "配息率偏高，雖然殖利率誘人，但需留意公司是否缺乏未來投資成長的資金。";
+                        else if (payout < 30 && payout > 0) diag += "配息率較低，公司可能保留較多資金用於擴張，屬成長型特徵。";
+                        else if (payout > 0) diag += "配息政策穩健，獲利與發放比例均衡。";
+                        
+                        if ((chipsData?.divConsecutiveYears || 0) >= 10) diag += " 長期連續配息紀錄佳，收息極其穩定。";
+                        return diag;
+                    })()
                 )}
             </div>
 
@@ -4256,6 +4405,22 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             <div class="analysis-card">
                 <div class="analysis-card-title">🎯 籌碼集中度深度分析</div>
                 
+                <div style="font-size:11px; color:#cbd5e1; margin-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:5px;">📊 法人籌碼概況 (點擊看趨勢)</div>
+                ${renderStatRow('三大法人總持股', chipsData?.institutionalTotal ? safeFix(chipsData.institutionalTotal, 2) + '%' : 'N/A')}
+                
+                <div class="analysis-stat-row" onclick="showHoldingTrendChart('${symbol}', '外資')" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px dashed rgba(255,255,255,0.05);">
+                    <span style="font-size:12.5px; color:#60a5fa; font-weight:700;">外資持股比 📈</span>
+                    <span class="analysis-val">${chipsData?.foreign ? safeFix(chipsData.foreign, 2) + '%' : 'N/A'}</span>
+                </div>
+                <div class="analysis-stat-row" onclick="showHoldingTrendChart('${symbol}', '投信')" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px dashed rgba(255,255,255,0.05);">
+                    <span style="font-size:12.5px; color:#60a5fa; font-weight:700;">投信持股比 📈</span>
+                    <span class="analysis-val">${chipsData?.trust ? safeFix(chipsData.trust, 3) + '%' : 'N/A'}</span>
+                </div>
+                <div class="analysis-stat-row" onclick="showHoldingTrendChart('${symbol}', '自營商')" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px dashed rgba(255,255,255,0.05);">
+                    <span style="font-size:12.5px; color:#60a5fa; font-weight:700;">自營商持股比 📈</span>
+                    <span class="analysis-val">${chipsData?.dealer ? safeFix(chipsData.dealer, 3) + '%' : 'N/A'}</span>
+                </div>
+                
                 <!-- 法人買進均價 -->
                 <div style="background:rgba(59, 130, 246, 0.05); padding:12px; border-radius:12px; margin-bottom:15px; border:1px solid rgba(59, 130, 246, 0.1);">
                     <div style="font-size:12px; color:#60a5fa; font-weight:700; margin-bottom:4px;">🏦 法人買進均價 (20/60/240日)</div>
@@ -4498,20 +4663,26 @@ function renderDiagnostic(text) {
     `;
 }
 
-function renderPercentRow(label, percentVal, showSign = true, useColor = true) {
+function renderPercentRow(label, percentVal, showSign = true, useColor = true, onClickOverride = null) {
     if (percentVal === null || percentVal === undefined || isNaN(percentVal)) {
         return `<div class="analysis-stat-row"><span class="analysis-label">${label}</span><span class="analysis-val">N/A</span></div>`;
     }
     const hasDef = termDefinitions && termDefinitions[label];
-    const labelClass = hasDef ? 'analysis-label has-info' : 'analysis-label';
     const valStr = `${percentVal > 0 && showSign ? '+' : ''}${safeFix(percentVal, 2)}%`;
-    const clickAttr = hasDef ? `onclick="showTermExplainer('${label}', '${valStr}')"` : '';
+    
+    let labelClass = hasDef ? 'analysis-label has-info' : 'analysis-label';
+    let clickAttr = hasDef ? `onclick="showTermExplainer('${label}', '${valStr}')"` : '';
+    
+    if (onClickOverride) {
+        labelClass = 'analysis-label has-info';
+        clickAttr = `onclick="${onClickOverride}"`;
+    }
     
     const color = useColor ? (percentVal > 0 ? '#ef4444' : (percentVal < 0 ? '#10b981' : '#ffffff')) : '#ffffff'; 
     const sign = (showSign && percentVal > 0) ? '+' : '';
     return `
         <div class="analysis-stat-row">
-            <span class="${labelClass}" ${clickAttr}>${label}</span>
+            <span class="${labelClass}" ${clickAttr}>${label}${onClickOverride ? ' 📈' : ''}</span>
             <span class="analysis-val" style="color:${color}; font-weight:700;">${sign}${safeFix(percentVal, 2)}%</span>
         </div>
     `;
@@ -4591,8 +4762,15 @@ function renderValuationRow(label, value) {
 }
 
 function renderValuationRiverMap(label, current, percentile, bands) {
-    if (current == null || percentile == null || !bands) {
-        return `<div class="analysis-stat-row"><span class="analysis-label">${label}</span><span class="analysis-val">數據不足</span></div>`;
+    if (current === null || current === undefined || percentile === null || percentile === undefined) {
+        return `
+            <div class="river-map-row">
+                <div class="river-label">${label}</div>
+                <div class="river-track" style="background:rgba(255,255,255,0.05); border:1px dashed rgba(255,255,255,0.1); justify-content:center; color:#94a3b8; font-size:10px;">
+                    數據不足，無法生成位階圖
+                </div>
+            </div>
+        `;
     }
 
     const hasDef = termDefinitions && termDefinitions[label];
@@ -4611,11 +4789,11 @@ function renderValuationRiverMap(label, current, percentile, bands) {
             </div>
             <div class="river-map-container" style="width:100%; height:14px; background:rgba(255,255,255,0.05); border-radius:7px; position:relative; margin:10px 0 -2px; border:1px solid rgba(255,255,255,0.1);">
                 <!-- Scale markers -->
-                <div style="position:absolute; left:0%; top:-12px; font-size:8px; color:#94a3b8;">${safeFix(bands.min, 1)}</div>
+                <div style="position:absolute; left:0%; top:-12px; font-size:8px; color:#94a3b8;">${bands ? safeFix(bands.min, 1) : '極低'}</div>
                 <div style="position:absolute; left:25%; top:0; bottom:0; width:1px; background:rgba(255,255,255,0.1);"></div>
                 <div style="position:absolute; left:50%; top:0; bottom:0; width:1px; background:rgba(255,255,255,0.2);"></div>
                 <div style="position:absolute; left:75%; top:0; bottom:0; width:1px; background:rgba(255,255,255,0.1);"></div>
-                <div style="position:absolute; right:0%; top:-12px; font-size:8px; color:#94a3b8;">${safeFix(bands.max, 1)}</div>
+                <div style="position:absolute; right:0%; top:-12px; font-size:8px; color:#94a3b8;">${bands ? safeFix(bands.max, 1) : '極高'}</div>
                 
                 <!-- Current Position Pointer -->
                 <div style="position:absolute; left:${pos}%; top:50%; transform:translate(-50%, -50%); width:8px; height:8px; background:${color}; border-radius:50%; box-shadow:0 0 10px ${color}; z-index:2;"></div>
@@ -4830,15 +5008,84 @@ const termDefinitions = {
         }
     },
     '52週最大回撤 (MDD)': {
-        type: '風險評估',
-        desc: '全名 Maximum Drawdown，指過去 52 週內股價從「最高收盤價」跌至最低點的最大幅度。這代表了投資人在這段期間內「最壞情況下」可能承受的損失。',
-        rule: '> 30% 代表波動極大，屬於高風險標的；< 15% 則代表回檔控制良好，防禦力強。',
-        advice: 'MDD 越大，對投資人的心理抗壓能力要求越高。如果您的停損範圍較小，應避開 MDD 過大的標的。',
+        type: '風險管理',
+        desc: '全名 Maximum Drawdown，指過去 52 週內股價從最高點跌落到最低點的最大跌幅。這代表了投資該標的可能面臨的最極端慘狀。',
+        rule: '回撤 > 30% 通常代表標的波動極大，或正處於空頭趨勢；回撤 < 15% 則代表走勢非常穩定。',
+        advice: '投資人應評估自己是否能承受 MDD 帶來的帳面虧損。對於長期持有的公司，MDD 往往是分批加碼的好時機。',
         analyze: (v) => {
             const val = parseFloat(v);
-            if (val > 30) return "⚠️ 該股具備高波動特性，歷史回撤幅度劇烈，操作時需嚴格執行資金管理。";
-            if (val > 20) return "回撤幅度處於中高水準，需留意進場位階，避免在過熱時追高。";
-            return "🛡️ 回撤控制優異，股價表現相對抗跌，具備較佳的下行保護力。";
+            if (val > 30) return "⚠️ 高波動警訊！過去一年內曾出現劇烈回檔，操作需特別注意風險控管。";
+            if (val < 15) return "走勢極為穩健，回測幅度受到強力支撐。";
+            return "波動度適中，屬一般市場水平。";
+        }
+    },
+    'PS 位階': {
+        type: '估值位階',
+        desc: '將目前的「市值營收比 (PS Ratio)」與過去 5 年的歷史數據進行百分位對比。',
+        rule: '< 20% 代表極度便宜 (歷史低位)；> 80% 代表目前估值較高。',
+        advice: '對於營收高成長但尚未穩定獲利的企業，PS 位階比 PE 位階更具備參考價值。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (val < 20) return "🔥 極度便宜！PS 位階處於歷史低谷，具備極強的長線安全邊際。";
+            if (val > 80) return "⚠️ 估值偏高！目前 PS 位階處於歷史高位區，需提防估值修正風險。";
+            return "目前 PS 估值處於歷史合理中間區塊。";
+        }
+    },
+    '市值營收比 (PS)': {
+        type: '估值倍數',
+        title: '市值營收比 (Price-to-Sales Ratio)',
+        desc: '計算公式為「市值 / 近 12 個月總營收」。用來衡量市場願意為公司每一塊錢營收支付多少價格。這是評估成長型企業的核心指標，尤其是當企業尚未穩定獲利時。',
+        rule: '通常越低越好，但需視產業毛利而定。高毛利軟體業 PS 通常很高 (5-10倍)，低毛利代工業 PS 則通常很低 (1倍以下)。',
+        advice: 'PS Ratio 最適合用來評估「高速成長」或「盈虧轉折」階段的公司。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (val > 10) return "⚠️ <b>估值警訊：</b>PS 超過 10 倍通常代表市場給予極高的成長期待，若營收成長放緩，股價恐面臨劇烈修正。";
+            if (val > 5) return "市場對該公司營收成長具備高度信心，估值處於中高水準。";
+            if (val < 1) return "✨ <b>低估訊號：</b>PS 低於 1 倍代表市值甚至低於年營收，若利潤率能改善，將具備巨大的價值重估空間。";
+            return "目前 PS 倍數處於一般市場水平，建議結合毛利率走勢綜合判斷。";
+        }
+    },
+    '52週成交均價 (VWAP)': {
+        desc: '全名 Volume Weighted Average Price，指過去一年內所有成交單的加權平均價格。這代表了市場所有參與者在過去一年的「平均持有成本」。',
+        rule: '股價高於 VWAP 代表過去一年買入的人多數處於獲利狀態（多頭趨勢）；低於 VWAP 則多數處於套牢狀態（空頭趨勢）。',
+        advice: 'VWAP 常被視為長期趨勢的分水嶺。當股價回測 VWAP 並獲得支撐，通常是良好的加碼點。',
+        analyze: (v, displayStr, stockPrice) => {
+            const cost = parseFloat(v);
+            const cur = stockPrice ? parseFloat(stockPrice) : null;
+            if (!cur) return `過去一年的市場平均持有成本為 ${cost} 元。`;
+            const diff = ((cur - cost) / cost * 100).toFixed(1);
+            if (cur > cost * 1.05) return `🚀 <b>多頭格局：</b>目前股價 (${cur}元) 高於年均成本 ${diff}%，市場情緒樂觀。`;
+            if (cur < cost * 0.95) return `⚠️ <b>弱勢格局：</b>目前股價 (${cur}元) 低於年均成本 ${Math.abs(diff)}%，多數投資者處於套牢狀態。`;
+            return `🟡 <b>趨勢盤整：</b>股價正處於年均成本附近 (${diff}%)，趨勢尚不明朗。`;
+        }
+    },
+    '52週 加權平均成本': {
+        desc: '過去 252 個交易日的成交量加權平均價格。反映了年度市場大眾的平均進場位階，是判斷個股支撐與壓力的核心數據。',
+        rule: '當股價由下往上穿越此價格，代表市場由空轉多；由上往下跌破，則需警惕趨勢轉弱。',
+        advice: '對於長線投資者，此數值可作為判斷個股是否過貴或過於便宜的「定海神針」。',
+        analyze: (v, displayStr, stockPrice) => {
+            const cost = parseFloat(v);
+            const cur = stockPrice ? parseFloat(stockPrice) : null;
+            if (!cur) return `年度加權平均成本位階在 ${cost} 元。`;
+            const diff = ((cur - cost) / cost * 100).toFixed(1);
+            if (cur > cost) return `📈 <b>目前獲利中：</b>現價已站上年度平均成本線 (${diff}%)，有利多頭續攻。`;
+            return `📉 <b>目前套牢中：</b>現價低於年度平均成本線 (${diff}%)，需留意解套賣壓。`;
+        }
+    },
+    '籌碼密集區 (POC)': {
+        type: '籌碼風險',
+        title: '籌碼密集區 (Point of Control)',
+        desc: '全名 Point of Control，指在過去一段時間內（通常為一年），成交量最集中的價格區間。這代表了市場大多數人的「集體套牢」或「集體成本」位階。',
+        rule: '若現價 > POC，則 POC 區間轉為「強力支撐」；若現價 < POC，則 POC 區間為「沉重壓力」。',
+        advice: '當股價由下往上挑戰 POC 時，通常會面臨解套賣壓；一旦站穩，則是行情轉強的訊號。',
+        analyze: (poc, displayStr, stockPrice) => {
+            const price = parseFloat(poc);
+            const cur = stockPrice ? parseFloat(stockPrice) : null;
+            if (!cur) return `目前籌碼最集中的價位在 ${price} 元。`;
+            
+            if (cur > price * 1.03) return `🚀 <b>強勢站穩：</b>目前股價 (${cur}元) 已脫離籌碼密集區 (${price}元)，下方支撐力道強勁。`;
+            if (cur < price * 0.97) return `⚠️ <b>壓力重重：</b>目前股價 (${cur}元) 低於籌碼密集區 (${price}元)，上方存在大量解套賣壓。`;
+            return `🟡 <b>區間糾結：</b>目前股價 (${cur}元) 正處於籌碼密集區 (${price}元) 附近，多空交戰激烈，需等待方向突破。`;
         }
     },
     '套牢修復天數 (MAX)': {
@@ -6135,9 +6382,11 @@ function showTermExplainer(term, currentVal = null, avgVal = null) {
         if (cleanVal !== undefined && !isNaN(cleanVal)) {
             const diagnosis = def.analyze(cleanVal, currentVal, avgVal);
             
-            // 構建同業對比小工具
+            // 構建同業對比小工具 (對於 POC 等個股特性指標，不顯示同業對比)
             let comparisonWidget = '';
-            if (avgVal !== null && avgVal !== undefined) {
+            const skipComparison = ['籌碼密集區 (POC)', '52週最高', '52週最低'].some(k => term.includes(k));
+            
+            if (avgVal !== null && avgVal !== undefined && !skipComparison) {
                 const diff = (cleanVal - avgVal);
                 // --- 指標優劣邏輯強健化 (解決 Big5/UTF8 編碼匹配問題) ---
                 // 越低越好 (便宜/效率/風險低): PE, PB, 存貨天數, 應收天數, 現金循環, 負債比
@@ -6292,4 +6541,402 @@ function identifyWinnerBrokers(brokerData, currentPrice) {
         winners: winners.sort((a, b) => b.buyNet - a.buyNet).slice(0, 5),
         sellers: sellers.sort((a, b) => b.sellNet - a.sellNet).slice(0, 5)
     };
+}
+
+/**
+ * 切換價格量能分佈 (Volume Profile) 的顯示行數
+ */
+function toggleVP(btn) {
+    const container = document.getElementById('vp-container');
+    if (!container) return;
+    
+    const hiddenRows = container.querySelectorAll('.vp-hidden-row');
+    const isExpanded = btn.getAttribute('data-expanded') === 'true';
+    
+    hiddenRows.forEach(row => {
+        row.style.display = isExpanded ? 'none' : 'flex';
+    });
+    
+    if (isExpanded) {
+        btn.innerText = '看更多 (展開至 20 列) ↓';
+        btn.setAttribute('data-expanded', 'false');
+    } else {
+        btn.innerText = '收合 ↑';
+        btn.setAttribute('data-expanded', 'true');
+    }
+}
+
+
+/**
+ * 顯示法人持股趨勢圖
+ * 採動態 DOM 注入，確保不依賴 index.html 修改，並將層級鎖定在分析視窗內
+ */
+function showHoldingTrendChart(symbol, type) {
+    console.log(`[TrendChart] Triggered for ${symbol} - ${type}`);
+    
+    const chips = window._lastChipsData;
+    const inst = window._lastInstitutionalData;
+    if (!chips) return;
+
+    const name = chips.stockName || symbol;
+    const sharesIssued = chips.sharesIssued || 1;
+    let history = [];
+
+    if (type === '外資' && chips.holdingHistory && chips.holdingHistory.length > 0) {
+        history = chips.holdingHistory.map(d => ({
+            date: d.date,
+            val: parseFloat(d.ForeignInvestmentSharesRatio || d.foreign_investment_shares_ratio || d.ForeignInvestmentRatio || d.foreign_investment_ratio || 0)
+        }));
+    } else if (inst && inst.daily && inst.daily.length > 0) {
+        const daily = [...inst.daily].sort((a, b) => new Date(b.date) - new Date(a.date));
+        let currentPct = (type === '投信' ? chips.trust : chips.dealer) || 0;
+        history = daily.map(d => {
+            const h = { date: d.date, val: currentPct };
+            const netBuyShares = (type === '投信' ? d.trust : d.dealer) * 1000;
+            currentPct -= (netBuyShares / sharesIssued) * 100;
+            return h;
+        }).reverse();
+    }
+
+    if (history.length === 0) {
+        alert("暫無趨勢數據");
+        return;
+    }
+
+    let overlay = document.getElementById('termExplainerOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'termExplainerOverlay';
+        overlay.className = 'term-explainer-overlay';
+        const container = document.getElementById('analysisModal') || document.body;
+        container.appendChild(overlay);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('active'); });
+    }
+
+    const width = 360, height = 200, padding = 40;
+    const sampling = history.length > 80 ? Math.ceil(history.length / 60) : 1;
+    const sampled = history.filter((_, i) => i % sampling === 0);
+    if (sampled[sampled.length-1].date !== history[history.length-1].date) sampled.push(history[history.length-1]);
+
+    const values = sampled.map(d => d.val);
+    const maxV = Math.max(...values, 0.1);
+    const minV = Math.min(...values);
+    const range = (maxV - minV) || 1;
+
+    const points = sampled.map((d, i) => {
+        const x = padding + (i / (sampled.length - 1)) * (width - 2 * padding);
+        const y = (height - padding) - ((d.val - minV) / range) * (height - 2 * padding);
+        return `${x},${y}`;
+    }).join(' ');
+
+    const latestVal = history[history.length - 1].val;
+
+    overlay.innerHTML = `
+        <div class="term-explainer-content" style="max-width:420px; padding:25px;">
+            <div class="term-explainer-close">&times;</div>
+            <div class="term-explainer-badge" style="background:rgba(96,165,250,0.2); color:#60a5fa;">趨勢分析</div>
+            <div class="term-explainer-title" style="font-size:20px; margin-bottom:5px;">${name} ${type}持股</div>
+            <div style="font-size:11px; color:#64748b; margin-bottom:15px;">點擊或移動鼠標查看詳細比例</div>
+
+            <div style="position:relative; background:rgba(255,255,255,0.03); border-radius:12px; padding:10px; border:1px solid rgba(255,255,255,0.05); margin-bottom:15px;">
+                <svg id="trendSvg" width="100%" height="${height}" viewBox="0 0 ${width} ${height}" style="overflow:visible; cursor:crosshair;">
+                    <!-- 網格線 -->
+                    <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="rgba(255,255,255,0.1)" stroke-width="1" />
+                    <line x1="${padding}" y1="${padding}" x2="${width - padding}" y2="${padding}" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="2,2" />
+                    
+                    <!-- 趨勢線 -->
+                    <polyline points="${points}" fill="none" stroke="#60a5fa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+                    
+                    <!-- 互動層 -->
+                    <g id="focusGroup" style="visibility:hidden;">
+                        <line id="focusLineX" x1="0" y1="${padding}" x2="0" y2="${height - padding}" stroke="rgba(96,165,250,0.4)" stroke-width="1" stroke-dasharray="4,4" />
+                        <circle id="focusPoint" r="5" fill="#60a5fa" stroke="#fff" stroke-width="2" />
+                        <rect id="tooltipBg" x="0" y="0" width="85" height="35" rx="5" fill="rgba(15, 23, 42, 0.9)" stroke="#334155" stroke-width="1" />
+                        <text id="tooltipTextDate" x="0" y="0" font-size="10" fill="#94a3b8" font-weight="bold"></text>
+                        <text id="tooltipTextVal" x="0" y="0" font-size="12" fill="#fff" font-weight="900"></text>
+                    </g>
+
+                    <!-- X 軸標籤 -->
+                    ${sampled.filter((_, i) => i % Math.ceil(sampled.length / 5) === 0 || i === sampled.length - 1).map((d, i, arr) => {
+                        const x = padding + (sampled.indexOf(d) / (sampled.length - 1)) * (width - 2 * padding);
+                        // 使用 YY/MM 格式避免重複
+                        const label = d.date.substring(2, 7).replace('-', '/');
+                        return `<text x="${x}" y="${height - 10}" font-size="9" fill="#64748b" text-anchor="middle">${label}</text>`;
+                    }).join('')}
+                </svg>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(59, 130, 246, 0.1); padding:12px; border-radius:10px; border:1px solid rgba(59, 130, 246, 0.2);">
+                <div style="font-size:11px; color:#60a5fa;">目前持股比例</div>
+                <div style="font-size:18px; font-weight:900; color:#fff;">${latestVal.toFixed(2)}%</div>
+            </div>
+            
+            <div class="term-explainer-body" style="font-size:12px; opacity:0.7; margin-top:15px; line-height:1.6;">
+                顯示該法人近一年的持有變化。${type !== '外資' ? '投信與自營商趨勢是由買賣超數據回推還原。' : '數據來自 FinMind 官方持股統計。'}
+            </div>
+        </div>
+    `;
+
+    const svg = document.getElementById('trendSvg');
+    const focusGroup = document.getElementById('focusGroup');
+    const focusLineX = document.getElementById('focusLineX');
+    const focusPoint = document.getElementById('focusPoint');
+    const tooltipBg = document.getElementById('tooltipBg');
+    const tooltipTextDate = document.getElementById('tooltipTextDate');
+    const tooltipTextVal = document.getElementById('tooltipTextVal');
+
+    const updateFocus = (clientX) => {
+        const rect = svg.getBoundingClientRect();
+        const mouseX = (clientX - rect.left) * (width / rect.width);
+        
+        if (mouseX < padding || mouseX > width - padding) {
+            focusGroup.style.visibility = 'hidden';
+            return;
+        }
+
+        // 尋找最近的資料點
+        const i = Math.round(((mouseX - padding) / (width - 2 * padding)) * (sampled.length - 1));
+        const d = sampled[Math.max(0, Math.min(i, sampled.length - 1))];
+        
+        const x = padding + (sampled.indexOf(d) / (sampled.length - 1)) * (width - 2 * padding);
+        const y = (height - padding) - ((d.val - minV) / range) * (height - 2 * padding);
+
+        focusGroup.style.visibility = 'visible';
+        focusLineX.setAttribute('x1', x);
+        focusLineX.setAttribute('x2', x);
+        focusPoint.setAttribute('cx', x);
+        focusPoint.setAttribute('cy', y);
+
+        // Tooltip 位置
+        let tx = x + 10;
+        let ty = y - 40;
+        if (tx + 90 > width) tx = x - 95;
+        if (ty < 5) ty = y + 20;
+
+        tooltipBg.setAttribute('x', tx);
+        tooltipBg.setAttribute('y', ty);
+        tooltipTextDate.setAttribute('x', tx + 8);
+        tooltipTextDate.setAttribute('y', ty + 12);
+        tooltipTextDate.textContent = d.date;
+        tooltipTextVal.setAttribute('x', tx + 8);
+        tooltipTextVal.setAttribute('y', ty + 28);
+        tooltipTextVal.textContent = d.val.toFixed(2) + '%';
+    };
+
+    svg.addEventListener('mousemove', (e) => updateFocus(e.clientX));
+    svg.addEventListener('touchstart', (e) => {
+        if (e.touches.length > 0) updateFocus(e.touches[0].clientX);
+    }, {passive: true});
+
+    overlay.querySelector('.term-explainer-close').onclick = () => overlay.classList.remove('active');
+    setTimeout(() => overlay.classList.add('active'), 10);
+}
+
+/**
+ * 顯示月營收趨勢圖 (MoM/YoY)
+ * @param {string} symbol 股票代號
+ * @param {string} type 'MoM' 或 'YoY'
+ */
+function showRevenueTrendChart(symbol, type) {
+    console.log(`[RevenueTrendChart] Triggered for ${symbol} - ${type}`);
+    
+    const revData = window._lastRevData;
+    if (!revData || !revData.history) {
+        alert("尚未載入營收歷史數據。\n這可能是因為舊有的快取資料不完整，請點擊右上方「重新整理」按鈕或重新搜尋該股，以抓取完整的趨勢紀錄。");
+        return;
+    }
+
+    const name = window._lastChipsData?.stockName || symbol;
+    const historyRaw = revData.history;
+    
+    // 計算趨勢歷史數據
+    let trendHistory = [];
+    historyRaw.forEach((item, index) => {
+        const curRev = item.revenue || item.Revenue || 0;
+        let val = 0;
+        
+        if (type === 'MoM') {
+            const prev = historyRaw[index - 1];
+            const preRev = prev ? (prev.revenue || prev.Revenue || 0) : 0;
+            if (preRev > 0) {
+                val = ((curRev - preRev) / preRev) * 100;
+            } else {
+                return; // 跳過無前期資料點
+            }
+        } else if (type === 'YoY') {
+            // YoY (年增率)
+            const ly = historyRaw.find(x => x.revenue_year === item.revenue_year - 1 && x.revenue_month === item.revenue_month);
+            const lyRev = ly ? (ly.revenue || ly.Revenue || 0) : 0;
+            if (lyRev > 0) {
+                val = ((curRev - lyRev) / lyRev) * 100;
+            } else {
+                return; // 跳過無去年同期資料點
+            }
+        } else if (type === 'CumYoY') {
+            // 累計年增率 (YTD YoY)
+            const ytdData = historyRaw.filter(x => x.revenue_year === item.revenue_year && x.revenue_month <= item.revenue_month);
+            const lyYtdData = historyRaw.filter(x => x.revenue_year === item.revenue_year - 1 && x.revenue_month <= item.revenue_month);
+            
+            if (lyYtdData.length === item.revenue_month) { // 確保去年同期數據完整
+                const ytdSum = ytdData.reduce((s, x) => s + (x.revenue || x.Revenue || 0), 0);
+                const lyYtdSum = lyYtdData.reduce((s, x) => s + (x.revenue || x.Revenue || 0), 0);
+                if (lyYtdSum > 0) val = ((ytdSum - lyYtdSum) / lyYtdSum) * 100;
+                else return;
+            } else {
+                return;
+            }
+        }
+        
+        trendHistory.push({
+            date: `${item.revenue_year}/${String(item.revenue_month).padStart(2, '0')}`,
+            val: val,
+            revenue: curRev
+        });
+    });
+
+    // 僅顯示最近 24 個月數據以保持清晰
+    if (trendHistory.length > 24) {
+        trendHistory = trendHistory.slice(-24);
+    }
+
+    if (trendHistory.length === 0) {
+        alert("暫無足夠趨勢數據 (需要至少兩期數據)");
+        return;
+    }
+
+    let overlay = document.getElementById('termExplainerOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'termExplainerOverlay';
+        overlay.className = 'term-explainer-overlay';
+        const container = document.getElementById('analysisModal') || document.body;
+        container.appendChild(overlay);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('active'); });
+    }
+
+    const width = 360, height = 200, padding = 40;
+    const values = trendHistory.map(d => d.val);
+    let maxV = Math.max(...values, 0);
+    let minV = Math.min(...values, 0);
+    
+    // 增加一點邊距
+    const absMax = Math.max(Math.abs(maxV), Math.abs(minV));
+    if (absMax === 0) { maxV = 10; minV = -10; }
+    else {
+        maxV += absMax * 0.1;
+        minV -= absMax * 0.1;
+    }
+    
+    const range = (maxV - minV) || 1;
+
+    const points = trendHistory.map((d, i) => {
+        const x = padding + (i / (trendHistory.length - 1)) * (width - 2 * padding);
+        const y = (height - padding) - ((d.val - minV) / range) * (height - 2 * padding);
+        return `${x},${y}`;
+    }).join(' ');
+
+    // 計算 0 軸位置
+    const zeroY = (height - padding) - ((0 - minV) / range) * (height - 2 * padding);
+    const latestVal = trendHistory[trendHistory.length - 1].val;
+
+    overlay.innerHTML = `
+        <div class="term-explainer-content" style="max-width:420px; padding:25px;">
+            <div class="term-explainer-close">&times;</div>
+            <div class="term-explainer-badge" style="background:rgba(16,185,129,0.2); color:#10b981;">營收趨勢</div>
+            <div class="term-explainer-title" style="font-size:20px; margin-bottom:5px;">${name} 月營收 ${type === 'CumYoY' ? '累計年增' : type}</div>
+            <div style="font-size:11px; color:#64748b; margin-bottom:15px;">顯示最近 24 個月的 ${type === 'MoM' ? '月增率' : (type === 'YoY' ? '年增率' : '累計年增率')} 變化</div>
+
+            <div style="position:relative; background:rgba(255,255,255,0.03); border-radius:12px; padding:10px; border:1px solid rgba(255,255,255,0.05); margin-bottom:15px;">
+                <svg id="revenueTrendSvg" width="100%" height="${height}" viewBox="0 0 ${width} ${height}" style="overflow:visible; cursor:crosshair;">
+                    <!-- 背景網格與 0 軸 -->
+                    <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="rgba(255,255,255,0.1)" stroke-width="1" />
+                    <line x1="${padding}" y1="${zeroY}" x2="${width - padding}" y2="${zeroY}" stroke="rgba(255,255,255,0.3)" stroke-width="1" stroke-dasharray="4,2" />
+                    
+                    <!-- 趨勢路徑 -->
+                    <polyline points="${points}" fill="none" stroke="${type === 'MoM' ? '#60a5fa' : (type === 'YoY' ? '#fbbf24' : '#f472b6')}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+                    
+                    <!-- 互動層 -->
+                    <g id="revFocusGroup" style="visibility:hidden;">
+                        <line id="revFocusLineX" x1="0" y1="${padding}" x2="0" y2="${height - padding}" stroke="rgba(255,255,255,0.4)" stroke-width="1" stroke-dasharray="4,4" />
+                        <circle id="revFocusPoint" r="5" fill="${type === 'MoM' ? '#60a5fa' : (type === 'YoY' ? '#fbbf24' : '#f472b6')}" stroke="#fff" stroke-width="2" />
+                        <rect id="revTooltipBg" x="0" y="0" width="100" height="45" rx="5" fill="rgba(15, 23, 42, 0.95)" stroke="#334155" stroke-width="1" />
+                        <text id="revTooltipDate" x="0" y="0" font-size="10" fill="#94a3b8" font-weight="bold"></text>
+                        <text id="revTooltipVal" x="0" y="0" font-size="12" fill="#fff" font-weight="900"></text>
+                        <text id="revTooltipRev" x="0" y="0" font-size="10" fill="#cbd5e1"></text>
+                    </g>
+
+                    <!-- X 軸標籤 -->
+                    ${trendHistory.filter((_, i) => i % 6 === 0 || i === trendHistory.length - 1).map((d) => {
+                        const x = padding + (trendHistory.indexOf(d) / (trendHistory.length - 1)) * (width - 2 * padding);
+                        return `<text x="${x}" y="${height - 10}" font-size="9" fill="#64748b" text-anchor="middle">${d.date.substring(2)}</text>`;
+                    }).join('')}
+                </svg>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(16, 185, 129, 0.1); padding:12px; border-radius:10px; border:1px solid rgba(16, 185, 129, 0.2);">
+                <div style="font-size:11px; color:#10b981;">最新 ${type === 'CumYoY' ? '累計年增' : type}</div>
+                <div style="font-size:18px; font-weight:900; color:#fff;">${latestVal > 0 ? '+' : ''}${latestVal.toFixed(2)}%</div>
+            </div>
+            
+            <div class="term-explainer-body" style="font-size:12px; opacity:0.7; margin-top:15px; line-height:1.6;">
+                ${type === 'MoM' ? '月增率 (MoM) 反映短期動能。' : (type === 'YoY' ? '年增率 (YoY) 觀察成長性。' : '累計年增率反映年初至今的營收累積相對於去年同期的成長，能有效平滑單月波動，是判斷年度業績達標率的重要參考。')}
+            </div>
+        </div>
+    `;
+
+    const svg = document.getElementById('revenueTrendSvg');
+    const focusGroup = document.getElementById('revFocusGroup');
+    const focusLineX = document.getElementById('revFocusLineX');
+    const focusPoint = document.getElementById('revFocusPoint');
+    const tooltipBg = document.getElementById('revTooltipBg');
+    const tooltipDate = document.getElementById('revTooltipDate');
+    const tooltipVal = document.getElementById('revTooltipVal');
+    const tooltipRev = document.getElementById('revTooltipRev');
+
+    const updateFocus = (clientX) => {
+        const rect = svg.getBoundingClientRect();
+        const mouseX = (clientX - rect.left) * (width / rect.width);
+        
+        if (mouseX < padding || mouseX > width - padding) {
+            focusGroup.style.visibility = 'hidden';
+            return;
+        }
+
+        const i = Math.round(((mouseX - padding) / (width - 2 * padding)) * (trendHistory.length - 1));
+        const d = trendHistory[Math.max(0, Math.min(i, trendHistory.length - 1))];
+        
+        const x = padding + (trendHistory.indexOf(d) / (trendHistory.length - 1)) * (width - 2 * padding);
+        const y = (height - padding) - ((d.val - minV) / range) * (height - 2 * padding);
+
+        focusGroup.style.visibility = 'visible';
+        focusLineX.setAttribute('x1', x);
+        focusLineX.setAttribute('x2', x);
+        focusPoint.setAttribute('cx', x);
+        focusPoint.setAttribute('cy', y);
+
+        let tx = x + 10;
+        let ty = y - 50;
+        if (tx + 110 > width) tx = x - 115;
+        if (ty < 5) ty = y + 20;
+
+        tooltipBg.setAttribute('x', tx);
+        tooltipBg.setAttribute('y', ty);
+        tooltipDate.setAttribute('x', tx + 8);
+        tooltipDate.setAttribute('y', ty + 12);
+        tooltipDate.textContent = d.date;
+        tooltipVal.setAttribute('x', tx + 8);
+        tooltipVal.setAttribute('y', ty + 28);
+        tooltipVal.textContent = `${type}: ${d.val > 0 ? '+' : ''}${d.val.toFixed(2)}%`;
+        tooltipRev.setAttribute('x', tx + 8);
+        tooltipRev.setAttribute('y', ty + 40);
+        tooltipRev.textContent = `營收: ${Math.round(d.revenue/1000000).toLocaleString()} 百萬`;
+    };
+
+    svg.addEventListener('mousemove', (e) => updateFocus(e.clientX));
+    svg.addEventListener('touchstart', (e) => {
+        if (e.touches.length > 0) updateFocus(e.touches[0].clientX);
+    }, {passive: true});
+
+    overlay.querySelector('.term-explainer-close').onclick = () => overlay.classList.remove('active');
+    setTimeout(() => overlay.classList.add('active'), 10);
 }

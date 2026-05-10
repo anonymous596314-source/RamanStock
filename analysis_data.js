@@ -492,6 +492,17 @@ const termDefinitions = {
             return "淨資產較低。";
         }
     },
+    'PS 位階': {
+        type: '估值',
+        desc: '目前市值營收比 (PS Ratio) 在過去 5 年歷史區間中的位置。反映目前的股價相對於營收，是太貴還是便宜。',
+        rule: '< 20% 代表處於歷史低水位（極其便宜）；> 80% 代表處於歷史高水位（昂貴）。',
+        advice: '對於尚未獲利或處於高速成長期的公司，PS Ratio 比本益比更具參考價值。當位階低於 20% 時，通常具備極強的投資價值。',
+        analyze: (v) => {
+            if (v < 20) return "目前處於歷史極低位階，相對於其營收規模，目前股價明顯被市場低估。";
+            if (v > 80) return "目前處於歷史高位階，市場對其營收成長已給予極高溢價，需留意追高風險。";
+            return "目前處於歷史合理區間。";
+        }
+    },
     '市銷率 (P/S)': {
         type: '估值',
         desc: '市值除以年度營收。反映投資人願意為每 1 元營收付出多少價格。',
@@ -1053,7 +1064,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     let valuationBands = null;
     if (finData?.historicalTTM && chartData?.prices) {
         const peSamples = finData.historicalTTM.map(h => {
-            const p = chartData.prices.find(p => p.date <= h.date); 
+            const p = chartData.prices.filter(p => p.date <= h.date).pop(); 
             return (p && p.close > 0) ? p.close / h.ttm : null;
         }).filter(v => v !== null && v > 0).sort((a,b) => a-b);
 
@@ -1062,6 +1073,22 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             valuationBands = { p10: getP(0.1), p20: getP(0.2), p50: getP(0.5), p80: getP(0.8), p90: getP(0.9) };
             const rank = peSamples.filter(v => v < currentPE).length;
             pePercentile = (rank / peSamples.length) * 100;
+        }
+    }
+
+    // 計算 PS Ratio 歷史位階 (PS Percentile)
+    const currentPS = psRatio;
+    let psPercentile = null;
+    if (finData?.historicalPSData && chartData?.prices && currentPS > 0) {
+        const psSamples = finData.historicalPSData.map(h => {
+            const p = chartData.prices.filter(p => p.date <= h.date).pop();
+            // PS Ratio = (Price * Shares) / TTM Revenue
+            return (p && p.close > 0 && h.ttmRev > 0) ? (p.close * h.shares / h.ttmRev) : null;
+        }).filter(v => v !== null && v > 0).sort((a, b) => a - b);
+
+        if (psSamples.length > 5) {
+            const rank = psSamples.filter(v => v < currentPS).length;
+            psPercentile = (rank / psSamples.length) * 100;
         }
     }
 
@@ -1133,6 +1160,11 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
         else summaryText += `目前本益比處於歷史中位區間 (${safeFix(peP, 1)}%)。`;
     }
 
+    if (psPercentile !== null) {
+        if (psPercentile < 20) summaryText += `此外，市值營收比 (PS Ratio) 處於歷史低位階 (${safeFix(psPercentile, 1)}%)，顯示成長股估值極具吸引力。`;
+        else if (psPercentile > 80) summaryText += `PS 位階處於歷史高點 (${safeFix(psPercentile, 1)}%)，需警惕市場對營收預期是否過度樂觀。`;
+    }
+
     const fStreak = institutionalData?.streaks?.foreign || 0;
     const tStreak = institutionalData?.streaks?.trust || 0;
     if (fStreak > 2 && tStreak > 2) summaryText += "外資與投信近期同步連買，籌碼面出現「土洋大戰」偏多態勢。";
@@ -1162,6 +1194,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 <div class="analysis-card-title">🏢 市值與股本規模</div>
                 ${renderStatRow('產業分類', chipsData?.industry || 'N/A')}
                 ${renderStatRow('市值', marketCap ? formatCurrency(marketCap * 100000000) : 'N/A')}
+                ${renderStatRow('市值營收比 (PS)', psRatio ? safeFix(psRatio, 2) + ' 倍' : 'N/A')}
                 ${renderStatRow('實收股本', chipsData?.sharesIssued ? formatCurrency(chipsData.sharesIssued * 10) : 'N/A')}
                 ${renderStatRow('每股淨值 (BPS)', bps !== undefined ? safeFix(bps, 2) + ' 元' : 'N/A')}
                 ${renderStatRow('52週位置', posIn52w !== null ? posIn52w + '%' : 'N/A')}
@@ -1195,7 +1228,8 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderValuationRow('昂貴價', `${safeFix(divExpensive, 1)} / ${safeFix(peExpensive, 1)} 元`)}
                 <div style="font-size:11px; color:#cbd5e1; margin:12px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px;">📊 歷史估值區間</div>
                 ${renderValuationRiverMap('PE 位階', twseBasic?.pe, twseBasic?.pePercentile, twseBasic?.peBands)}
-                ${renderDiagnostic(finalYield > 5 ? "殖利率高於 5%，具備防禦屬性。" : "目前估值尚屬合理。")}
+                ${psPercentile !== null ? renderValuationRiverMap('PS 位階', psRatio, psPercentile) : ''}
+                ${renderDiagnostic(finalYield > 5 ? "殖利率高於 5%，具備防禦屬性。" : (psPercentile !== null && psPercentile < 20 ? "PS 位階極低，具備成長股安全邊際。" : "目前估值尚屬合理。"))}
             </div>
 
             <div class="analysis-card">
