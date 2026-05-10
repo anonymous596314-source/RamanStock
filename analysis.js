@@ -445,7 +445,7 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
             allKeys.forEach(k => { if (k.startsWith(ANALYSIS_CACHE_PREFIX)) localStorage.removeItem(k); });
         }
         
-        const cacheKey = `${finalSymbol}_v17`; 
+        const cacheKey = `${finalSymbol}_v19`; 
         let cachedResults = (forceRefresh || partialResults) ? null : getCachedAnalysis(cacheKey);
         
         if (cachedResults && !cachedResults[0]) cachedResults = null;
@@ -570,6 +570,7 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
             setCachedAnalysis(cacheKey, results);
         }
 
+        window._lastFinData = finData;
         const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
         renderAnalysis(finalSymbol, displayName, chartData, twseBasic, chipsData, revData, finData, marginData, institutionalData, avgCost, riskMetrics, insiderActivity, debugInfo, brokerData, peerCCCData, chipCosts, winnerBrokers, topSellers60, totalTime);
     } catch (err) {
@@ -1497,7 +1498,9 @@ async function fetchFinMindRevenue(symbol) {
 async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips = 0) {
     const rawSymbol = symbol.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
     const d = new Date();
-    d.setDate(d.getDate() - 1825); // 調整至 5 年，平衡數據量與載入速度 (加速)
+    d.setFullYear(d.getFullYear() - 5);
+    d.setMonth(0);
+    d.setDate(1); // 調整至 5 年前的 1 月 1 日，確保涵蓋完整年度數據
     const startDate = d.toISOString().split('T')[0];
     
     const datasets = [
@@ -1922,6 +1925,20 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 latestOCF: ocf,
                 latestCapEx: investingCF,
                 epsTrend8: epsTrend8,
+                epsTrendFull: allDates.map(date => {
+                    const qd = getQData(jsonS.data, date);
+                    return { date: date, eps: getVal(qd, epsSynonyms) };
+                }),
+                annualEpsTrend: (() => {
+                    const yearly = {};
+                    allDates.forEach(date => {
+                        const year = date.substring(0, 4);
+                        const qd = getQData(jsonS.data, date);
+                        const val = getVal(qd, epsSynonyms) || 0;
+                        yearly[year] = (yearly[year] || 0) + val;
+                    });
+                    return Object.keys(yearly).sort().map(y => ({ year: y, eps: yearly[y] }));
+                })(),
                 marginTrend: marginTrend4,
                 zComponents: { zA, zB, zC, zE },
                 fScore,
@@ -3227,7 +3244,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                             </div>
                             
                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:15px;">
-                                <div class="has-info" onclick="showTermExplainer('52週成交均價 (VWAP)', '${safeFix(vwap52w, 1)}', '${p}')" style="background:rgba(0,0,0,0.2); padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05); cursor:pointer;">
+                                <div class="has-info" onclick="showTermExplainer('52週成交均價 (VWAP)', '${safeFix(vwap52w, 1)}', '${p}')" style="background:rgba(255,243,232,0.05); padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05); cursor:pointer;">
                                     <div style="font-size:10px; color:#ef4444; margin-bottom:4px;">52週成交均價 (VWAP) 💡</div>
                                     <div style="font-size:13px; font-weight:700; color:#ffffff;">
                                         ${safeFix(vwap52w, 1)} <span style="font-size:10px; font-weight:400; color:${parseFloat(vwapDiff) >= 0 ? '#f87171' : '#4ade80'};">(${parseFloat(vwapDiff) > 0 ? '+' : ''}${vwapDiff}%)</span>
@@ -3248,7 +3265,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                 </div>
                                 <div id="vp-container">
                                     ${(() => {
-                                        return sortedBins.slice(0, 20).map((idxBinEnd, idx) => {
+                                        return sortedBins.slice(0, 30).map((idxBinEnd, idx) => {
                                             const weight = (bins[idxBinEnd] / maxBinVol * 100);
                                             const isPOC = idxBinEnd === pocBinKey;
                                             const isHidden = idx >= 8;
@@ -3273,7 +3290,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                         }).join('');
                                     })()}
                                 </div>
-                                <button onclick="toggleVP(this)" style="width:100%; margin-top:8px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:#94a3b8; font-size:10px; padding:4px; border-radius:4px; cursor:pointer;">看更多 (展開至 20 列) ↓</button>
+                                <button onclick="toggleVP(this)" style="width:100%; margin-top:8px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:#94a3b8; font-size:10px; padding:4px; border-radius:4px; cursor:pointer;">(展開至 30 列) ↓</button>
                             </div>
 
                             <div class="analysis-stat-row">
@@ -3308,24 +3325,47 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 <div style="font-size:11px; color:#cbd5e1; margin-top:8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px;">🚩 專業排雷診斷</div>
                 ${renderStatRow('應收帳款狀態', `<span style="color:${accrualDiagnosis.arStatus === '惡化' ? '#ef4444' : '#4ade80'};">${accrualDiagnosis.arStatus}</span>`)}
                 ${renderStatRow('存貨管理狀態', `<span style="color:${accrualDiagnosis.invStatus === '惡化' ? '#ef4444' : '#4ade80'};">${accrualDiagnosis.invStatus}</span>`)}
-                <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px;">📈 三率趨勢 (近四季)</div>
-                <div class="chart-internal" style="display:flex; justify-content:space-between; font-size:10px; color:#94a3b8; margin-bottom:4px; padding-bottom:2px; border-bottom:1px solid rgba(255,255,255,0.05);">
-                    <span style="width:60px; font-size:10px;">季度</span>
-                    <span style="color:#ef4444; flex:1; text-align:right;">毛利</span>
-                    <span style="color:#3b82f6; flex:1; text-align:right;">營益</span>
-                    <span style="color:#f8fafc; flex:1; text-align:right;">淨利</span>
-                </div>
-                <div class="chart-internal" style="display:flex; flex-direction:column; gap:4px; width: 100%;">
-                    ${(finData?.marginTrend || []).map(m => `
-                        <div class="chart-internal" style="display:flex; justify-content:space-between; font-size:11px; width: 100%;">
-                            <span style="color:#94a3b8; width:60px; font-size:10px;">${m.date || 'N/A'}</span>
-                            <span style="color:#ef4444; flex:1; text-align:right;">${safeFix(m.grossMargin, 1)}%</span>
-                            <span style="color:#3b82f6; flex:1; text-align:right;">${safeFix(m.operatingMargin, 1)}%</span>
-                            <span style="color:#f8fafc; flex:1; text-align:right;">${safeFix(m.netMargin, 1)}%</span>
+                <!-- 整合後的三率視覺化趨勢 -->
+                <div style="font-size:11px; color:#cbd5e1; margin:15px 0 2px; border-top:1px dashed rgba(255,255,255,0.05); padding-top:10px;">📈 獲利三率趨勢 (近四季)</div>
+                <div style="font-size:9px; color:#94a3b8; margin-bottom:10px; opacity:0.8;">近 4 季毛利率、營業利益率、稅後淨利率</div>
+                ${(() => {
+                    const marginTrend = finData?.marginTrend || [];
+                    if (marginTrend.length === 0) return '<div style="color:#94a3b8; font-size:11px; text-align:center; padding:10px;">無趨勢數據</div>';
+                    return `
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:10px;">
+                            ${[...marginTrend].reverse().map(m => {
+                                const maxVal = Math.max(...marginTrend.map(x => Math.max(x.grossMargin || 0, x.operatingMargin || 0, x.netMargin || 0))) || 1;
+                                return `
+                                <div style="background:rgba(255,255,255,0.02); padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); display:flex; flex-direction:column; justify-content:space-between;">
+                                    <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px;">
+                                        <span style="color:#94a3b8;">${m.date || 'N/A'}</span>
+                                        <span style="color:#fbbf24; font-weight:800;">ROE: ${m.roe ? safeFix(m.roe, 2)+'%' : 'N/A'}</span>
+                                    </div>
+                                    <div style="display:flex; flex-direction:column; gap:3px; margin:4px 0;">
+                                        <div style="width:${Math.max(0, Math.min(100, ((m.grossMargin || 0) / maxVal * 100)))}%; background:#ef4444; height:4px; border-radius:2px;"></div>
+                                        <div style="width:${Math.max(0, Math.min(100, ((m.operatingMargin || 0) / maxVal * 100)))}%; background:#3b82f6; height:4px; border-radius:2px;"></div>
+                                        <div style="width:${Math.max(0, Math.min(100, ((m.netMargin || 0) / maxVal * 100)))}%; background:#f8fafc; height:4px; border-radius:2px; opacity:0.8;"></div>
+                                    </div>
+                                    <div style="display:flex; justify-content:space-between; font-size:8px; margin-top:2px;">
+                                        <span style="color:#ef4444;">毛:${safeFix(m.grossMargin, 1)}%</span>
+                                        <span style="color:#3b82f6;">營:${safeFix(m.operatingMargin, 1)}%</span>
+                                        <span style="color:#f8fafc;">淨:${safeFix(m.netMargin, 1)}%</span>
+                                    </div>
+                                </div>
+                                `;
+                            }).join('')}
                         </div>
-                    `).join('')}
+                    `;
+                })()}
+
+                <!-- 毛利率動能 -->
+                <div style="margin-bottom:15px; padding:8px 12px; background:rgba(59, 130, 246, 0.05); border-radius:8px; border:1px dashed rgba(59, 130, 246, 0.2); display:flex; justify-content:space-between; align-items:center;">
+                    <span class="analysis-label has-info" onclick="showTermExplainer('毛利率連續改善季數', '${finData?.marginMomentumCount || 0}')" style="font-size:11px; color:#cbd5e1; font-weight:700;">📈 毛利率連續改善季數</span>
+                    <span style="font-size:14px; font-weight:800; color:${(finData?.marginMomentumCount || 0) >= 2 ? '#4ade80' : '#ffffff'};">
+                        ${finData?.marginMomentumCount || 0} 季 ${(finData?.marginMomentumCount || 0) >= 2 ? '🔥' : ''}
+                    </span>
                 </div>
-                ${renderStatRow('單季 EPS', finData?.eps ? finData.eps + ' 元' : 'N/A')}
+                ${renderStatRow('單季 EPS 📈', (finData?.eps ? finData.eps + ' 元' : 'N/A'), null, `showEPSTrendChart('${finData.symbol}')`)}
                 ${renderPercentRow('ROE (股東權益報酬)', finData?.roe, true, false)}
                 ${renderPercentRow('ROIC (投入資本回報)', finData?.roic, true, false)}
                 ${renderPercentRow('ROA (資產報酬率)', finData?.roa, true, false)}
@@ -3751,10 +3791,32 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 )}
             </div>
 
-            <!-- 9. 杜邦分析 (ROE 拆解) -->
+            <!-- 9. 企業體質與獲利診斷 (F-Score + DuPont) -->
             <div class="analysis-card">
-                <div class="analysis-card-title">🔍 杜邦分析 (ROE 拆解)</div>
-                <div style="font-size:11px; color:#cbd5e1; margin-bottom:10px;">ROE = 淨利率 × 資產週轉 × 權益乘數</div>
+                <div class="analysis-card-title">💎 基本面體質與獲利結構診斷</div>
+                
+                <!-- 🏆 Piotroski F-Score (上層) -->
+                <div style="font-size:11px; color:#cbd5e1; margin-bottom:8px;">1. 財務健全度 (Piotroski F-Score)</div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; background:rgba(234, 179, 8, 0.1); padding:10px; border-radius:8px; border:1px solid rgba(234, 179, 8, 0.2);">
+                    <span style="font-size:12px; color:#cbd5e1;">總分 (0-9)</span>
+                    <span style="font-size:20px; font-weight:800; color:#eab308;">${finData?.fScore || 0} / 9</span>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; font-size:10px; margin-bottom:15px;">
+                    ${(finData?.fDetails || []).map((f, idx, arr) => {
+                        const isLast = idx === arr.length - 1;
+                        return `
+                        <div style="color: ${f.ok ? '#4ade80' : '#94a3b8'}; ${isLast ? 'grid-column: span 2; white-space: nowrap;' : ''}">
+                            ${f.ok ? '✅' : '⚪'} ${f.msg}
+                        </div>
+                        `;
+                    }).join('')}
+                </div>
+
+                <!-- 🔍 杜邦分析 (下層) -->
+                <div style="font-size:11px; color:#cbd5e1; margin-bottom:8px; border-top:1px dashed rgba(255,255,255,0.05); padding-top:10px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>2. ROE 獲利結構拆解 (杜邦分析)</span>
+                    <span style="font-size:9px; opacity:0.8;">ROE = 淨利率 × 資產週轉 × 權益乘數</span>
+                </div>
                 <div style="display:flex; flex-direction:column; gap:8px; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.05);">
                     <div class="comparison-row" style="display:flex; justify-content:space-between; align-items:center;">
                         <span class="has-info" style="font-size:12px; color:#cbd5e1;" onclick="showTermExplainer('淨利率 (獲利)', '${finData?.netMargin !== undefined ? safeFix(finData.netMargin, 2) + '%' : 'N/A'}')">1. 淨利率 (獲利)</span>
@@ -3774,9 +3836,10 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         <span style="font-size:15px; font-weight:800; color:#ffffff;">${finData?.roe !== undefined ? safeFix(finData.roe, 2) + '%' : 'N/A'}</span>
                     </div>
                 </div>
+
                 ${renderDiagnostic(
-                    (finData?.netMargin > 20 ? "高淨利率驅動 ROE，顯示產業地位高。" : (finData?.assetTurnover > 1 ? "高週轉率驅動 ROE，薄利多銷經營。" : "綜合驅動模式。")) +
-                    (finData?.equityMultiplier > 3 ? " 槓桿比例較高，需留意利息負擔。" : "")
+                    (finData?.fScore >= 7 ? "🏆 F-Score 優異，財務體質極佳。" : (finData?.fScore <= 3 ? "⚠️ F-Score 偏低，需留意財務惡化。" : "財務健全度尚可。")) +
+                    (finData?.netMargin > 20 ? " 高淨利率驅動 ROE，顯示產業地位高。" : (finData?.assetTurnover > 1 ? " 高週轉率驅動 ROE，薄利多銷經營。" : " 綜合獲利驅動模式。"))
                 )}
             </div>
             
@@ -4151,170 +4214,10 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 )}
             </div>
 
-            <div class="analysis-card">
-                <div class="analysis-card-title">📈 近 8 季 EPS 走勢</div>
-                <div style="background:rgba(255,255,255,0.02); padding:12px; border-radius:10px; border:1px solid rgba(255,255,255,0.05); position:relative; height:110px; margin:5px 0 12px;">
-                    ${(() => {
-                        const trend = finData?.epsTrend || [];
-                        if (trend.length < 2) return '<div style="color:#94a3b8; font-size:11px; text-align:center; padding-top:35px;">趨勢數據不足</div>';
-                        
-                        const allVals = trend.map(t => t.eps);
-                        const minData = Math.min(...allVals);
-                        const maxData = Math.max(...allVals);
-                        const minVal = Math.min(minData, 0) - (Math.max(Math.abs(maxData), 1) * 0.2);
-                        const maxVal = Math.max(maxData, 0.1) + (Math.max(Math.abs(maxData), 1) * 0.2);
-                        const range = maxVal - minVal;
-                        
-                        const width = 280;
-                        const height = 65;
-                        const getY = (v) => height - ((v - minVal) / range) * height;
-                        const y0 = getY(0);
-                        
-                        const points = trend.map((t, i) => `${(i / (trend.length - 1)) * width},${getY(t.eps)}`).join(' ');
-                        
-                        return `
-                            <svg viewBox="0 -15 ${width} ${height + 30}" style="width:100%; height:100%; overflow:visible;">
-                                <!-- Zero Line -->
-                                <line x1="0" y1="${y0}" x2="${width}" y2="${y0}" stroke="rgba(255,255,255,0.15)" stroke-width="1" stroke-dasharray="2,2" />
-                                <line x1="0" y1="${height}" x2="${width}" y2="${height}" stroke="rgba(255,255,255,0.05)" stroke-width="1" />
-                                
-                                <!-- EPS Line -->
-                                <polyline points="${points}" fill="none" stroke="#3b82f6" stroke-width="2.5" stroke-linejoin="round" />
-                                
-                                <!-- Data Points & Labels -->
-                                ${trend.map((t, i) => {
-                                    const x = (i / (trend.length - 1)) * width;
-                                    const y = getY(t.eps);
-                                    const color = t.eps >= 0 ? '#3b82f6' : '#ef4444';
-                                    
-                                    return `
-                                        <circle cx="${x}" cy="${y}" r="4" fill="${color}"></circle>
-                                        <text x="${x}" y="${y - 10}" font-size="13" font-weight="700" fill="${color}" text-anchor="middle">${safeFix(t.eps, 2)}</text>
-                                        
-                                        <!-- 日期標籤 -->
-                                        ${(() => {
-                                            const dateStr = String(t.date || t.label || "");
-                                            const year = dateStr.slice(0, 4);
-                                            const q = dateStr.includes('Q') ? dateStr.split('Q')[1] + 'Q' : dateStr.slice(-5);
-                                            return `
-                                                <text x="${x}" y="${height + 22}" font-size="9" fill="#cbd5e1" text-anchor="middle">${year}</text>
-                                                <text x="${x}" y="${height + 32}" font-size="9" font-weight="600" fill="#cbd5e1" text-anchor="middle">${q}</text>
-                                            `;
-                                        })()}
-                                    `;
-                                }).join('')}
-                            </svg>
-                        `;
-                    })()}
-                </div>
-                ${renderDiagnostic(
-                    (finData?.epsTrend?.length >= 4 && finData.epsTrend[finData.epsTrend.length-1].eps > finData.epsTrend[finData.epsTrend.length-2].eps) ? "近期獲利呈現回溫或成長態勢。" : "獲利表現波動中，需觀察核心動能是否持續。"
-                )}
-            </div>
 
-            <!-- 12. Piotroski F-Score -->
-            <div class="analysis-card">
-                <div class="analysis-card-title">🏆 Piotroski F-Score (九項指標)</div>
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; background:rgba(234, 179, 8, 0.1); padding:10px; border-radius:8px; border:1px solid rgba(234, 179, 8, 0.2);">
-                    <span style="font-size:12px; color:#cbd5e1;">總分 (0-9)</span>
-                    <span style="font-size:20px; font-weight:800; color:#eab308;">${finData?.fScore || 0} / 9</span>
-                </div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; font-size:10px;">
-                    ${(finData?.fDetails || []).map((f, idx, arr) => {
-                        const isLast = idx === arr.length - 1;
-                        return `
-                        <div style="color: ${f.ok ? '#4ade80' : '#94a3b8'}; ${isLast ? 'grid-column: span 2; white-space: nowrap;' : ''}">
-                            ${f.ok ? '✅' : '⚪'} ${f.msg}
-                        </div>
-                        `;
-                    }).join('')}
-                </div>
-                ${renderDiagnostic(
-                    (finData?.fScore >= 7 ? "F-Score 評分優異，具備機構級財務健全度。" : (finData?.fScore <= 3 ? "F-Score 評分較低，需嚴防財務結構惡化。" : "財務健全度尚可。"))
-                )}
-            </div>
 
-            <!-- 13. 獲利三率趨勢 -->
-            <div class="analysis-card">
-                <div class="analysis-card-title">🏆 獲利三率趨勢</div>
-                <div style="font-size:11px; color:#cbd5e1; margin-bottom:10px;">近 4 季毛利率、營業利益率、稅後淨利率</div>
-                ${(() => {
-                    const marginTrend = finData?.marginTrend || [];
-                    if (marginTrend.length === 0) return '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:10px;">無獲利比率數據</div>';
-                    return `
-                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
-                            ${[...marginTrend].reverse().map(m => {
-                                const maxVal = Math.max(...marginTrend.map(x => Math.max(x.grossMargin || 0, x.operatingMargin || 0, x.netMargin || 0))) || 1;
-                                return `
-                                <div style="background:rgba(255,255,255,0.02); padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); display:flex; flex-direction:column; justify-content:space-between; min-height:85px;">
-                                    <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
-                                        <span style="color:#94a3b8;">${m.date || 'N/A'}</span>
-                                        <span style="color:#fbbf24; font-weight:800;">ROE: ${m.roe ? safeFix(m.roe, 2)+'%' : 'N/A'}</span>
-                                    </div>
-                                    <div style="display:flex; flex-direction:column; gap:3px; margin:4px 0;">
-                                        <div style="width:${Math.max(0, Math.min(100, ((m.grossMargin || 0) / maxVal * 100)))}%; background:#f87171; height:5px; border-radius:2px;"></div>
-                                        <div style="width:${Math.max(0, Math.min(100, ((m.operatingMargin || 0) / maxVal * 100)))}%; background:#60a5fa; height:5px; border-radius:2px;"></div>
-                                        <div style="width:${Math.max(0, Math.min(100, ((m.netMargin || 0) / maxVal * 100)))}%; background:#f8fafc; height:5px; border-radius:2px; opacity:0.8;"></div>
-                                    </div>
-                                    <div style="display:flex; justify-content:space-between; font-size:8.5px; margin-top:2px; gap:2px;">
-                                        <span style="color:#f87171;">毛:${safeFix(m.grossMargin, 2)}%</span>
-                                        <span style="color:#60a5fa;">營:${safeFix(m.operatingMargin, 2)}%</span>
-                                        <span style="color:#f8fafc;">淨:${safeFix(m.netMargin, 2)}%</span>
-                                    </div>
-                                </div>
-                                `;
-                            }).join('')}
-                        </div>
-                    `;
-                })()}
-                <div style="margin-top:10px; padding:10px; background:rgba(59, 130, 246, 0.05); border-radius:10px; border:1px dashed rgba(59, 130, 246, 0.2); display:flex; justify-content:space-between; align-items:center;">
-                    <span class="analysis-label has-info" onclick="showTermExplainer('毛利率連續改善季數', '${finData?.marginMomentumCount || 0}')" style="font-size:12px; color:#cbd5e1; font-weight:700;">📈 毛利率連續改善季數</span>
-                    <span style="font-size:16px; font-weight:800; color:${(finData?.marginMomentumCount || 0) >= 2 ? '#4ade80' : '#ffffff'};">
-                        ${finData?.marginMomentumCount || 0} 季
-                        ${(finData?.marginMomentumCount || 0) >= 2 ? '🔥' : ''}
-                    </span>
-                </div>
-                ${renderDiagnostic(
-                    (finData?.marginTrend?.length >= 2 && finData.marginTrend[finData.marginTrend.length-1].grossMargin > finData.marginTrend[finData.marginTrend.length-2].grossMargin ? "毛利率呈現回升，產品競爭力或成本控制轉佳。" : "獲利能力尚屬穩定，需觀察淨利是否受業外影響。")
-                )}
-            </div>
 
-            <!-- 14. 技術面動能訊號 -->
-            <div class="analysis-card">
-                <div class="analysis-card-title">📉 技術面動能訊號</div>
-                ${(() => {
-                    const prices = chartData?.prices || [];
-                    if (prices.length < 20) return '<div style="color:#94a3b8; font-size:12px;">數據不足</div>';
-                    
-                    const latest = prices[prices.length-1];
-                    const p = latest.close;
-                    
-                    // 1. 計算 RSI (14)
-                    let gains = 0, losses = 0;
-                    for (let i = prices.length - 14; i < prices.length; i++) {
-                        const change = prices[i].close - prices[i-1].close;
-                        if (change > 0) gains += change; else losses -= change;
-                    }
-                    const rsi = (gains === 0) ? 0 : (100 - (100 / (1 + (gains / 14) / (Math.max(losses, 0.01) / 14))));
-                    
-                    // 2. 乖離率 (20MA)
-                    const ma20 = prices.slice(-20).reduce((s, x) => s + x.close, 0) / 20;
-                    const bias = ((p - ma20) / ma20) * 100;
-                    
-                    const rsiColor = rsi > 70 ? '#ef4444' : (rsi < 30 ? '#4ade80' : '#cbd5e1');
-                    const biasColor = bias > 0 ? '#ef4444' : '#10b981';
 
-                    return `
-                        ${renderStatRow('RSI (14)', safeFix(rsi, 1))}
-                        ${renderStatRow('20日 乖離率', (bias > 0 ? '+' : '') + safeFix(bias, 2) + '%')}
-                        <div style="font-size:11px; margin-top:12px; color:#cbd5e1; border-top:1px dashed rgba(255,255,255,0.05); padding-top:8px;">
-                            <span>目前收盤價: ${p}</span><br>
-                            <span>20日 均線: ${safeFix(ma20, 2)}</span>
-                        </div>
-                    `;
-                })()}
-                ${renderDiagnostic("RSI 提供短線超買/超跌參考，乖離率則反映股價與均線的拉扯力道。")}
-            </div>
 
             <!-- 15. 風險與波動分析 -->
             <div class="analysis-card">
@@ -4405,7 +4308,6 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             <div class="analysis-card">
                 <div class="analysis-card-title">🎯 籌碼集中度深度分析</div>
                 
-                <div style="font-size:11px; color:#cbd5e1; margin-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:5px;">📊 法人籌碼概況 (點擊看趨勢)</div>
                 ${renderStatRow('三大法人總持股', chipsData?.institutionalTotal ? safeFix(chipsData.institutionalTotal, 2) + '%' : 'N/A')}
                 
                 <div class="analysis-stat-row" onclick="showHoldingTrendChart('${symbol}', '外資')" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px dashed rgba(255,255,255,0.05);">
@@ -4423,41 +4325,74 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 
                 <!-- 法人買進均價 -->
                 <div style="background:rgba(59, 130, 246, 0.05); padding:12px; border-radius:12px; margin-bottom:15px; border:1px solid rgba(59, 130, 246, 0.1);">
-                    <div style="font-size:12px; color:#60a5fa; font-weight:700; margin-bottom:4px;">🏦 法人買進均價 (20/60/240日)</div>
+                    <div style="font-size:12px; color:#60a5fa; font-weight:700; margin-bottom:4px;">🏦 法人買進均價 (5/10/20日)</div>
                     <div style="font-size:9px; color:#64748b; margin-bottom:2px;">以當日收盤價估算（非盤中 VWAP，誤差約 0.3–1%）；不含賣出調整，僅供支撐參考</div>
                     <div style="font-size:9px; color:#475569; margin-bottom:8px;">⚠ 資料來源為買賣流量（FinMind 免費方案），非實際持倉量，與真實持倉成本存在本質差距</div>
                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                        <!-- 外資部分 -->
                         <div style="background:rgba(255,255,255,0.03); padding:8px; border-radius:8px;">
                             <div style="font-size:10px; color:#cbd5e1; margin-bottom:5px;">外資買進均價</div>
+                            <div style="display:flex; justify-content:space-between; font-size:11px;">
+                                <span style="color:#cbd5e1;">5日:</span>
+                                <span style="font-weight:700; color:#fbbf24;">${chipCosts?.foreign?.cost5 > 0 ? safeFix(chipCosts.foreign.cost5, 1) : 'N/A'}</span>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; font-size:11px;">
+                                <span style="color:#cbd5e1;">10日:</span>
+                                <span style="font-weight:700; color:#fbbf24;">${chipCosts?.foreign?.cost10 > 0 ? safeFix(chipCosts.foreign.cost10, 1) : 'N/A'}</span>
+                            </div>
                             <div style="display:flex; justify-content:space-between; font-size:11px;">
                                 <span style="color:#cbd5e1;">20日:</span>
                                 <span style="font-weight:700; color:#fbbf24;">${chipCosts?.foreign?.cost20 > 0 ? safeFix(chipCosts.foreign.cost20, 1) : 'N/A'}</span>
                             </div>
-                            <div style="display:flex; justify-content:space-between; font-size:11px;">
-                                <span style="color:#cbd5e1;">60日:</span>
-                                <span style="font-weight:700; color:#fbbf24;">${chipCosts?.foreign?.cost60 > 0 ? safeFix(chipCosts.foreign.cost60, 1) : 'N/A'}</span>
-                            </div>
-                            <div style="display:flex; justify-content:space-between; font-size:11px; margin-top:2px;">
-                                <span style="color:#cbd5e1;">240日:</span>
-                                <span style="font-weight:700; color:#fbbf24;">${chipCosts?.foreign?.cost240 > 0 ? safeFix(chipCosts.foreign.cost240, 1) : 'N/A'}</span>
+                            <!-- 隱藏部分 -->
+                            <div class="inst-costs-hidden" style="display:none; margin-top:4px; border-top:1px dashed rgba(255,255,255,0.05); padding-top:4px;">
+                                <div style="display:flex; justify-content:space-between; font-size:11px;">
+                                    <span style="color:#94a3b8;">60日:</span>
+                                    <span style="font-weight:700; color:#fbbf24;">${chipCosts?.foreign?.cost60 > 0 ? safeFix(chipCosts.foreign.cost60, 1) : 'N/A'}</span>
+                                </div>
+                                <div style="display:flex; justify-content:space-between; font-size:11px;">
+                                    <span style="color:#94a3b8;">120日:</span>
+                                    <span style="font-weight:700; color:#fbbf24;">${chipCosts?.foreign?.cost120 > 0 ? safeFix(chipCosts.foreign.cost120, 1) : 'N/A'}</span>
+                                </div>
+                                <div style="display:flex; justify-content:space-between; font-size:11px;">
+                                    <span style="color:#94a3b8;">240日:</span>
+                                    <span style="font-weight:700; color:#fbbf24;">${chipCosts?.foreign?.cost240 > 0 ? safeFix(chipCosts.foreign.cost240, 1) : 'N/A'}</span>
+                                </div>
                             </div>
                         </div>
+                        <!-- 投信部分 -->
                         <div style="background:rgba(255,255,255,0.03); padding:8px; border-radius:8px;">
                             <div style="font-size:10px; color:#cbd5e1; margin-bottom:5px;">投信買進均價</div>
+                            <div style="display:flex; justify-content:space-between; font-size:11px;">
+                                <span style="color:#cbd5e1;">5日:</span>
+                                <span style="font-weight:700; color:#fbbf24;">${chipCosts?.trust?.cost5 > 0 ? safeFix(chipCosts.trust.cost5, 1) : 'N/A'}</span>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; font-size:11px;">
+                                <span style="color:#cbd5e1;">10日:</span>
+                                <span style="font-weight:700; color:#fbbf24;">${chipCosts?.trust?.cost10 > 0 ? safeFix(chipCosts.trust.cost10, 1) : 'N/A'}</span>
+                            </div>
                             <div style="display:flex; justify-content:space-between; font-size:11px;">
                                 <span style="color:#cbd5e1;">20日:</span>
                                 <span style="font-weight:700; color:#fbbf24;">${chipCosts?.trust?.cost20 > 0 ? safeFix(chipCosts.trust.cost20, 1) : 'N/A'}</span>
                             </div>
-                            <div style="display:flex; justify-content:space-between; font-size:11px;">
-                                <span style="color:#cbd5e1;">60日:</span>
-                                <span style="font-weight:700; color:#fbbf24;">${chipCosts?.trust?.cost60 > 0 ? safeFix(chipCosts.trust.cost60, 1) : 'N/A'}</span>
-                            </div>
-                            <div style="display:flex; justify-content:space-between; font-size:11px; margin-top:2px;">
-                                <span style="color:#cbd5e1;">240日:</span>
-                                <span style="font-weight:700; color:#fbbf24;">${chipCosts?.trust?.cost240 > 0 ? safeFix(chipCosts.trust.cost240, 1) : 'N/A'}</span>
+                            <!-- 隱藏部分 -->
+                            <div class="inst-costs-hidden" style="display:none; margin-top:4px; border-top:1px dashed rgba(255,255,255,0.05); padding-top:4px;">
+                                <div style="display:flex; justify-content:space-between; font-size:11px;">
+                                    <span style="color:#94a3b8;">60日:</span>
+                                    <span style="font-weight:700; color:#fbbf24;">${chipCosts?.trust?.cost60 > 0 ? safeFix(chipCosts.trust.cost60, 1) : 'N/A'}</span>
+                                </div>
+                                <div style="display:flex; justify-content:space-between; font-size:11px;">
+                                    <span style="color:#94a3b8;">120日:</span>
+                                    <span style="font-weight:700; color:#fbbf24;">${chipCosts?.trust?.cost120 > 0 ? safeFix(chipCosts.trust.cost120, 1) : 'N/A'}</span>
+                                </div>
+                                <div style="display:flex; justify-content:space-between; font-size:11px;">
+                                    <span style="color:#94a3b8;">240日:</span>
+                                    <span style="font-weight:700; color:#fbbf24;">${chipCosts?.trust?.cost240 > 0 ? safeFix(chipCosts.trust.cost240, 1) : 'N/A'}</span>
+                                </div>
                             </div>
                         </div>
                     </div>
+                    <button onclick="toggleInstCosts(this)" style="width:100%; margin-top:10px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:#94a3b8; font-size:10px; padding:4px; border-radius:4px; cursor:pointer;">看更多 (60/120/240日) ↓</button>
                 </div>
 
                 <!-- 贏家與主力分點追蹤 -->
@@ -4629,11 +4564,15 @@ function retryAnalysisTask(symbol, name, avgCost, index) {
     openAnalysisModal(symbol, name, avgCost, false, results);
 }
 
-function renderStatRow(label, value, percentVal = null) {
+function renderStatRow(label, value, percentVal = null, onClickOverride = null) {
     const hasDef = termDefinitions && termDefinitions[label];
-    const labelClass = hasDef ? 'analysis-label has-info' : 'analysis-label';
+    const labelClass = hasDef || onClickOverride ? 'analysis-label has-info' : 'analysis-label';
     const cleanVal = String(value).replace(/<[^>]*>/g, '').replace(/'/g, "\\'");
-    const clickAttr = hasDef ? `onclick="showTermExplainer('${label}', '${cleanVal}')"` : '';
+    let clickAttr = hasDef ? `onclick="showTermExplainer('${label}', '${cleanVal}')"` : '';
+    
+    if (onClickOverride) {
+        clickAttr = `onclick="${onClickOverride}"`;
+    }
 
     let barHtml = '';
     if (percentVal !== null && !isNaN(percentVal)) {
@@ -6495,13 +6434,19 @@ function calculateInstitutionalCosts(dailyData, prices) {
 
     return {
         foreign: { 
+            cost5: calcVWAP('foreign', 5),
+            cost10: calcVWAP('foreign', 10),
             cost20: calcVWAP('foreign', 20), 
             cost60: calcVWAP('foreign', 60),
+            cost120: calcVWAP('foreign', 120),
             cost240: calcVWAP('foreign', 240)
         },
         trust: { 
+            cost5: calcVWAP('trust', 5),
+            cost10: calcVWAP('trust', 10),
             cost20: calcVWAP('trust', 20), 
             cost60: calcVWAP('trust', 60),
+            cost120: calcVWAP('trust', 120),
             cost240: calcVWAP('trust', 240)
         }
     };
@@ -6558,7 +6503,24 @@ function toggleVP(btn) {
     });
     
     if (isExpanded) {
-        btn.innerText = '看更多 (展開至 20 列) ↓';
+        btn.innerText = '(展開至 30 列) ↓';
+        btn.setAttribute('data-expanded', 'false');
+    } else {
+        btn.innerText = '收合 ↑';
+        btn.setAttribute('data-expanded', 'true');
+    }
+}
+
+function toggleInstCosts(btn) {
+    const hiddenSections = document.querySelectorAll('.inst-costs-hidden');
+    const isExpanded = btn.getAttribute('data-expanded') === 'true';
+    
+    hiddenSections.forEach(s => {
+        s.style.display = isExpanded ? 'none' : 'block';
+    });
+    
+    if (isExpanded) {
+        btn.innerText = '看更多 (60/120/240日) ↓';
         btn.setAttribute('data-expanded', 'false');
     } else {
         btn.innerText = '收合 ↑';
@@ -6727,6 +6689,8 @@ function showHoldingTrendChart(symbol, type) {
     svg.addEventListener('touchstart', (e) => {
         if (e.touches.length > 0) updateFocus(e.touches[0].clientX);
     }, {passive: true});
+    svg.addEventListener('mouseleave', () => { focusGroup.style.visibility = 'hidden'; });
+    svg.addEventListener('touchend', () => { focusGroup.style.visibility = 'hidden'; });
 
     overlay.querySelector('.term-explainer-close').onclick = () => overlay.classList.remove('active');
     setTimeout(() => overlay.classList.add('active'), 10);
@@ -6881,6 +6845,7 @@ function showRevenueTrendChart(symbol, type) {
             <div class="term-explainer-body" style="font-size:12px; opacity:0.7; margin-top:15px; line-height:1.6;">
                 ${type === 'MoM' ? '月增率 (MoM) 反映短期動能。' : (type === 'YoY' ? '年增率 (YoY) 觀察成長性。' : '累計年增率反映年初至今的營收累積相對於去年同期的成長，能有效平滑單月波動，是判斷年度業績達標率的重要參考。')}
             </div>
+
         </div>
     `;
 
@@ -6926,7 +6891,8 @@ function showRevenueTrendChart(symbol, type) {
         tooltipDate.textContent = d.date;
         tooltipVal.setAttribute('x', tx + 8);
         tooltipVal.setAttribute('y', ty + 28);
-        tooltipVal.textContent = `${type}: ${d.val > 0 ? '+' : ''}${d.val.toFixed(2)}%`;
+        const color = d.val > 0 ? '#ff4d4f' : (d.val < 0 ? '#52c41a' : '#fff');
+        tooltipVal.innerHTML = `<tspan fill="${color}">${type}: ${d.val > 0 ? '+' : ''}${d.val.toFixed(2)}%</tspan>`;
         tooltipRev.setAttribute('x', tx + 8);
         tooltipRev.setAttribute('y', ty + 40);
         tooltipRev.textContent = `營收: ${Math.round(d.revenue/1000000).toLocaleString()} 百萬`;
@@ -6936,6 +6902,192 @@ function showRevenueTrendChart(symbol, type) {
     svg.addEventListener('touchstart', (e) => {
         if (e.touches.length > 0) updateFocus(e.touches[0].clientX);
     }, {passive: true});
+    svg.addEventListener('mouseleave', () => { focusGroup.style.visibility = 'hidden'; });
+    svg.addEventListener('touchend', () => { focusGroup.style.visibility = 'hidden'; });
+
+    overlay.querySelector('.term-explainer-close').onclick = () => overlay.classList.remove('active');
+    setTimeout(() => overlay.classList.add('active'), 10);
+}
+
+function showEPSTrendChart(symbol) {
+    const finData = window._lastFinData;
+    if (!finData || !finData.epsTrendFull) {
+        alert("尚未載入財報歷史數據，請重新分析。");
+        return;
+    }
+
+    const name = window._lastChipsData?.stockName || symbol;
+    
+    const getQ = (dateStr) => {
+        const m = dateStr.substring(5, 7);
+        const yr = dateStr.substring(2, 4);
+        if (m === '01' || m === '02' || m === '03') return yr + 'Q1';
+        if (m === '04' || m === '05' || m === '06') return yr + 'Q2';
+        if (m === '07' || m === '08' || m === '09') return yr + 'Q3';
+        if (m === '10' || m === '11' || m === '12') return yr + 'Q4';
+        return yr + 'Q?';
+    };
+
+    let fullHistory = finData.epsTrendFull.map((d, i, arr) => {
+        const prev = arr[i - 1];
+        let growth = null;
+        if (prev && prev.eps !== 0) growth = ((d.eps - prev.eps) / Math.abs(prev.eps)) * 100;
+        return { date: d.date, displayDate: getQ(d.date), val: d.eps, growth };
+    });
+    
+    let trendHistory = fullHistory.slice(-12);
+    const annualData = (finData.annualEpsTrend || []).map((d, i, arr) => {
+        const prev = arr[i - 1];
+        let growth = null;
+        if (prev && prev.eps !== 0) growth = ((d.eps - prev.eps) / Math.abs(prev.eps)) * 100;
+        return { ...d, growth };
+    });
+
+    let overlay = document.getElementById('termExplainerOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'termExplainerOverlay';
+        overlay.className = 'term-explainer-overlay';
+        const container = document.getElementById('analysisModal') || document.body;
+        container.appendChild(overlay);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('active'); });
+    }
+
+    const width = 360, height = 180, padding = 40;
+    const values = trendHistory.map(d => d.val);
+    let maxV = Math.max(...values, 0.1);
+    let minV = Math.min(...values, -0.1);
+    const range = (maxV - minV) || 1;
+    const zeroY = (height - padding) - ((0 - minV) / range) * (height - 2 * padding);
+    const points = trendHistory.map((d, i) => {
+        const x = padding + (i / (trendHistory.length - 1)) * (width - 2 * padding);
+        const y = (height - padding) - ((d.val - minV) / range) * (height - 2 * padding);
+        return `${x},${y}`;
+    }).join(' ');
+
+    overlay.innerHTML = `
+        <div class="term-explainer-content" style="max-width:420px; padding:25px;">
+            <div class="term-explainer-close">&times;</div>
+            <div class="term-explainer-badge" style="background:rgba(59,130,246,0.2); color:#3b82f6;">財報趨勢分析</div>
+            <div class="term-explainer-title" style="font-size:22px; margin-bottom:5px;">${name} EPS 成長動能</div>
+            
+            <div style="font-size:13px; color:#cbd5e1; margin-bottom:10px; margin-top:20px;">📈 單季 EPS 趨勢 (最近 12 季)</div>
+            <div style="position:relative; background:rgba(255,255,255,0.03); border-radius:12px; padding:10px; border:1px solid rgba(255,255,255,0.05); margin-bottom:20px;">
+                <svg id="epsTrendSvg" width="100%" height="${height}" viewBox="0 0 ${width} ${height}" style="overflow:visible; cursor:crosshair;">
+                    <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="rgba(255,255,255,0.1)" stroke-width="1" />
+                    <line x1="${padding}" y1="${zeroY}" x2="${width - padding}" y2="${zeroY}" stroke="rgba(255,255,255,0.3)" stroke-width="1" stroke-dasharray="4,2" />
+                    <polyline points="${points}" fill="none" stroke="#3b82f6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+                    ${trendHistory.map((d, i) => {
+                        const x = padding + (i / (trendHistory.length - 1)) * (width - 2 * padding);
+                        const y = (height - padding) - ((d.val - minV) / range) * (height - 2 * padding);
+                        return `
+                            <circle cx="${x}" cy="${y}" r="3" fill="#3b82f6" />
+                            ${(i % 3 === 0 || i === trendHistory.length - 1) ? `<text x="${x}" y="${height - 10}" font-size="10" fill="#64748b" text-anchor="middle">${d.displayDate}</text>` : ''}
+                        `;
+                    }).join('')}
+                    <g id="epsFocus" style="visibility:hidden;">
+                        <line id="epsFocusLine" y1="${padding}" y2="${height-padding}" stroke="white" stroke-width="1" stroke-dasharray="3,3" />
+                        <circle id="epsFocusDot" r="6" fill="#3b82f6" stroke="white" stroke-width="2" />
+                        <rect id="epsTipBg" rx="6" width="110" height="55" fill="rgba(15,23,42,0.95)" stroke="rgba(255,255,255,0.2)" />
+                        <text id="epsTipDate" font-size="14" fill="#94a3b8" x="8" y="20"></text>
+                        <text id="epsTipVal" font-size="16" fill="white" font-weight="bold" x="8" y="42"></text>
+                    </g>
+                </svg>
+            </div>
+
+            <div style="font-size:13px; color:#cbd5e1; margin-bottom:10px;">📊 年度 EPS 統計 (Annual)</div>
+            <div style="position:relative; background:rgba(255,255,255,0.02); border-radius:12px; padding:10px; border:1px solid rgba(255,255,255,0.05); margin-bottom:15px;">
+                ${(() => {
+                    if (annualData.length === 0) return '<div style="color:#64748b; font-size:12px; text-align:center; padding:20px;">無年度數據</div>';
+                    const h = 120, p = 30;
+                    const epsVals = annualData.map(d => d.eps);
+                    const maxE = Math.max(...epsVals, 1), minE = Math.min(...epsVals, 0);
+                    const rE = (maxE - minE) || 1;
+                    const zeroY_e = (h - p) - ((0 - minE) / rE) * (h - 2 * p);
+                    const barW = (width - 2 * p) / annualData.length * 0.7;
+                    return `
+                        <svg id="annualEpsSvg" width="100%" height="${h}" viewBox="0 0 ${width} ${h}" style="overflow:visible; cursor:crosshair;">
+                            <line x1="${p}" y1="${zeroY_e}" x2="${width - p}" y2="${zeroY_e}" stroke="rgba(255,255,255,0.2)" stroke-width="1" />
+                            ${annualData.map((d, i) => {
+                                const x = p + (i / annualData.length) * (width - 2 * p) + (barW / 2);
+                                const bH = Math.abs(d.eps / rE * (h - 2 * p));
+                                const y = d.eps >= 0 ? zeroY_e - bH : zeroY_e;
+                                return `<rect x="${x - barW/2}" y="${y}" width="${barW}" height="${bH}" fill="${d.eps >= 0 ? '#ef4444' : '#10b981'}" rx="3" opacity="0.8" />
+                                        <text x="${x}" y="${h - 5}" font-size="10" fill="#64748b" text-anchor="middle">${d.year}</text>`;
+                            }).join('')}
+                            <g id="annFocus" style="visibility:hidden;">
+                                <rect id="annTipBg" rx="6" width="110" height="55" fill="rgba(15,23,42,0.95)" stroke="rgba(255,255,255,0.2)" />
+                                <text id="annTipDate" font-size="14" fill="#94a3b8" x="8" y="20"></text>
+                                <text id="annTipVal" font-size="16" fill="white" font-weight="bold" x="8" y="42"></text>
+                            </g>
+                        </svg>
+                    `;
+                })()}
+            </div>
+            <div style="font-size:12px; color:#64748b; line-height:1.6; background:rgba(255,255,255,0.03); padding:10px; border-radius:8px;">
+                💡 提示：紅色代表增長，綠色代表衰退。百分比為與上一期相比之變動率。
+            </div>
+        </div>
+    `;
+
+    const setupInteractive = (svgId, groupId, data, xFunc, yFunc, dateId, valId, bgId) => {
+        const svg = document.getElementById(svgId);
+        const group = document.getElementById(groupId);
+        if (!svg || !group) return;
+        const line = group.querySelector('line');
+        const dot = group.querySelector('circle');
+        const dateTxt = document.getElementById(dateId);
+        const valTxt = document.getElementById(valId);
+        const bg = document.getElementById(bgId);
+
+        const update = (clientX) => {
+            const rect = svg.getBoundingClientRect();
+            const mouseX = (clientX - rect.left) * (width / rect.width);
+            const p = (svgId === 'epsTrendSvg' ? padding : 30);
+            if (mouseX < p || mouseX > width - p) { group.style.visibility = 'hidden'; return; }
+            const i = Math.round(((mouseX - p) / (width - 2 * p)) * (data.length - 1));
+            const d = data[Math.max(0, Math.min(i, data.length - 1))];
+            const x = xFunc(d, i); const y = yFunc(d, i);
+            group.style.visibility = 'visible';
+            if (line) { line.setAttribute('x1', x); line.setAttribute('x2', x); }
+            if (dot) { dot.setAttribute('cx', x); dot.setAttribute('cy', y); }
+            
+            let tx = x + 15; let ty = y - 60;
+            if (tx + 120 > width) tx = x - 125;
+            if (ty < 5) ty = y + 20;
+            bg.setAttribute('x', tx); bg.setAttribute('y', ty);
+            dateTxt.setAttribute('x', tx + 10); dateTxt.setAttribute('y', ty + 20);
+            valTxt.setAttribute('x', tx + 10); valTxt.setAttribute('y', ty + 42);
+            
+            dateTxt.textContent = d.displayDate || d.year;
+            const gText = d.growth !== null ? ` (${d.growth > 0 ? '+' : ''}${d.growth.toFixed(1)}%)` : '';
+            const gColor = d.growth > 0 ? '#ff4d4f' : (d.growth < 0 ? '#52c41a' : '#fff');
+            valTxt.innerHTML = `<tspan fill="white">${(d.val || d.eps).toFixed(2)}</tspan><tspan fill="${gColor}" font-size="12">${gText}</tspan>`;
+        };
+        svg.addEventListener('mousemove', (e) => update(e.clientX));
+        svg.addEventListener('touchstart', (e) => { if (e.touches.length > 0) update(e.touches[0].clientX); }, {passive: true});
+        svg.addEventListener('mouseleave', () => group.style.visibility = 'hidden');
+        svg.addEventListener('touchend', () => group.style.visibility = 'hidden');
+    };
+
+    setupInteractive('epsTrendSvg', 'epsFocus', trendHistory, 
+        (d, i) => padding + (i / (trendHistory.length - 1)) * (width - 2 * padding),
+        (d, i) => (height - padding) - ((d.val - minV) / range) * (height - 2 * padding),
+        'epsTipDate', 'epsTipVal', 'epsTipBg'
+    );
+
+    if (annualData.length > 0) {
+        const epsVals = annualData.map(d => d.eps);
+        const maxE = Math.max(...epsVals, 1), minE = Math.min(...epsVals, 0), rE = (maxE - minE) || 1;
+        const h = 120, p = 30;
+        const zeroY_e = (h - p) - ((0 - minE) / rE) * (h - 2 * p);
+        const barW = (width - 2 * p) / annualData.length * 0.7;
+        setupInteractive('annualEpsSvg', 'annFocus', annualData,
+            (d, i) => p + (i / annualData.length) * (width - 2 * p) + (barW / 2),
+            (d, i) => d.eps >= 0 ? zeroY_e - Math.abs(d.eps / rE * (h - 2 * p)) : zeroY_e,
+            'annTipDate', 'annTipVal', 'annTipBg'
+        );
+    }
 
     overlay.querySelector('.term-explainer-close').onclick = () => overlay.classList.remove('active');
     setTimeout(() => overlay.classList.add('active'), 10);
