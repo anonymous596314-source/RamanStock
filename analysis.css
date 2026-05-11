@@ -3,7 +3,7 @@
 /* Grid: 2 columns on desktop, 1 on mobile */
 .analysis-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr !important; /* 強制 1:1 對稱 */
+    grid-template-columns: 1fr 1fr; /* 移除 !important，允許媒體查詢覆寫 */
     gap: 20px;
     margin-bottom: 16px;
     width: 100%;
@@ -11,7 +11,7 @@
 
 @media (max-width: 640px) {
     .analysis-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr !important;
     }
 }
 
