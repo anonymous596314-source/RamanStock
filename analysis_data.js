@@ -138,13 +138,58 @@ const termDefinitions = {
     },
     '毛利率': {
         type: '獲利能力',
-        desc: '營業收入扣除營業成本後的比率，反映產品競爭力與定價能力應。',
+        desc: '營業收入扣除營業成本後的比率，反映產品競爭力與定價能力。',
         rule: '越高越好。與同業相比，毛利越高通常代表技術領先或規模優勢。',
         advice: '需關注趨勢。若毛利率下滑，可能代表市場競爭加劇或原料成本上升。',
         analyze: (v) => {
             if (v > 40) return "高毛利代表產品具備強大競爭力，可能是技術領先者。";
             if (v > 15) return "獲利能力尚屬正常，屬一般製造或服務業水準。";
             return "毛利偏低（保五保六），屬勞力密集或代工行業，抗風險能力較弱。";
+        }
+    },
+    '股權風險溢酬 (ERP)': {
+        type: '估值',
+        title: '股權風險溢酬 (Equity Risk Premium)',
+        desc: '反映投資股票相對於無風險資產（如美債）所要求的「額外回報」。這是專業經理人判斷「股債配置比」與市場是否過熱的核心指標。',
+        rule: '公式：盈餘殖利率 (1/PE) - 10年期美債殖利率。通常以 3.5% 為長期平均平衡點。',
+        advice: '當 ERP 縮小至 2% 以下時，代表股市回報相對於無風險債券已不具吸引力，經理人通常會開始「股轉債」避險。',
+        analyze: (erp) => {
+            let riskStatus = "";
+            let color = "#4ade80";
+            if (erp > 5) {
+                riskStatus = "🚀 股市極具吸引力，相對於債券具有極高安全邊際。";
+                color = "#4ade80";
+            } else if (erp > 2.5) {
+                riskStatus = "📊 風險報酬平衡，目前的估值水準處於合理回報區間。";
+                color = "#3b82f6";
+            } else {
+                riskStatus = "⚠️ 警訊！股市風險溢酬過低，承擔波動的回報不划算，建議增加避險資產。";
+                color = "#f87171";
+            }
+
+            const percent = Math.min(Math.max((erp / 8) * 100, 0), 100);
+            return `
+                <div style="margin: 15px 0; padding: 16px; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
+                    <div style="display:flex; justify-content:space-between; font-size:12px; color:#94a3b8; margin-bottom:12px;">
+                        <span style="font-weight:600;">📊 股債利差警戒儀表板</span>
+                        <span style="color:#ffffff; font-weight:700;">目前溢酬: ${erp.toFixed(2)}%</span>
+                    </div>
+                    <div style="height:14px; background:rgba(255,255,255,0.1); border-radius:7px; overflow:hidden; position:relative; box-shadow:inset 0 2px 4px rgba(0,0,0,0.3);">
+                        <div style="position:absolute; left:0; top:0; height:100%; width:${percent}%; background:linear-gradient(90deg, #f87171, #fbbf24, #4ade80); transition: width 1.2s cubic-bezier(0.34, 1.56, 0.64, 1);"></div>
+                        <!-- 指示器 -->
+                        <div style="position:absolute; left:${percent}%; top:-2px; width:4px; height:18px; background:#ffffff; box-shadow: 0 0 10px rgba(255,255,255,0.8); transform:translateX(-50%); z-index:10;"></div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:10px; color:#64748b; margin-top:8px; font-family:monospace;">
+                        <span>2% (過熱)</span>
+                        <span>3.5% (中性)</span>
+                        <span>6% (極具價值)</span>
+                    </div>
+                    <div style="margin-top:18px; background:${color}15; padding:12px; border-radius:8px; border-left:4px solid ${color};">
+                        <div style="font-size:13px; color:${color}; font-weight:700; line-height:1.5;">${riskStatus}</div>
+                        <div style="font-size:11px; color:#94a3b8; margin-top:6px;">計算基準：盈餘殖利率 (EY) - 當前無風險利率 (4.2%)</div>
+                    </div>
+                </div>
+            `;
         }
     },
     '現金週期 (CCC)': {
@@ -951,6 +996,18 @@ const termDefinitions = {
     },
     '盈餘殖利率 (Earnings Yield)': {
         type: '估值位階',
+        desc: '每股盈餘 / 股價 (等同於 1 / PE)。反映你買入這間公司，理論上每年能獲得的實質報酬率。',
+        rule: '作為「股權風險溢酬 (ERP)」的基準。必須與無風險利率 (如美國十年期公債) 比較。',
+        advice: '若盈餘殖利率低於公債殖利率，代表買股票承擔高風險卻拿較少報酬，除非爆發性成長否則極度不划算。',
+        analyze: (v) => {
+            if (v > 8) return `🏆 極高實質報酬！盈餘殖利率達 ${v}%，具備極強的下檔保護與投資吸引力。`;
+            if (v < 2) return `⚠️ 估值警訊：盈餘殖利率僅 ${v}%，報酬可能不如無風險公債，市場預期已極度樂觀。`;
+            return "盈餘殖利率處於正常水準。";
+        }
+    },
+    '盈餘殖利率 (EY)': {
+        type: '估值位階',
+        title: '盈餘殖利率 (Earnings Yield)',
         desc: '每股盈餘 / 股價 (等同於 1 / PE)。反映你買入這間公司，理論上每年能獲得的實質報酬率。',
         rule: '作為「股權風險溢酬 (ERP)」的基準。必須與無風險利率 (如美國十年期公債) 比較。',
         advice: '若盈餘殖利率低於公債殖利率，代表買股票承擔高風險卻拿較少報酬，除非爆發性成長否則極度不划算。',

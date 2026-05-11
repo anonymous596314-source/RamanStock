@@ -328,6 +328,16 @@ async function fetchStockChart(symbol) {
 }
 
 async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = false, partialResults = null) {
+    // 生成唯一 Session ID 並存入全域，用於防止舊有異步回調干擾 UI
+    const sessionId = Date.now() + Math.random();
+    window._currentAnalysisSessionId = sessionId;
+
+    // 清除舊有的計時器以防顯示錯亂
+    if (window._analysisTimerInterval) {
+        clearInterval(window._analysisTimerInterval);
+        window._analysisTimerInterval = null;
+    }
+
     analysisModal.classList.add('active');
 
     // Show Loading
@@ -350,16 +360,24 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
     `;
 
     const startTime = Date.now();
-    const timerInterval = setInterval(() => {
+    window._analysisTimerInterval = setInterval(() => {
+        // 同樣檢查 Session ID
+        if (window._currentAnalysisSessionId !== sessionId) {
+            clearInterval(window._analysisTimerInterval);
+            return;
+        }
         const el = document.getElementById('analysisTimer');
         if (el) {
             el.textContent = `已耗時: ${((Date.now() - startTime) / 1000).toFixed(1)}s`;
         } else {
-            clearInterval(timerInterval);
+            clearInterval(window._analysisTimerInterval);
+            window._analysisTimerInterval = null;
         }
     }, 100);
 
     const updateStatus = (msg, progress) => {
+        // 僅允許當前活躍的 Session 更新 UI
+        if (window._currentAnalysisSessionId !== sessionId) return;
         const el = document.getElementById('analysisLoadingStatus');
         const bar = document.getElementById('analysisProgressInner');
         if (el) el.textContent = msg;
@@ -446,7 +464,7 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
             allKeys.forEach(k => { if (k.startsWith(ANALYSIS_CACHE_PREFIX)) localStorage.removeItem(k); });
         }
         
-        const cacheKey = `${finalSymbol}_v19`; 
+        const cacheKey = `${finalSymbol}_v20`; 
         let cachedResults = (forceRefresh || partialResults) ? null : getCachedAnalysis(cacheKey);
         
         if (cachedResults && !cachedResults[0]) cachedResults = null;
@@ -572,10 +590,18 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
         }
 
         window._lastFinData = finData;
+        if (window._analysisTimerInterval) {
+            clearInterval(window._analysisTimerInterval);
+            window._analysisTimerInterval = null;
+        }
         const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
         renderAnalysis(finalSymbol, displayName, chartData, twseBasic, chipsData, revData, finData, marginData, institutionalData, avgCost, riskMetrics, insiderActivity, debugInfo, brokerData, peerCCCData, chipCosts, winnerBrokers, topSellers60, totalTime);
     } catch (err) {
-        // 發生錯誤時也確保放大鏡關閉
+        // 發生錯誤時也確保計時器與放大鏡關閉
+        if (window._analysisTimerInterval) {
+            clearInterval(window._analysisTimerInterval);
+            window._analysisTimerInterval = null;
+        }
         if (window.toggleMagnifierMode) window.toggleMagnifierMode(false);
         console.error("Analysis fetch error:", err);
         analysisBody.innerHTML = `
@@ -603,7 +629,7 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
 
 // === Caching Helper ===
 const ANALYSIS_CACHE_PREFIX = 'stock_analysis_cache_v5_'; // 升級版本以引入 PS 歷史位階數據
-function getCachedAnalysis(key, ttlHours = 24) {
+function getCachedAnalysis(key, ttlHours = 8) {
     try {
         const cached = localStorage.getItem(ANALYSIS_CACHE_PREFIX + key);
         if (!cached) return null;
@@ -1397,8 +1423,20 @@ async function fetchStockChips(symbol) {
 
     const apiRawCount = (jsonHolders && jsonHolders.data) ? jsonHolders.data.length : 0;
     if (institutionalTotal === null && foreign !== null) institutionalTotal = foreign + (trust || 0) + (dealer || 0);
+    
+    // 獲取最新的持股日期
+    let holdingDate = null;
+    if (jsonShare && jsonShare.data && jsonShare.data.length > 0) {
+        holdingDate = jsonShare.data[jsonShare.data.length - 1].date || jsonShare.data[jsonShare.data.length - 1].Date;
+    }
 
-    return { foreign, trust, dealer, institutionalTotal, large, retail, exDivDate, exDivAmt, sharesIssued, divGrowth3y, divConsecutiveYears, divHistory, holderTrend, marginShortRatio, industry, stockName: stockNameFromAPI, apiRawCount, norwayStatus, pledgeRatio, currentTtmDiv, holdingHistory: jsonShare?.data || [] };
+    return { 
+        foreign, trust, dealer, institutionalTotal, large, retail, exDivDate, exDivAmt, sharesIssued, 
+        divGrowth3y, divConsecutiveYears, divHistory, holderTrend, marginShortRatio, industry, 
+        stockName: stockNameFromAPI, apiRawCount, norwayStatus, pledgeRatio, currentTtmDiv, 
+        holdingHistory: jsonShare?.data || [],
+        holdingDate: holdingDate 
+    };
 }
 
 // --- 4. FinMind 月營收 ---
@@ -1696,20 +1734,27 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 const qRev = getVal(qd, ['Revenue', 'OperatingRevenue', 'Total_Operating_Revenue']);
                 const qNet = getVal(qd, niSyns);
                 const currentEquity = getVal(qb, eqSyns) || 1;
+                const currentAssets = getVal(qb, assetSyns) || 1;
                 
-                // 獲取上季權益以計算趨勢中的平均值
+                // 獲取上季數據以計算趨勢中的平均值
                 const idx = allDates.indexOf(date);
                 const prevDate = idx > 0 ? allDates[idx-1] : null;
                 const prevQB = prevDate ? getLatestDataFromDataset(jsonB?.data, prevDate) : [];
+                
                 const prevEquity = prevQB.length > 0 ? getVal(prevQB, eqSyns) : currentEquity;
+                const prevAssets = prevQB.length > 0 ? getVal(prevQB, assetSyns) : currentAssets;
+                
                 const avgEq = (currentEquity + prevEquity) / 2;
+                const avgAssets = (currentAssets + prevAssets) / 2;
 
                 return {
                     date: date,
                     grossMargin: qRev > 0 ? (getVal(qd, ['GrossProfit', 'gross_profit']) / qRev * 100) : 0,
                     operatingMargin: qRev > 0 ? (getVal(qd, ['OperatingIncome', 'operating_income']) / qRev * 100) : 0,
                     netMargin: qRev > 0 ? (qNet / qRev * 100) : 0,
-                    roe: avgEq > 0 ? (qNet / avgEq * 100) : 0
+                    roe: avgEq > 0 ? (qNet / avgEq * 100) : 0,
+                    assetTurnover: avgAssets > 0 ? (qRev / avgAssets) : 0,
+                    equityMultiplier: avgEq > 0 ? (avgAssets / avgEq) : 0
                 };
             });
 
@@ -2563,11 +2608,11 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     let maStatus = "數據不足";
     let goldenCross = false;
     let deathCross = false;
-    if (ma && ma.ma5 && ma.ma20 && ma.ma60 && ma.ma240) {
-        if (ma.ma5 > ma.ma20 && ma.ma20 > ma.ma60 && ma.ma60 > ma.ma240) {
+    if (ma && ma.ma5 && ma.ma10 && ma.ma20 && ma.ma60 && ma.ma120 && ma.ma240) {
+        if (ma.ma5 > ma.ma10 && ma.ma10 > ma.ma20 && ma.ma20 > ma.ma60 && ma.ma60 > ma.ma120 && ma.ma120 > ma.ma240) {
             maStatus = "多頭排列 (強勢)";
             goldenCross = true;
-        } else if (ma.ma5 < ma.ma20 && ma.ma20 < ma.ma60 && ma.ma60 < ma.ma240) {
+        } else if (ma.ma5 < ma.ma10 && ma.ma10 < ma.ma20 && ma.ma20 < ma.ma60 && ma.ma60 < ma.ma120 && ma.ma120 < ma.ma240) {
             maStatus = "空頭排列 (弱勢)";
             deathCross = true;
         } else if (ma.ma5 > ma.ma20) {
@@ -2599,6 +2644,47 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     
     // 暫存當前價格供百科分析使用
     window._lastCurrentPrice = currentPrice;
+
+    // --- 數據同步修正：若總持股日期落後於法人動態日期，則進行估算補齊 ---
+    if (chipsData && chipsData.holdingDate && institutionalData && institutionalData.daily && institutionalData.daily.length > 0) {
+        const daily = institutionalData.daily;
+        // 找出比總持股日期更晚的買賣超數據 (通常是今天或昨天的最新變動)
+        const patches = daily.filter(d => d.date > chipsData.holdingDate).sort((a,b) => a.date.localeCompare(b.date));
+        if (patches.length > 0) {
+            const shares = chipsData.sharesIssued || 1;
+            
+            // 補齊歷史數據紀錄，確保圖表能顯示最新點
+            if (chipsData.holdingHistory && chipsData.holdingHistory.length > 0) {
+                let lastKnownForeign = parseFloat(chipsData.foreign || 0);
+                patches.forEach(p => {
+                    const netF = p.foreign || 0;
+                    lastKnownForeign += (netF * 1000 / shares) * 100;
+                    chipsData.holdingHistory.push({
+                        date: p.date,
+                        foreign_investment_shares_ratio: lastKnownForeign,
+                        is_estimated: true
+                    });
+                });
+            }
+
+            let netF = 0, netT = 0, netD = 0;
+            patches.forEach(p => {
+                netF += p.foreign || 0;
+                netT += p.trust || 0;
+                netD += p.dealer || 0;
+            });
+            
+            // 將「張數」轉換為「持股百分比」並累加 (1張 = 1000股)
+            chipsData.foreign = (chipsData.foreign || 0) + (netF * 1000 / shares) * 100;
+            chipsData.trust = (chipsData.trust || 0) + (netT * 1000 / shares) * 100;
+            chipsData.dealer = (chipsData.dealer || 0) + (netD * 1000 / shares) * 100;
+            chipsData.institutionalTotal = (chipsData.foreign || 0) + (chipsData.trust || 0) + (chipsData.dealer || 0);
+            
+            const latestPatchDate = patches[patches.length - 1].date;
+            chipsData.holdingDate = latestPatchDate;
+            chipsData.isEstimated = true; // 標記為估算數據
+        }
+    }
 
     // 每股淨值 (BPS)
     const shares = chipsData?.sharesIssued || finData?.sharesIssued;
@@ -2685,7 +2771,6 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     let mStatus = '正常', mColor = '#4ade80';
     if (finData?.mScore !== undefined && finData?.mScore !== null) {
         if (finData.mScore > -1.78) { mStatus = '舞弊機率高'; mColor = '#ef4444'; }
-        else if (finData.mScore > -2.22) { mStatus = '警戒'; mColor = '#fbbf24'; }
     }
 
     // --- 新增：營收質量診斷 (Accrual Quality) ---
@@ -3000,6 +3085,65 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
 
     summaryText += "（註：以上建議由系統自動運算，僅供參考，不構成投資邀約。）";
 
+    // --- 籌碼套牢與支撐診斷 (新增) ---
+    let chipDiagnosticMsg = "";
+    if (chartData?.prices && chartData.prices.length > 20) {
+        const p = currentPrice;
+        const p52w = chartData.prices.slice(-250);
+        
+        // 獲取價格與成交量的輔助函數 (與下方 52週價量換手分析保持一致)
+        const getP = (item) => (item.close || item.Close || item.price || item.Price || 0);
+        const getV = (item) => (item.Trading_Volume || item.trading_volume || item.volume || item.Volume || item.Trading_Turnover || 0);
+
+        let step;
+        if (p < 10) step = 0.1;
+        else if (p < 50) step = 0.5;
+        else if (p < 100) step = 1;
+        else if (p < 500) step = 5;
+        else if (p < 1000) step = 10;
+        else step = 50;
+
+        const tempBins = {};
+        p52w.forEach(d => {
+            const vol = getV(d);
+            const close = getP(d);
+            if (vol > 0 && close > 0) {
+                const binEnd = Math.ceil(close / step) * step;
+                tempBins[binEnd] = (tempBins[binEnd] || 0) + vol;
+            }
+        });
+
+        let maxVolAbove = 0;
+        let resPrice = null;
+        let maxVolBelow = 0;
+        let supPrice = null;
+
+        Object.keys(tempBins).forEach(bpStr => {
+            const bp = parseFloat(bpStr);
+            const vol = tempBins[bpStr];
+            if (bp > p) {
+                if (vol > maxVolAbove) {
+                    maxVolAbove = vol;
+                    resPrice = bp;
+                }
+            } else if (bp < p) {
+                if (vol > maxVolBelow) {
+                    maxVolBelow = vol;
+                    supPrice = bp;
+                }
+            }
+        });
+
+        if (resPrice) {
+            const dist = Math.round((resPrice - p) / p * 100);
+            chipDiagnosticMsg += `目前股價距上方最大套牢區僅 ${dist}%，預期面臨解套壓力；`;
+        }
+        if (supPrice) {
+            const dist = Math.round((p - supPrice) / p * 100);
+            chipDiagnosticMsg += `下方 ${dist}% 處有強力支撐區。`;
+        }
+    }
+
     analysisBody.innerHTML = `
         <div class="analysis-grid">
             <!-- 1. 市值與規模 -->
@@ -3113,13 +3257,31 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderStatRow('市值營收比 (PS)', psRatio !== undefined ? safeFix(psRatio, 2) + ' 倍' : 'N/A')}
                 ${renderStatRow('市淨率 (P/B)', (currentPrice && bps) ? safeFix(currentPrice / bps, 2) + ' 倍' : 'N/A')}
                 ${renderStatRow('企業價值倍數 (EV/EBIT)', finData?.evEbit !== undefined && finData?.evEbit !== null ? safeFix(finData.evEbit, 2) + ' 倍' : 'N/A')}
-                ${renderStatRow('盈餘殖利率 (Earnings Yield)', twseBasic?.pe > 0 ? safeFix(100 / twseBasic.pe, 2) + '%' : 'N/A')}
+                ${(() => {
+                    const earningsYield = twseBasic?.pe > 0 ? (100 / twseBasic.pe) : 0;
+                    const us10y = 4.2; // 預設 10 年期美債殖利率 (無風險利率)
+                    const erp = earningsYield > 0 ? (earningsYield - us10y) : null;
+                    
+                    return `
+                        ${renderStatRow('盈餘殖利率 (EY)', earningsYield ? safeFix(earningsYield, 2) + '%' : 'N/A')}
+                        ${erp !== null ? renderStatRow('股權風險溢酬 (ERP)', safeFix(erp, 2) + '%') : ''}
+                    `;
+                })()}
                 ${renderStatRow('EPS 成長率 (TTM)', finData?.ttmEpsYoY != null ? safeFix(finData?.ttmEpsYoY, 2) + '%' : 'N/A')}
                 ${renderStatRow('PEG 比例', (twseBasic?.pe && finData?.ttmEpsYoY && finData?.ttmEpsYoY > 0) ? safeFix(twseBasic.pe / finData?.ttmEpsYoY, 2) : (finData?.ttmEpsYoY <= 0 ? 'N/A (獲利衰退)' : 'N/A'))}
                 ${renderStatRow('營運槓桿度 (DOL)', finData?.dol !== undefined && finData?.dol !== null ? safeFix(finData.dol, 2) + ' 倍' : 'N/A')}
                 ${renderDiagnostic(
-                    (finalYield > 5 ? "殖利率高於 5%，具備防禦屬性與收息誘因。" : (psPercentile !== null && psPercentile < 20 ? "PS 位階極低，具備成長股安全邊際。" : (twseBasic?.pe > 25 ? "本益比偏高，估值面已有過熱跡象。" : "當前估值尚屬合理，未見明顯泡沫。"))) +
-                    (currentPrice < bps ? " 股價低於每股淨值 (P/B < 1)，具極高安全邊際。" : "")
+                    (() => {
+                        const earningsYield = twseBasic?.pe > 0 ? (100 / twseBasic.pe) : 0;
+                        const erp = earningsYield > 0 ? (earningsYield - 4.2) : 999;
+                        let erpDiag = "";
+                        if (erp < 2) erpDiag = "⚠️ 警訊：股權風險溢酬 (ERP) 過低，股市相對債券不具吸引力。";
+                        else if (erp > 5) erpDiag = "🚀 股市風險溢酬極高，具備極佳長線佈局價值。";
+
+                        return (erpDiag ? erpDiag + " " : "") + 
+                        (finalYield > 5 ? "殖利率高於 5%，具備防禦屬性與收息誘因。" : (psPercentile !== null && psPercentile < 20 ? "PS 位階極低，具備成長股安全邊際。" : (twseBasic?.pe > 25 ? "本益比偏高，估值面已有過熱跡象。" : "當前估值尚屬合理，未見明顯泡沫。"))) +
+                        (currentPrice < bps ? " 股價低於每股淨值 (P/B < 1)，具極高安全邊際。" : "");
+                    })()
                 )}
             </div>
 
@@ -3219,7 +3381,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 
                 <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:6px;">
                     📈 法人動態 
-                    <span style="font-size:9px; font-weight:normal; opacity:0.7; margin-left:4px;">(資料日期: ${institutionalData?.date || 'N/A'})</span>
+                    <span style="font-size:9px; font-weight:normal; opacity:0.7; margin-left:4px;">(${institutionalData?.date || 'N/A'})</span>
                 </div>
                 <div style="display:flex; gap:8px; margin-bottom:8px;">
                     <div style="flex:1; background:rgba(255,255,255,0.03); padding:8px; border-radius:6px; text-align:center;">
@@ -3295,8 +3457,37 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         <div style="height:5px; background:rgba(255,255,255,0.06); border-radius:3px; overflow:hidden; margin-bottom:3px;">
                             <div style="height:100%; width:${consensusScore}%; background:${barColor}; border-radius:3px; transition:width 0.5s;"></div>
                         </div>
-                        <div style="font-size:9px; color:#64748b; text-align:right;">近20日同向 ${consensusDays} 天（多${consensusBull} 空${consensusBear}）</div>
-                    </div>`;
+                    <div style="font-size:9px; color:#64748b; text-align:right;">近20日同向 ${consensusDays} 天（多${consensusBull} 空${consensusBear}）</div>
+                    
+                    <!-- 新增：法人預期修正動能 (Simulated) -->
+                    <div style="margin-top:8px; display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.03); padding:6px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.05);">
+                        <span class="analysis-label has-info" style="font-size:11px; color:#94a3b8; cursor:pointer;" 
+                              onclick="showTermExplainer('法人預期修正動能 (Simulated)', '模擬指標')">🎯 預期修正動能</span>
+                        ${(() => {
+                            let revScore = 0;
+                            // 1. 投信行為 (核心權重)
+                            if (instPeriod?.m1?.trust > 1000) revScore += 40;
+                            else if (instPeriod?.m1?.trust < -1000) revScore -= 40;
+                            else if (instPeriod?.m1?.trust > 0) revScore += 20;
+                            else if (instPeriod?.m1?.trust < 0) revScore -= 20;
+
+                            // 2. 營收動能 (基本面濾鏡)
+                            if (revData?.yoy > 15) revScore += 30;
+                            else if (revData?.yoy < -5) revScore -= 30;
+
+                            // 3. 相對強弱 (市場定價預期)
+                            if (riskMetrics?.rsr20 > 1.05) revScore += 30;
+                            else if (riskMetrics?.rsr20 < 0.95) revScore -= 30;
+
+                            let status = "中性持平";
+                            let color = "#cbd5e1";
+                            if (revScore >= 50) { status = "🚀 預期上修"; color = "#f87171"; }
+                            else if (revScore <= -50) { status = "📉 預期下修"; color = "#4ade80"; }
+                            
+                            return `<span style="font-size:12px; font-weight:700; color:${color};">${status}</span>`;
+                        })()}
+                    </div>
+                </div>`;
                 })() : ''}
                 ${(() => {
                     const latestDay = institutionalData?.latestDay;
@@ -3342,7 +3533,8 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderDiagnostic(
                     (institutionalData?.streaks?.foreign > 3 ? "外資持續吸籌，大戶心態偏多。" : (institutionalData?.streaks?.foreign < -3 ? "外資持續提款，短線需防範賣壓。" : "法人進出互有勝負，籌碼面處於觀望狀態。")) +
                     ((brokerData?.d1?.concentration || brokerData?.concentration) > 20 ? " 分點集中度高，主力收貨力道強勁。" : "") +
-                    (marginData?.marginUseRate > 40 ? " 融資比例偏高，浮額較多需慎防多殺多。" : "")
+                    (marginData?.marginUseRate > 40 ? " 融資比例偏高，浮額較多需慎防多殺多。" : "") +
+                    (chipDiagnosticMsg ? " <br>" + chipDiagnosticMsg : "")
                 )}
             </div>
 
@@ -3464,6 +3656,56 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                 </div>
                             </div>
 
+                            ${(() => {
+                                // --- 新增：籌碼分佈密度 (套牢壓力) 計算 ---
+                                let totalVolSum = 0;
+                                let trappedVolSum = 0;
+                                const upperLimit = p * 1.10; // 上方 10% 區間
+
+                                Object.keys(bins).forEach(bpStr => {
+                                    const bp = parseFloat(bpStr);
+                                    const v = bins[bpStr];
+                                    totalVolSum += v;
+                                    if (bp > p && bp <= upperLimit) {
+                                        trappedVolSum += v;
+                                    }
+                                });
+
+                                const tRatio = totalVolSum > 0 ? (trappedVolSum / totalVolSum * 100) : 0;
+                                let pColor = '#10b981'; // Green
+                                let pLabel = '輕微 (籌碼乾淨)';
+                                if (tRatio > 35) {
+                                    pColor = '#ef4444'; // Red
+                                    pLabel = '極重 (強大解套賣壓)';
+                                } else if (tRatio > 25) {
+                                    pColor = '#f97316'; // Orange
+                                    pLabel = '沉重 (明顯阻力)';
+                                } else if (tRatio > 15) {
+                                    pColor = '#facc15'; // Yellow
+                                    pLabel = '中等 (正常換手)';
+                                }
+
+                                return `
+                                <!-- 籌碼分佈密度 (套牢壓力) 分析 -->
+                                <div style="background:rgba(255,255,255,0.03); padding:10px; border-radius:10px; margin-bottom:15px; border:1px solid rgba(255,255,255,0.05);">
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                        <span style="font-size:11px; color:#cbd5e1; font-weight:700;">🛡️ 籌碼分佈密度 (套牢壓力)</span>
+                                        <span style="font-size:11px; font-weight:800; color:${pColor};">${pLabel}</span>
+                                    </div>
+                                    <div style="height:8px; background:rgba(255,255,255,0.05); border-radius:4px; overflow:hidden; position:relative; margin-bottom:6px;">
+                                        <div style="height:100%; width:${Math.min(100, tRatio)}%; background:${pColor}; border-radius:4px; transition:width 0.5s;"></div>
+                                    </div>
+                                    <div style="display:flex; justify-content:space-between; font-size:12px; color:#94a3b8;">
+                                        <span>上方 10% 區間籌碼佔比</span>
+                                        <span style="color:#ffffff; font-weight:700;">${tRatio.toFixed(1)}%</span>
+                                    </div>
+                                    <div style="margin-top:6px; font-size:11.5px; color:#cbd5e1; line-height:1.4;">
+                                        ${tRatio > 20 ? `⚠️ 警訊：目前股價上方 10% 區間內聚集了 ${tRatio.toFixed(1)}% 的沉重籌碼，上攻將面臨強大的解套拋售壓力。` : `✅ 籌碼結構相對輕盈（${tRatio.toFixed(1)}%），上方無明顯大量套牢區，有利於股價後續推進。`}
+                                    </div>
+                                </div>
+                                `;
+                            })()}
+
                             <div style="margin-top:10px; margin-bottom:15px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                                     <div style="font-size:11px; color:#cbd5e1;">📊 價格量能分佈 (Volume Profile)</div>
@@ -3524,7 +3766,12 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             <div class="analysis-card">
                 <div class="analysis-card-title">🎯 籌碼集中度深度分析</div>
                 
-                ${renderStatRow('三大法人總持股', chipsData?.institutionalTotal ? safeFix(chipsData.institutionalTotal, 2) + '%' : 'N/A')}
+                <div class="analysis-stat-row" style="display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px dashed rgba(255,255,255,0.05);">
+                    <span class="analysis-label">
+                        三大法人總持股 ${chipsData?.holdingDate ? `<span style="font-size:10px; opacity:0.6; font-weight:normal;">(${chipsData.holdingDate})</span>` : ''}
+                    </span>
+                    <span class="analysis-val">${chipsData?.institutionalTotal ? safeFix(chipsData.institutionalTotal, 2) + '%' : 'N/A'}</span>
+                </div>
                 
                 <div class="analysis-stat-row" onclick="showHoldingTrendChart('${symbol}', '外資')" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px dashed rgba(255,255,255,0.05);">
                     <span style="font-size:12.5px; color:#60a5fa; font-weight:700;">外資持股比 📈</span>
@@ -3561,17 +3808,17 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                 <span style="font-weight:700; color:#fbbf24;">${chipCosts?.foreign?.cost20 > 0 ? safeFix(chipCosts.foreign.cost20, 1) : 'N/A'}</span>
                             </div>
                             <!-- 隱藏部分 -->
-                            <div class="inst-costs-hidden" style="display:none; margin-top:4px; border-top:1px dashed rgba(255,255,255,0.05); padding-top:4px;">
+                            <div class="inst-costs-hidden" style="display:none;">
                                 <div style="display:flex; justify-content:space-between; font-size:11px;">
-                                    <span style="color:#94a3b8;">60日:</span>
+                                    <span style="color:#cbd5e1;">60日:</span>
                                     <span style="font-weight:700; color:#fbbf24;">${chipCosts?.foreign?.cost60 > 0 ? safeFix(chipCosts.foreign.cost60, 1) : 'N/A'}</span>
                                 </div>
                                 <div style="display:flex; justify-content:space-between; font-size:11px;">
-                                    <span style="color:#94a3b8;">120日:</span>
+                                    <span style="color:#cbd5e1;">120日:</span>
                                     <span style="font-weight:700; color:#fbbf24;">${chipCosts?.foreign?.cost120 > 0 ? safeFix(chipCosts.foreign.cost120, 1) : 'N/A'}</span>
                                 </div>
                                 <div style="display:flex; justify-content:space-between; font-size:11px;">
-                                    <span style="color:#94a3b8;">240日:</span>
+                                    <span style="color:#cbd5e1;">240日:</span>
                                     <span style="font-weight:700; color:#fbbf24;">${chipCosts?.foreign?.cost240 > 0 ? safeFix(chipCosts.foreign.cost240, 1) : 'N/A'}</span>
                                 </div>
                             </div>
@@ -3592,17 +3839,17 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                 <span style="font-weight:700; color:#fbbf24;">${chipCosts?.trust?.cost20 > 0 ? safeFix(chipCosts.trust.cost20, 1) : 'N/A'}</span>
                             </div>
                             <!-- 隱藏部分 -->
-                            <div class="inst-costs-hidden" style="display:none; margin-top:4px; border-top:1px dashed rgba(255,255,255,0.05); padding-top:4px;">
+                            <div class="inst-costs-hidden" style="display:none;">
                                 <div style="display:flex; justify-content:space-between; font-size:11px;">
-                                    <span style="color:#94a3b8;">60日:</span>
+                                    <span style="color:#cbd5e1;">60日:</span>
                                     <span style="font-weight:700; color:#fbbf24;">${chipCosts?.trust?.cost60 > 0 ? safeFix(chipCosts.trust.cost60, 1) : 'N/A'}</span>
                                 </div>
                                 <div style="display:flex; justify-content:space-between; font-size:11px;">
-                                    <span style="color:#94a3b8;">120日:</span>
+                                    <span style="color:#cbd5e1;">120日:</span>
                                     <span style="font-weight:700; color:#fbbf24;">${chipCosts?.trust?.cost120 > 0 ? safeFix(chipCosts.trust.cost120, 1) : 'N/A'}</span>
                                 </div>
                                 <div style="display:flex; justify-content:space-between; font-size:11px;">
-                                    <span style="color:#94a3b8;">240日:</span>
+                                    <span style="color:#cbd5e1;">240日:</span>
                                     <span style="font-weight:700; color:#fbbf24;">${chipCosts?.trust?.cost240 > 0 ? safeFix(chipCosts.trust.cost240, 1) : 'N/A'}</span>
                                 </div>
                             </div>
@@ -3747,16 +3994,43 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:6px;">📈 獲利分配與永續性</div>
                 ${(() => {
                     const payout = (totalDiv12m && finData?.epsLTM) ? (totalDiv12m / finData.epsLTM * 100) : null;
-                    return renderPercentRow('盈餘分配率 (Payout Ratio)', payout, false, false);
+                    
+                    // 新增：自由現金流配息率 (FCF Payout Ratio)
+                    let ttmFcf = 0;
+                    if (finData?.fcfTrend && finData.fcfTrend.length >= 4) {
+                        ttmFcf = finData.fcfTrend.slice(-4).reduce((sum, item) => sum + (item.fcf || 0), 0);
+                    } else {
+                        ttmFcf = (finData?.freeCashFlow || 0) * 4;
+                    }
+                    
+                    const fcfPerShare = (shares > 0) ? (ttmFcf / shares) : 0;
+                    const fcfPayout = (totalDiv12m > 0 && fcfPerShare > 0) ? (totalDiv12m / fcfPerShare * 100) : null;
+                    
+                    return `
+                        ${renderPercentRow('盈餘分配率 (Payout Ratio)', payout, false, false)}
+                        ${renderPercentRow('自由現金流配息率', fcfPayout, false, false)}
+                    `;
                 })()}
                 ${renderStatRow('近四季 EPS (LTM)', finData?.epsLTM ? safeFix(finData.epsLTM, 2) + ' 元' : 'N/A')}
                 ${renderStatRow('近一年總配息', safeFix(totalDiv12m, 2) + ' 元')}
                 ${renderDiagnostic(
                     (() => {
                         const payout = (totalDiv12m && finData?.epsLTM) ? (totalDiv12m / finData.epsLTM * 100) : null;
+                        
+                        // FCF Payout 診斷
+                        let ttmFcf = 0;
+                        if (finData?.fcfTrend && finData.fcfTrend.length >= 4) {
+                            ttmFcf = finData.fcfTrend.slice(-4).reduce((sum, item) => sum + (item.fcf || 0), 0);
+                        } else {
+                            ttmFcf = (finData?.freeCashFlow || 0) * 4;
+                        }
+                        const fcfPerShare = (shares > 0) ? (ttmFcf / shares) : 0;
+                        const fcfPayout = (totalDiv12m > 0 && fcfPerShare > 0) ? (totalDiv12m / fcfPerShare * 100) : null;
+
                         let diag = divTrendAnalysis + " ";
-                        if (payout > 100) diag += "⚠️ 警告：發放率超過 100%，公司正在「吃老本」發放股利，長期恐不具永續性。";
-                        else if (payout > 80) diag += "配息率偏高，雖然殖利率誘人，但需留意公司是否缺乏未來投資成長的資金。";
+                        if (fcfPayout > 100) diag += "‼️ <b>地雷警訊：</b>自由現金流配息率爆表 (${Math.round(fcfPayout)}%)，代表公司正借債發股利，配息極其危險。";
+                        else if (payout > 100) diag += "⚠️ 警告：發放率超過 100%，公司正在「吃老本」發放股利，長期恐不具永續性。";
+                        else if (payout > 80 || fcfPayout > 80) diag += "配息率偏高，雖然殖利率誘人，但需留意公司是否缺乏未來投資成長的資金。";
                         else if (payout < 30 && payout > 0) diag += "配息率較低，公司可能保留較多資金用於擴張，屬成長型特徵。";
                         else if (payout > 0) diag += "配息政策穩健，獲利與發放比例均衡。";
                         
@@ -3769,7 +4043,6 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             <!-- 7. 技術面分析 -->
             <div class="analysis-card">
                 <div class="analysis-card-title">📉 技術面分析</div>
-                <div style="font-size:11px; color:#cbd5e1; margin-bottom:8px;">排列狀態: <span style="color:#ffffff; font-weight:700;">${chartData.maStatus}</span></div>
                 <div style="display:flex; justify-content:space-between; margin-bottom:12px; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.1);">
                     <div style="text-align:center; flex:1; cursor:pointer;" onclick="showTermExplainer('RSI(14)', '${rsi14}')">
                         <div style="font-size:10px; color:#cbd5e1;" class="has-info">RSI(14)</div>
@@ -3787,9 +4060,14 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     </div>
                 </div>
                 ${renderMARow('5日線 (週線)', ma.ma5, currentPrice)}
+                ${renderMARow('10日線', ma.ma10, currentPrice)}
                 ${renderMARow('20日線 (月線)', ma.ma20, currentPrice)}
-                ${renderMARow('60日線 (季線)', ma.ma60, currentPrice)}
-                ${renderMARow('240日線 (年線)', ma.ma240, currentPrice)}
+                <div class="ma-hidden-rows" style="display:none;">
+                    ${renderMARow('60日線 (季線)', ma.ma60, currentPrice)}
+                    ${renderMARow('120日線 (半年線)', ma.ma120, currentPrice)}
+                    ${renderMARow('240日線 (年線)', ma.ma240, currentPrice)}
+                </div>
+                <button onclick="toggleTechnicalMA(this)" style="width:100%; margin: 8px 0; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:#94a3b8; font-size:10px; padding:4px; border-radius:4px; cursor:pointer;" data-expanded="false">展開更多均線 (60/120/240) ↓</button>
                 ${renderStatRow('布林位置', (() => {
                     if(!bb) return 'N/A';
                     const bbPosVal = ((currentPrice - bb.lower) / (bb.upper - bb.lower) * 100);
@@ -3833,12 +4111,10 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         }).join('');
                     })()}
                 </div>
-                <div style="font-size:10px; color:#94a3b8; margin-top:8px;">
-                    均線狀態: ${chartData.maStatus}<br>
-                    ${chartData.goldenCross ? '<span style="color:#ef4444;">🔥 短中長期均線呈現多頭排列（黃金交叉區域）</span>' : ''}
-                    ${chartData.deathCross ? '<span style="color:#10b981;">❄️ 均線呈現空頭排列（死亡交叉區域）</span>' : ''}
-                </div>
                 ${renderDiagnostic(
+                    (chartData.goldenCross ? "🔥 均線呈現多頭強勢排列（黃金交叉區域）。" : 
+                     (chartData.deathCross ? "❄️ 均線呈現空頭弱勢排列（死亡交叉區域）。" : 
+                     `均線狀態: ${chartData.maStatus}。`)) +
                     (currentPrice > ma.ma60 ? "股價在季線之上，趨勢偏多。" : "股價在季線之下，處於空頭格局。") +
                     (rsi14 > 70 ? " RSI 進入超買，慎防回檔。" : (rsi14 < 30 ? " RSI 進入超賣，醞釀跌深反彈。" : "")) +
                     (chartData.bbSqueeze ? " ⚡ 注意：目前處於布林帶縮排（Squeeze），近期可能出現大波動突破。" : "")
@@ -4024,10 +4300,81 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     </div>
                 </div>
 
-                ${renderDiagnostic(
-                    (finData?.fScore >= 7 ? "🏆 F-Score 優異，財務體質極佳。" : (finData?.fScore <= 3 ? "⚠️ F-Score 偏低，需留意財務惡化。" : "財務健全度尚可。")) +
-                    (finData?.netMargin > 20 ? " 高淨利率驅動 ROE，顯示產業地位高。" : (finData?.assetTurnover > 1 ? " 高週轉率驅動 ROE，薄利多銷經營。" : " 綜合獲利驅動模式。"))
-                )}
+                ${(() => {
+                    // --- 新增：杜邦趨勢診斷 ---
+                    let dupontDiag = "";
+                    let marginDiff = 0, turnoverDiff = 0, multiplierDiff = 0;
+                    const trend = finData?.marginTrend;
+                    if (trend && trend.length >= 2) {
+                        const cur = trend[trend.length - 1];
+                        const prev = trend[trend.length - 2];
+                        
+                        const roeDiff = cur.roe - prev.roe;
+                        marginDiff = cur.netMargin - prev.netMargin;
+                        turnoverDiff = cur.assetTurnover - prev.assetTurnover;
+                        multiplierDiff = cur.equityMultiplier - prev.equityMultiplier;
+
+                        if (roeDiff > 0.5) { // ROE 顯著成長
+                            if (multiplierDiff > 0.1 && marginDiff <= 0 && turnoverDiff <= 0) {
+                                dupontDiag = "⚠️ <b>警告：</b>ROE 成長來自於槓桿加大，而非經營效率提升。";
+                            } else if (marginDiff > 0.5) {
+                                dupontDiag = "🚀 <b>良性成長：</b>ROE 提升主要由「淨利率」改善驅動，顯示產品競爭力或成本控制能力增強。";
+                            } else if (turnoverDiff > 0.02) {
+                                dupontDiag = "🔥 <b>營運優化：</b>ROE 提升來自「資產週轉率」增加，顯示公司資產運用效率正大幅提升。";
+                            } else {
+                                dupontDiag = "📊 <b>ROE 成長：</b>獲利能力正在改善。";
+                            }
+                        } else if (roeDiff < -0.5) { // ROE 顯著下滑
+                            if (turnoverDiff > 0.02) {
+                                dupontDiag = "💡 <b>轉機訊號：</b>雖然獲利暫時下滑，但公司資產運用效率正在優化，具備轉機潛力。";
+                            } else if (multiplierDiff < -0.1) {
+                                dupontDiag = "🛡️ <b>財務穩健：</b>ROE 下滑主因是公司主動「降低槓桿」(乘數下降)，財務體質趨於穩健。";
+                            } else {
+                                dupontDiag = "📉 <b>ROE 下滑：</b>需留意獲利結構是否轉弱。";
+                            }
+                        } else {
+                            dupontDiag = "📊 <b>獲利結構穩定：</b>本季 ROE 與上季相比無顯著變動。";
+                        }
+                    }
+
+                    return `
+                        <div style="margin-top:12px; padding-top:12px; border-top:1px dashed rgba(255,255,255,0.1);">
+                            <div style="font-size:11px; color:#60a5fa; margin-bottom:10px; font-weight:700;">📈 杜邦因子季度消長拆解 (Delta Analysis)</div>
+                            
+                            <!-- 杜邦因子變動數值展示 -->
+                            <div style="display:flex; justify-content:space-between; margin-bottom:15px; background:rgba(255,255,255,0.02); padding:12px; border-radius:10px; border:1px solid rgba(255,255,255,0.05);">
+                                <div style="flex:1; text-align:center;">
+                                    <div style="font-size:9px; color:#94a3b8; margin-bottom:4px;">淨利率變動</div>
+                                    <div style="font-size:13px; font-weight:800; color:${marginDiff >= 0 ? '#4ade80' : '#f87171'};">
+                                        ${marginDiff >= 0 ? '↑' : '↓'} ${Math.abs(marginDiff).toFixed(2)}%
+                                    </div>
+                                </div>
+                                <div style="width:1px; background:rgba(255,255,255,0.1); margin:0 10px;"></div>
+                                <div style="flex:1; text-align:center;">
+                                    <div style="font-size:9px; color:#94a3b8; margin-bottom:4px;">週轉率變動</div>
+                                    <div style="font-size:13px; font-weight:800; color:${turnoverDiff >= 0 ? '#4ade80' : '#f87171'};">
+                                        ${turnoverDiff >= 0 ? '↑' : '↓'} ${Math.abs(turnoverDiff).toFixed(2)}
+                                    </div>
+                                </div>
+                                <div style="width:1px; background:rgba(255,255,255,0.1); margin:0 10px;"></div>
+                                <div style="flex:1; text-align:center;">
+                                    <div style="font-size:9px; color:#94a3b8; margin-bottom:4px;">槓桿乘數變動</div>
+                                    <div style="font-size:13px; font-weight:800; color:${multiplierDiff >= 0 ? '#f97316' : '#3b82f6'};">
+                                        ${multiplierDiff >= 0 ? '↑' : '↓'} ${Math.abs(multiplierDiff).toFixed(2)}
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div style="font-size:11.5px; color:#cbd5e1; line-height:1.6;">
+                                ${dupontDiag ? `<div style="margin-bottom:12px; background:rgba(59, 130, 246, 0.05); padding:10px; border-radius:8px; border-left:4px solid #3b82f6; color:#e2e8f0;">${dupontDiag}</div>` : ''}
+                                ${renderDiagnostic(
+                                    (finData?.fScore >= 7 ? "🏆 F-Score 優異，財務體質極佳。" : (finData?.fScore <= 3 ? "⚠️ F-Score 偏低，需留意財務惡化。" : "財務健全度尚可。")) +
+                                    (finData?.netMargin > 20 ? " 高淨利率驅動 ROE，顯示產業地位高。" : (finData?.assetTurnover > 1 ? " 高週轉率驅動 ROE，薄利多銷經營。" : " 綜合獲利驅動模式。"))
+                                )}
+                            </div>
+                        </div>
+                    `;
+                })()}
             </div>
 
             <!-- 6. 財務安全與 Z-Score -->
@@ -4096,7 +4443,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 </div>
                 <div style="font-size:11px; color:#cbd5e1; margin-bottom:12px;">
                     單位: 億元 (
-                    <span class="has-info" style="text-decoration:underline dashed; cursor:pointer;" onclick="showTermExplainer('OCF (營業現金流)', '本業獲取之現金')">OCF</span> - 
+                    <span class="has-info" style="text-decoration:underline dashed; cursor:pointer;" onclick="showTermExplainer('營業現金流 (OCF)', '本業獲取之現金')">OCF</span> - 
                     <span class="has-info" style="text-decoration:underline dashed; cursor:pointer;" onclick="showTermExplainer('CapEx (資本支出)', '投資廠房設備之支出')">CapEx</span> = 
                     <span class="has-info" style="text-decoration:underline dashed; cursor:pointer;" onclick="showTermExplainer('FCF (自由現金流)', '剩餘可支配現金')">FCF</span>)
                 </div>
@@ -4218,8 +4565,8 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
 
                 <div style="font-size:11px; color:#cbd5e1; margin-bottom:12px;">
                     單位: 億元 (
-                    <span class="has-info" style="text-decoration:underline dashed; cursor:pointer;" onclick="showTermExplainer('營業現金流 (OCF)', '${safeFix(finData?.latestOCF/100000000, 1)}億')">藍: OCF</span> / 
-                    <span class="has-info" style="text-decoration:underline dashed; cursor:pointer;" onclick="showTermExplainer('稅後淨利', '${safeFix((finData?.netIncomeTrend?.[finData.netIncomeTrend.length-1]?.ni || 0)/100000000, 1)}億')">紅: 淨利</span>)
+                    藍: <span class="has-info" style="text-decoration:underline dashed; cursor:pointer;" onclick="showTermExplainer('營業現金流 (OCF)', '${safeFix(finData?.latestOCF/100000000, 1)}億', null, true)">OCF</span> / 
+                    紅: <span class="has-info" style="text-decoration:underline dashed; cursor:pointer;" onclick="showTermExplainer('稅後淨利', '${safeFix((finData?.netIncomeTrend?.[finData.netIncomeTrend.length-1]?.ni || 0)/100000000, 1)}億', null, true)">淨利</span>)
                 </div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
                     ${[...(finData?.netIncomeTrend || [])].reverse().map((d, idx) => {
@@ -4931,7 +5278,6 @@ const termDefinitions = {
         analyze: (v) => {
             const val = parseFloat(v);
             if (val > -1.78) return "⚠️ 嚴重警告！M-Score 顯示公司具備極高的財報操縱風險，獲利真實性存疑。";
-            if (val > -2.22) return "🟡 注意：財務指標出現背離跡象，雖未確診舞弊，但財報透明度有所下降。";
             return "✅ 財報品質穩健，未偵測到明顯的操縱跡象，獲利含金量可信。";
         }
     },
@@ -5081,8 +5427,17 @@ const termDefinitions = {
         desc: '統計今日主力買超張數與過去 20 個交易日日均買超張數的比值。這能反映主力是否在近期突然加大吸籌力道。',
         rule: '> 2 倍 → 視為「動能加速」，主力買盤顯著升溫；< 1 倍 → 買盤動能低於平均；負值 → 主力反手賣超。',
         advice: '動能加速通常發生在噴出前夕或低檔轉折處，配合「分點集中度」同步升高，準確度更高。',
-        analyze: (v) => {
+        analyze: (v, currentVal) => {
             const val = parseFloat(v);
+            const isSell = currentVal && (currentVal.includes('賣') || currentVal.includes('❄️'));
+            const isSwitch = currentVal && currentVal.includes('轉');
+            
+            if (isSell) {
+                if (isSwitch) return '⚠️ 籌碼現轉賣警訊！今日主力由買轉賣，需防範短線走弱。';
+                if (val > 2) return '❄️ 賣壓動能顯著加速，今日主力大舉撤出，需留意股價下行風險。';
+                return '主力賣壓持續，籌碼動能偏弱。';
+            }
+            if (isSwitch) return '✨ 籌碼現轉買發力！今日主力由賣轉買，且買盤力道顯著。';
             if (val > 2) return '🔥 主力動能顯著加速，今日買盤力道極強，利於股價發動。';
             if (val > 0) return '主力維持小幅買進，動能尚稱穩定。';
             return '主力買盤動能不足，或處於觀望狀態。';
@@ -5101,13 +5456,6 @@ const termDefinitions = {
         rule: '越短越好。如果 DSO 突然暴增，代表客戶可能付不出錢，有呆帳風險。',
         advice: '這反映了公司對下游客戶的「議價能力」。',
         analyze: (v) => "這是衡量公司「收帳能力」與「客戶信用」的關鍵指標。"
-    },
-    'OCF (營業現金流)': {
-        type: '現金流',
-        desc: '企業透過本業經營實際收到的現金流入。',
-        rule: '長期應大於淨利 (Net Income)。如果 OCF 長期低於淨利，代表公司可能只是帳面上賺錢，但錢卻卡在應收帳款或存貨中。',
-        advice: '這是衡量「獲利含金量」的核心指標。穩健的公司應有穩定的 OCF 流入。',
-        analyze: (v) => "OCF 反映了公司最真實的賺錢能力，是支撐股息與投資的源頭。"
     },
     'CapEx (資本支出)': {
         type: '投資',
@@ -5635,12 +5983,12 @@ const termDefinitions = {
     },
     '營業現金流 (OCF)': {
         type: '現金流',
-        desc: '公司日常經營活動（賣東西、發薪水）所產生的實際現金流入與流出。',
-        rule: '必須長期為正值。',
-        advice: '這是公司的「生命線」，如果 OCF 長期為負，公司遲早會倒閉。',
+        desc: '公司日常經營活動（賣東西、發薪水）所產生的實際現金流入與流出。反映公司本業賺錢的真實能力。',
+        rule: '必須長期為正值，且理想上應大於稅後淨利 (OCF / NI > 1)。',
+        advice: '這是公司的「生命線」。如果 OCF 長期為負，或長期低於淨利，代表獲利含金量不足，需留意營運週轉風險。',
         analyze: (v) => {
-            if (v > 0) return "本業持續帶入現金，營運生命線健康。";
-            return "嚴重警訊！本業營運現金為負流出，公司營運面臨嚴峻考驗。";
+            if (v > 0) return "本業持續帶入現金，經營賺錢能力正常，具備良好的日常經營現金流入。";
+            return "嚴重警訊！本業經營入不敷出，現金流呈現負數，公司營運面臨嚴峻考驗。";
         }
     },
     '投資現金流 (ICF)': {
@@ -6036,13 +6384,6 @@ const termDefinitions = {
         advice: '淨利可能是「帳面數字」，但自由現金流才是「真錢」。',
         analyze: (v) => (v > 0) ? "具備創造真金白銀的能力，支持股利發放與未來擴張。" : "現金流呈現流出，需留意公司是否過度投資或營運入不敷出。"
     },
-    '營業現金流 (OCF)': {
-        type: '獲利品質',
-        desc: '從日常營運中實際收到的現金。反映公司最核心的造血能力。',
-        rule: '應大於稅後淨利 (OCF / NI > 1)，代表獲利品質高。',
-        advice: '如果淨利很高但 OCF 很少，要嚴防應收帳款過高或存貨積壓。',
-        analyze: (v) => "營運造血功能正常，具備良好的日常經營現金流入。"
-    },
     '殖利率': {
         type: '股利回報',
         desc: '現金股利 / 股價。反映投資人每投入一百塊能收到的現金回饋。',
@@ -6229,6 +6570,84 @@ const termDefinitions = {
             if (val < 0) return "📉 籌碼逐漸轉向散戶，大戶（主力）心態偏向賣出調節。";
             return "大戶持股比例維持平衡。";
         }
+    },
+    '盈餘殖利率 (EY)': {
+        type: '估值位階',
+        title: '盈餘殖利率 (Earnings Yield)',
+        desc: '每股盈餘 / 股價 (等同於 1 / PE)。反映你買入這間公司，理論上每年能獲得的實質報酬率。',
+        rule: '作為「股權風險溢酬 (ERP)」的基準。必須與無風險利率 (如美國十年期公債) 比較。',
+        advice: '若盈餘殖利率低於公債殖利率，代表買股票承擔高風險卻拿較少報酬，除非爆發性成長否則極度不划算。',
+        analyze: (v) => {
+            if (v > 8) return `🏆 極高實質報酬！盈餘殖利率達 ${v}%，具備極強的下檔保護與投資吸引力。`;
+            if (v < 2) return `⚠️ 估值警訊：盈餘殖利率僅 ${v}%，報酬可能不如無風險公債，市場預期已極度樂觀。`;
+            return "盈餘殖利率處於正常水準。";
+        }
+    },
+    '股權風險溢酬 (ERP)': {
+        type: '估值',
+        title: '股權風險溢酬 (Equity Risk Premium)',
+        desc: '反映投資股票相對於無風險資產（如美債）所要求的「額外回報」。這是專業經理人判斷「股債配置比」與市場是否過熱的核心指標。',
+        rule: '公式：盈餘殖利率 (1/PE) - 10年期美債利率。通常以 3.5% 為長期平均平衡點。',
+        advice: '當 ERP 縮小至 2% 以下時，代表股市回報相對於無風險債券已不具吸引力，經理人通常會開始「股轉債」避險。',
+        analyze: (erp) => {
+            let riskStatus = "";
+            let color = "#4ade80";
+            const erpVal = parseFloat(erp);
+            if (erpVal > 5) {
+                riskStatus = "🚀 股市極具吸引力，相對於債券具有極高安全邊際。";
+                color = "#4ade80";
+            } else if (erpVal > 2.5) {
+                riskStatus = "📊 風險報酬平衡，目前的估值水準處於合理回報區間。";
+                color = "#3b82f6";
+            } else {
+                riskStatus = "⚠️ 警訊！股市風險溢酬過低，承擔波動的回報不划算，建議增加避險資產。";
+                color = "#f87171";
+            }
+
+            const percent = Math.min(Math.max((erpVal / 8) * 100, 0), 100);
+            return `
+                <div style="margin: 15px 0; padding: 16px; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
+                    <div style="display:flex; justify-content:space-between; font-size:12px; color:#94a3b8; margin-bottom:12px;">
+                        <span style="font-weight:600;">📊 股債利差警戒儀表板</span>
+                        <span style="color:#ffffff; font-weight:700;">目前溢酬: ${erpVal.toFixed(2)}%</span>
+                    </div>
+                    <div style="height:14px; background:rgba(255,255,255,0.1); border-radius:7px; overflow:hidden; position:relative; box-shadow:inset 0 2px 4px rgba(0,0,0,0.3);">
+                        <div style="position:absolute; left:0; top:0; height:100%; width:${percent}%; background:linear-gradient(90deg, #f87171, #fbbf24, #4ade80); transition: width 1.2s cubic-bezier(0.34, 1.56, 0.64, 1);"></div>
+                        <div style="position:absolute; left:${percent}%; top:-2px; width:4px; height:18px; background:#ffffff; box-shadow: 0 0 10px rgba(255,255,255,0.8); transform:translateX(-50%); z-index:10;"></div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:10px; color:#64748b; margin-top:8px; font-family:monospace;">
+                        <span>2% (過熱)</span>
+                        <span>3.5% (中性)</span>
+                        <span>6% (極具價值)</span>
+                    </div>
+                    <div style="margin-top:18px; background:${color}15; padding:12px; border-radius:8px; border-left:4px solid ${color};">
+                        <div style="font-size:13px; color:${color}; font-weight:700; line-height:1.5;">${riskStatus}</div>
+                        <div style="font-size:11px; color:#94a3b8; margin-top:6px;">計算基準：盈餘殖利率 (EY) - 當前無風險利率 (4.2%)</div>
+                    </div>
+                </div>
+            `;
+        }
+    },
+    '自由現金流配息率': {
+        type: '股利品質',
+        desc: '現金股利 / 自由現金流 (FCF)。這反映了公司發放的股息是否來自於其實際賺得的「真錢」，而非借債或掏空老本。',
+        rule: '理想值應 < 80%；若 > 100% 代表「超額配息」，通常是不穩定的地雷訊號。',
+        advice: '專業經理人判斷股利永續性的核心指標。如果盈餘配息率正常但 FCF 配息率爆表，代表利潤可能只是會計數字，實際上並沒有現金入帳。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (val > 100) return "⚠️ <b>嚴重警報：</b>配息率超過 100%！公司目前入不敷出，正在動用老本或舉債發股利，極度不具永續性。";
+            if (val > 80) return "配息略顯吃力。雖然發得出股利，但剩餘現金不足以進行大規模再投資，成長動能可能受限。";
+            if (val > 0) return "✅ 股利安全性極高。公司產生的自由現金流足以支撐配息，且仍有餘裕進行投資。";
+            return "數據不足或自由現金流為負值，需留意配息風險。";
+        }
+    },
+    '法人預期修正動能 (Simulated)': {
+        type: '領先指標',
+        title: '分析師 EPS 預估修正趨勢 (模擬)',
+        desc: '這是一個基於量化模型模擬的指標，旨在反映目前法人圈對該公司未來 EPS 預期的變動方向。由於分析師報告具有不公開性與滯後性，本指標透過觀察法人的「實際動作」來逆推其預期修正方向。',
+        rule: '<b>綜合權重邏輯：</b><br>1. <b>投信佈局 (40%)：</b>投信連續買超通常伴隨研究報告上修；反之則為下修。<br>2. <b>營收斜率 (30%)：</b>當營收年增率 (YoY) 顯著噴發或萎縮時，會強迫分析師調整獲利模型。<br>3. <b>價格強弱 RSR (30%)：</b>反映市場「領先資金」對未來的定價預期。',
+        advice: '<b>數字意義：</b><br>● <b>預期上修：</b>代表法人可能正在集體調高未來的獲利預測，股價通常具備較強支撐力。<br>● <b>預期下修：</b>代表法人預期未來獲利可能不如預期，即便目前本益比再低，也需防範評價修正風險。',
+        analyze: (v) => "本指標僅為模擬趨勢，並非真實報告內容，建議配合籌碼面與營收數據進行綜合判斷。"
     }
 };
 
@@ -6238,7 +6657,7 @@ const termDefinitions = {
  * @param {string} currentVal 目前數值
  * @param {number} avgVal 同業平均數值 (選填)
  */
-function showTermExplainer(term, currentVal = null, avgVal = null) {
+function showTermExplainer(term, currentVal = null, avgVal = null, hideDiagnosis = false) {
     let def = termDefinitions[term];
     if (!def) {
         // 修正：優先進行精確匹配，如果失敗才進行受控的模糊匹配
@@ -6308,27 +6727,22 @@ function showTermExplainer(term, currentVal = null, avgVal = null) {
         }
         
         if (cleanVal !== undefined && !isNaN(cleanVal)) {
-            const diagnosis = def.analyze(cleanVal, currentVal, avgVal);
+            const diagnosis = (!hideDiagnosis && def.analyze && typeof def.analyze === 'function') ? def.analyze(cleanVal, currentVal, avgVal) : null;
             
-            // 構建同業對比小工具 (對於 POC 等個股特性指標，不顯示同業對比)
+            // 構建同業對比小工具
             let comparisonWidget = '';
             const skipComparison = ['籌碼密集區 (POC)', '52週最高', '52週最低', '52週成交均價', '52週 加權平均成本'].some(k => term.includes(k));
             
             if (avgVal !== null && avgVal !== undefined && !skipComparison) {
                 const diff = (cleanVal - avgVal);
-                // --- 指標優劣邏輯強健化 (解決 Big5/UTF8 編碼匹配問題) ---
-                // 越低越好 (便宜/效率/風險低): PE, PB, 存貨天數, 應收天數, 現金循環, 負債比
                 const lowerBetterKeys = ['PE', 'PB', '本益比', '淨值比', '天數', '週期', '負債'];
                 const isLowerBetter = lowerBetterKeys.some(k => term.toUpperCase().includes(k.toUpperCase()));
-                
-                // 應付帳款天數是特例：通常長比較好（除非是經營效率導向），此處設為預設（越高越好）
                 const isDPO = term.includes('應付');
                 const finalLowerBetter = isLowerBetter && !isDPO;
 
                 const isBetter = finalLowerBetter ? diff < 0 : diff > 0;
                 const statusColor = isBetter ? '#4ade80' : '#f87171';
                 
-                // 根據指標特性給予精確描述
                 let trendText = '';
                 if (isBetter) {
                     trendText = finalLowerBetter ? '估值較低(優)' : '領先標竿';
@@ -6352,18 +6766,30 @@ function showTermExplainer(term, currentVal = null, avgVal = null) {
                 `;
             }
 
-            analysisHtml = `
-                <div class="term-explainer-section" style="background: ${badgeColor}10; border: 1px solid ${badgeColor}30; border-radius: 12px; padding: 15px; margin-top: 15px;">
-                    <div class="term-explainer-subtitle" style="color:${badgeColor}; margin-bottom:8px;">🔍 AI 智能診斷</div>
-                    <div style="font-size:14px; font-weight:700; color:#ffffff; margin-bottom:4px;">
-                        個股當前值: <span style="font-size:18px; color:${badgeColor};">${currentVal}</span>
+            if (diagnosis) {
+                analysisHtml = `
+                    <div class="term-explainer-section" style="background: ${badgeColor}10; border: 1px solid ${badgeColor}30; border-radius: 12px; padding: 15px; margin-top: 15px;">
+                        <div class="term-explainer-subtitle" style="color:${badgeColor}; margin-bottom:8px;">🔍 AI 智能診斷</div>
+                        <div style="font-size:14px; font-weight:700; color:#ffffff; margin-bottom:4px;">
+                            個股當前值: <span style="font-size:18px; color:${badgeColor};">${currentVal}</span>
+                        </div>
+                        <div class="term-explainer-body" style="font-size:13px; line-height:1.5; color:#e2e8f0; opacity:1;">
+                            ${diagnosis}
+                        </div>
+                        ${comparisonWidget}
                     </div>
-                    <div class="term-explainer-body" style="font-size:13px; line-height:1.5; color:#e2e8f0; opacity:1;">
-                        ${diagnosis}
+                `;
+            } else if (comparisonWidget) {
+                analysisHtml = `
+                    <div class="term-explainer-section" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 15px; margin-top: 15px;">
+                        <div class="term-explainer-subtitle" style="color:#94a3b8; margin-bottom:8px;">📊 同業對比</div>
+                        <div style="font-size:14px; font-weight:700; color:#ffffff; margin-bottom:4px;">
+                            個股當前值: <span style="font-size:18px; color:${badgeColor};">${currentVal}</span>
+                        </div>
+                        ${comparisonWidget}
                     </div>
-                    ${comparisonWidget}
-                </div>
-            `;
+                `;
+            }
         }
     }
 
@@ -6513,6 +6939,23 @@ function toggleInstCosts(btn) {
         btn.setAttribute('data-expanded', 'false');
     } else {
         btn.innerText = '收合 ↑';
+        btn.setAttribute('data-expanded', 'true');
+    }
+}
+
+function toggleTechnicalMA(btn) {
+    const container = btn.closest('.analysis-card');
+    const hiddenRows = container.querySelector('.ma-hidden-rows');
+    if (!hiddenRows) return;
+    
+    const isExpanded = btn.getAttribute('data-expanded') === 'true';
+    hiddenRows.style.display = isExpanded ? 'none' : 'block';
+    
+    if (isExpanded) {
+        btn.innerText = '展開更多均線 (60/120/240) ↓';
+        btn.setAttribute('data-expanded', 'false');
+    } else {
+        btn.innerText = '收合均線 ↑';
         btn.setAttribute('data-expanded', 'true');
     }
 }
