@@ -11,6 +11,11 @@ const closeAnalysisBtn = document.getElementById('closeAnalysisBtn');
 const analysisTitle = document.getElementById('analysisTitle');
 const analysisBody = document.getElementById('analysisBody');
 
+// === 全域分析設定 (可透過 Console 調整：ANALYSIS_CONFIG.riskFreeRate = 4.5) ===
+const ANALYSIS_CONFIG = {
+    riskFreeRate: 4.2  // 預設 10 年期美債殖利率 (無風險利率)
+};
+
 // Close modal handlers
 closeAnalysisBtn.addEventListener('click', () => {
     analysisModal.classList.remove('active');
@@ -818,9 +823,9 @@ function calculateRiskMetrics(stockData, marketData, lookback = 252) {
     const beta = mVar !== 0 ? (covariance / mVar) : null;
     
     // 3. 計算簡化夏普值 (Sharpe Ratio)
-    // 算法：(年化報酬率 - 無風險利率) / 年化波動率。假設無風險利率為 2%
+    // 算法：(年化報酬率 - 無風險利率) / 年化波動率
     const mom1y = (stockData[stockData.length - 1].close / stockData[Math.max(0, stockData.length - 252)].close - 1) * 100;
-    const sharpeRatio = volatility > 0 ? (mom1y - 2) / volatility : null;
+    const sharpeRatio = volatility > 0 ? (mom1y - ANALYSIS_CONFIG.riskFreeRate) / volatility : null;
 
     // 4. 計算 RSR (Relative Strength Ratio)
 
@@ -860,22 +865,29 @@ function calculateRiskMetrics(stockData, marketData, lookback = 252) {
     // 5. 計算 最大回撤 (MDD) 與 修復期 (Recovery)
     let mdd = 0;
     let peak = -Infinity;
-    let maxRecoveryDays = 0;
-    let currentRecoveryDays = 0;
+    let mddPeak = 0;
+    let mddTroughIdx = 0;
     const pData = stockData.slice(-lookback);
     
-    pData.forEach(d => {
+    // 找出最大回撤發生的高點與坑底位置
+    pData.forEach((d, i) => {
         const price = d.close || d.Close || 0;
-        if (price > peak) {
-            peak = price;
-            currentRecoveryDays = 0;
-        } else {
-            const dd = (price - peak) / peak;
-            if (dd < mdd) mdd = dd;
-            currentRecoveryDays++;
-            if (currentRecoveryDays > maxRecoveryDays) maxRecoveryDays = currentRecoveryDays;
+        if (price > peak) peak = price;
+        const dd = (price - peak) / peak;
+        if (dd < mdd) {
+            mdd = dd;
+            mddPeak = peak;
+            mddTroughIdx = i;
         }
     });
+
+    // 從坑底開始往後計算修復天數
+    let maxRecoveryDays = 0;
+    for (let i = mddTroughIdx; i < pData.length; i++) {
+        const price = pData[i].close || pData[i].Close || 0;
+        if (price >= mddPeak) break;
+        maxRecoveryDays++;
+    }
 
     const currentPrice = stockData[stockData.length - 1].close || 0;
     const currentDrawdown = peak > 0 ? (currentPrice - peak) / peak : 0;
@@ -1773,7 +1785,8 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
 
             // 獲利品質 (OCF / NI)
             const ocf = getVal(latestC, ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities', 'Cash_flows_from_used_in_operating_activities', 'Net_cash_generated_from_used_in_operating_activities', 'OperatingCashFlow', 'Operating_cash_flow', 'Net_cash_inflow_from_operating_activities']);
-            const investingCF = getVal(latestC, ['CashProvidedByInvestingActivities', 'CashFlowsFromInvestingActivities', 'NetCashInflowFromInvestingActivities', 'InvestingCashFlow', 'Investing_cash_flow', 'Net_cash_used_in_investing_activities', 'PropertyAndPlantAndEquipment', 'Acquisition_of_property_plant_and_equipment']);
+            const investingCF = getVal(latestC, ['CashProvidedByInvestingActivities', 'CashFlowsFromInvestingActivities', 'NetCashInflowFromInvestingActivities', 'InvestingCashFlow', 'Investing_cash_flow', 'Net_cash_used_in_investing_activities']);
+            const capex = getVal(latestC, ['Acquisition_of_property_plant_and_equipment', 'PropertyAndPlantAndEquipment', 'AcquisitionOfPropertyPlantAndEquipment', 'Acquisition_of_property_plant_and_equipment_and_other_assets', 'purchase_of_property_plant_and_equipment']) || 0;
             const earningsQuality = (ocf && netIncome > 0) ? (ocf / netIncome * 100) : null;
 
             // Altman Z-Score Calculation (approximate)
@@ -1782,9 +1795,9 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             const zC = assets > 0 ? opIncome / assets : 0;
             const zE = assets > 0 ? rev / assets : 0;
 
-            const dio = (inv > 0 && rev > 0) ? (inv / ((rev - grossProfit) / 90)) : 0;
+            const dio = (inv > 0 && rev > grossProfit) ? (inv / ((rev - grossProfit) / 90)) : 0;
             const dso = (receivables > 0 && rev > 0) ? (receivables / (rev / 90)) : 0;
-            const dpo = (payables > 0 && rev > 0) ? (payables / ((rev - grossProfit) / 90)) : 0;
+            const dpo = (payables > 0 && rev > grossProfit) ? (payables / ((rev - grossProfit) / 90)) : 0;
 
             // Piotroski F-Score Calculation
             let fScore = 0;
@@ -1922,7 +1935,12 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             }, 0);
             
             const rawMarketCap = (currentPrice > 0 && shares > 0) ? (currentPrice * shares) : 0;
-            const ev = rawMarketCap > 0 ? (rawMarketCap + liabilities - cash) : 0;
+            // 優先抓取有息負債 (短期借款、長期借款、應付公司債等)
+            const finDebt = getVal(latestB, [
+                'ShortTermBorrowings', 'LongTermBorrowings', 'ShortTermLoan', 'LongTermLoan', 
+                'Borrowings', 'LoansAndBorrowings', 'BondsPayable', 'Short-term_borrowings', 'Long-term_borrowings'
+            ]) || (liabilities * 0.4); // ⚠ 近似值：若 API 無法拆分，以總負債 40% 替代有息負債
+            const ev = rawMarketCap > 0 ? (rawMarketCap + finDebt - cash) : 0;
             const evEbit = (ev > 0 && ttmOpIncome > 0) ? (ev / ttmOpIncome) : null;
             const investedCapital = assets - curLiab;
             const roic = (investedCapital > 0) ? (ttmOpIncome * 0.8 / investedCapital * 100) : null;
@@ -1956,7 +1974,7 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 debtRatio:   getVal(latestB, 'Liabilities_per') || (liabilities / assets * 100),
                 currentRatio: curLiab > 0 ? (curAssets / curLiab) * 100 : null,
                 quickRatio:   curLiab > 0 ? ((curAssets - inv) / curLiab) * 100 : null,
-                inventoryTurnover: inv > 0 ? (rev / inv) : null,
+                inventoryTurnover: (inv > 0 && rev >= grossProfit) ? ((rev - grossProfit) / inv) : null,
                 inventoryDays: dio || null, 
                 receivableDays: dso || null,
                 payableDays: dpo || null,
@@ -1969,7 +1987,7 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     return { date, ocf: ocfVal, capex: capexVal, fcf: ocfVal + capexVal };
                 }),
                 latestOCF: ocf,
-                latestCapEx: investingCF,
+                latestCapEx: capex,
                 epsTrend8: epsTrend8,
                 epsTrendFull: allDates.map(date => {
                     const qd = getQData(jsonS.data, date);
@@ -1986,7 +2004,7 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     return Object.keys(yearly).sort().map(y => ({ year: y, eps: yearly[y] }));
                 })(),
                 marginTrend: marginTrend4,
-                zComponents: { zA, zB, zC, zE },
+                zComponents: { zA, zB, zC, zE, liabilities },
                 fScore,
                 fDetails,
                 mScore,
@@ -2040,7 +2058,7 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     return { date: date, eps: getVal(sData, 'EPS') || 0 };
                 }),
                 netDebt: liabilities - cash,
-                netDebtRatio: assets > 0 ? ((liabilities - cash) / assets * 100) : null,
+                netDebtRatio: equity > 0 ? ((liabilities - cash) / equity * 100) : null,
                 revCAGR: (() => {
                     const revSyns = ['Revenue', 'revenue', 'OperatingRevenue', 'Total_Operating_Revenue', 'Operating_Revenue'];
                     if (!allDates || allDates.length < 5) return null;
@@ -2133,7 +2151,7 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     const qInv = getVal(qb, ['Inventories', 'Inventory', 'Total_Inventories']);
                     const qRec = getVal(qb, ['Accounts_Receivable', 'AccountsReceivable', 'Accounts_Receivable_net']);
                     
-                    const dioVal = (qInv > 0 && qRev > 0) ? (qInv / ((qRev - qGP) / 90)) : 0;
+                    const dioVal = (qInv > 0 && qRev > qGP) ? (qInv / ((qRev - qGP) / 90)) : 0;
                     const dsoVal = (qRec > 0 && qRev > 0) ? (qRec / (qRev / 90)) : 0;
                     return { date, dio: dioVal, dso: dsoVal };
                 }),
@@ -2177,11 +2195,11 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                         isExcellent: continuousPositiveYears >= 5 || (positiveCount >= 8 && last10Years.length >= 8)
                     };
                 })(),
-                fcfYield: (marketCap > 0) ? (((ocf + investingCF) / 100000000) / marketCap * 100) : 0,
+                fcfYield: (marketCap > 0) ? (((ocf + capex) / 100000000) / marketCap * 100) : 0,
                 marketCap: marketCap,
                 opCashFlow: ocf,
                 investingCashFlow: investingCF,
-                freeCashFlow: ocf + investingCF,
+                freeCashFlow: ocf + capex,
                 allTypes: latestC ? latestC.map(x => x.type).join(', ') : 'EMPTY'
             };
         }
@@ -2758,8 +2776,9 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     let zColor = '#cbd5e1';
     if (finData?.zComponents && marketCap) {
         const marketCapValue = marketCap * 100000000;
-        const zD = finData.liabilities > 0 ? marketCapValue / finData.liabilities : 0;
-        const { zA, zB, zC, zE } = finData.zComponents;
+        const { zA, zB, zC, zE, liabilities: zLiab } = finData.zComponents;
+        // zD = 市值 / 總負債。若無負債，則該項給予極大值 (99) 代表財務極其穩健
+        const zD = (zLiab && zLiab > 0) ? (marketCapValue / zLiab) : (marketCapValue > 0 ? 99 : 0);
         zScore = 1.2 * zA + 1.4 * zB + 3.3 * zC + 0.6 * zD + 1.0 * zE;
         
         if (zScore > 2.99) { zRiskLevel = '安全區'; zColor = '#10b981'; }
@@ -2771,25 +2790,28 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     let mStatus = '正常', mColor = '#4ade80';
     if (finData?.mScore !== undefined && finData?.mScore !== null) {
         if (finData.mScore > -1.78) { mStatus = '舞弊機率高'; mColor = '#ef4444'; }
+        else if (finData.mScore > -2.22) { mStatus = '需注意'; mColor = '#fbbf24'; }
     }
 
     // --- 新增：營收質量診斷 (Accrual Quality) ---
     let accrualDiagnosis = { flags: [], arStatus: '正常', invStatus: '正常' };
     if (finData?.receivableDays !== undefined && finData?.inventoryDays !== undefined) {
         const trend = finData.dioDsoTrend || [];
-        if (trend.length >= 4) {
+        if (trend.length >= 5) {
             const current = trend[trend.length - 1];
-            const prevYear = trend[trend.length - 5] || trend[0];
+            const prevYear = trend[trend.length - 5]; // 精確取 4 季前 (去年同期)
             
-            // 應收帳款天數大幅增加 (>20%)
-            if (current.dso > prevYear.dso * 1.2) {
-                accrualDiagnosis.arStatus = '惡化';
-                accrualDiagnosis.flags.push('⚠️ 應收帳款回收變慢，需留意營收含金量。');
-            }
-            // 存貨天數大幅增加 (>20%)
-            if (current.dio > prevYear.dio * 1.2) {
-                accrualDiagnosis.invStatus = '惡化';
-                accrualDiagnosis.flags.push('⚠️ 存貨週轉天數拉長，需防範產品滯銷或跌價風險。');
+            if (prevYear && prevYear.dso > 0 && prevYear.dio > 0) {
+                // 應收帳款天數大幅增加 (>20%)
+                if (current.dso > prevYear.dso * 1.2) {
+                    accrualDiagnosis.arStatus = '惡化';
+                    accrualDiagnosis.flags.push('⚠️ 應收帳款回收變慢，需留意營收含金量。');
+                }
+                // 存貨天數大幅增加 (>20%)
+                if (current.dio > prevYear.dio * 1.2) {
+                    accrualDiagnosis.invStatus = '惡化';
+                    accrualDiagnosis.flags.push('⚠️ 存貨週轉天數拉長，需防範產品滯銷或跌價風險。');
+                }
             }
         }
         // OCF vs NI 診斷
@@ -3259,7 +3281,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderStatRow('企業價值倍數 (EV/EBIT)', finData?.evEbit !== undefined && finData?.evEbit !== null ? safeFix(finData.evEbit, 2) + ' 倍' : 'N/A')}
                 ${(() => {
                     const earningsYield = twseBasic?.pe > 0 ? (100 / twseBasic.pe) : 0;
-                    const us10y = 4.2; // 預設 10 年期美債殖利率 (無風險利率)
+                    const us10y = ANALYSIS_CONFIG.riskFreeRate; // 使用全域預設值
                     const erp = earningsYield > 0 ? (earningsYield - us10y) : null;
                     
                     return `
@@ -3273,7 +3295,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderDiagnostic(
                     (() => {
                         const earningsYield = twseBasic?.pe > 0 ? (100 / twseBasic.pe) : 0;
-                        const erp = earningsYield > 0 ? (earningsYield - 4.2) : 999;
+                        const erp = earningsYield > 0 ? (earningsYield - ANALYSIS_CONFIG.riskFreeRate) : 999;
                         let erpDiag = "";
                         if (erp < 2) erpDiag = "⚠️ 警訊：股權風險溢酬 (ERP) 過低，股市相對債券不具吸引力。";
                         else if (erp > 5) erpDiag = "🚀 股市風險溢酬極高，具備極佳長線佈局價值。";
@@ -5278,6 +5300,7 @@ const termDefinitions = {
         analyze: (v) => {
             const val = parseFloat(v);
             if (val > -1.78) return "⚠️ 嚴重警告！M-Score 顯示公司具備極高的財報操縱風險，獲利真實性存疑。";
+            if (val > -2.22) return "🟡 注意：財務指標出現背離跡象，雖未確診舞弊，但財報透明度有所下降。";
             return "✅ 財報品質穩健，未偵測到明顯的操縱跡象，獲利含金量可信。";
         }
     },
@@ -6622,7 +6645,7 @@ const termDefinitions = {
                     </div>
                     <div style="margin-top:18px; background:${color}15; padding:12px; border-radius:8px; border-left:4px solid ${color};">
                         <div style="font-size:13px; color:${color}; font-weight:700; line-height:1.5;">${riskStatus}</div>
-                        <div style="font-size:11px; color:#94a3b8; margin-top:6px;">計算基準：盈餘殖利率 (EY) - 當前無風險利率 (4.2%)</div>
+                        <div style="font-size:11px; color:#94a3b8; margin-top:6px;">計算基準：盈餘殖利率 (EY) - 當前無風險利率 (${ANALYSIS_CONFIG.riskFreeRate}%，預設值)</div>
                     </div>
                 </div>
             `;

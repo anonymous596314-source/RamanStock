@@ -186,7 +186,7 @@ const termDefinitions = {
                     </div>
                     <div style="margin-top:18px; background:${color}15; padding:12px; border-radius:8px; border-left:4px solid ${color};">
                         <div style="font-size:13px; color:${color}; font-weight:700; line-height:1.5;">${riskStatus}</div>
-                        <div style="font-size:11px; color:#94a3b8; margin-top:6px;">計算基準：盈餘殖利率 (EY) - 當前無風險利率 (4.2%)</div>
+                        <div style="font-size:11px; color:#94a3b8; margin-top:6px;">計算基準：盈餘殖利率 (EY) - 當前無風險利率 (4.2%，預設值)</div>
                     </div>
                 </div>
             `;
@@ -1543,8 +1543,22 @@ function calculateInstitutionalCosts(dailyData, prices) {
         return totalNet > 0 ? (weightedSum / totalNet) : 0;
     };
     return {
-        foreign: { cost20: calcVWAP('foreign', 20), cost60: calcVWAP('foreign', 60), cost240: calcVWAP('foreign', 240) },
-        trust: { cost20: calcVWAP('trust', 20), cost60: calcVWAP('trust', 60), cost240: calcVWAP('trust', 240) }
+        foreign: { 
+            cost5: calcVWAP('foreign', 5),
+            cost10: calcVWAP('foreign', 10),
+            cost20: calcVWAP('foreign', 20), 
+            cost60: calcVWAP('foreign', 60),
+            cost120: calcVWAP('foreign', 120),
+            cost240: calcVWAP('foreign', 240) 
+        },
+        trust: { 
+            cost5: calcVWAP('trust', 5),
+            cost10: calcVWAP('trust', 10),
+            cost20: calcVWAP('trust', 20), 
+            cost60: calcVWAP('trust', 60),
+            cost120: calcVWAP('trust', 120),
+            cost240: calcVWAP('trust', 240) 
+        }
     };
 }
 
