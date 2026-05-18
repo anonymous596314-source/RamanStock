@@ -1,5 +1,11 @@
 // analysis_data.js
 // 存放大型數據集與 UI 渲染相關輔助函數，以減輕 analysis.js 負擔
+//
+// ⚠️ 注意：此檔案目前「未被 index.html 載入」。
+// 所有函數的正式版本（含最新修正）均在 analysis.js 中維護。
+// 若需使用此檔案，請於 index.html 中加入：
+//   <script src="analysis_data.js"></script>（需置於 analysis.js 之前）
+// 並確認與 analysis.js 中的同名函數不產生衝突。
 
 // === UI 元素宣告 ===
 let analysisModal, closeAnalysisBtn, analysisTitle, analysisBody;
@@ -1116,10 +1122,10 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     }
     
     const epsLTM = finData?.ttmEps || 0;
-    const currentPE = epsLTM > 0 ? currentPrice / epsLTM : 0;
-    let pePercentile = 0;
+    const currentPE = epsLTM > 0 ? currentPrice / epsLTM : (twseBasic?.pe || null);
+    let pePercentile = twseBasic?.pePercentile ?? null;
     let valuationBands = null;
-    if (finData?.historicalTTM && chartData?.prices) {
+    if (finData?.historicalTTM && chartData?.prices && currentPE > 0) {
         const peSamples = finData.historicalTTM.map(h => {
             const p = chartData.prices.filter(p => p.date <= h.date).pop(); 
             return (p && p.close > 0) ? p.close / h.ttm : null;
@@ -1166,17 +1172,17 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     const now = new Date();
     const oneYearAgo = new Date();
     oneYearAgo.setFullYear(now.getFullYear() - 1);
-    const totalDiv12m = (chipsData.divHistory || []).reduce((sum, d) => {
+    const totalDiv12m = chipsData?.currentTtmDiv || (chipsData?.divHistory || []).reduce((sum, d) => {
         const divDate = new Date(d.date);
         return (divDate >= oneYearAgo) ? (sum + d.cash) : sum;
     }, 0);
     
     const calcYield = (totalDiv12m > 0 && currentPrice > 0) ? (totalDiv12m / currentPrice * 100) : null;
     const finalYield = twseBasic?.yield || calcYield;
-    const currentDiv = (finalYield && currentPrice) ? (currentPrice * (finalYield / 100)) : (totalDiv12m || null);
+    const currentDiv = totalDiv12m > 0 ? totalDiv12m : ((finalYield && currentPrice) ? (currentPrice * (finalYield / 100)) : null);
     const costYield = (avgCost && avgCost > 0 && totalDiv12m > 0) ? (totalDiv12m / avgCost * 100) : null;
     
-    const eps = twseBasic?.pe && currentPrice ? currentPrice / twseBasic.pe : (finData?.eps ? finData.eps * 4 : null);
+    const eps = epsLTM > 0 ? epsLTM : (twseBasic?.pe && currentPrice ? currentPrice / twseBasic.pe : (finData?.eps ? finData.eps * 4 : null));
     const divCheap = currentDiv ? currentDiv / 0.05 : null;
     const divReasonable = currentDiv ? currentDiv / 0.04 : null;
     const divExpensive = currentDiv ? currentDiv / 0.03 : null;
@@ -1272,7 +1278,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 <div style="display:flex; justify-content:space-between; margin-bottom:12px; background:rgba(37, 99, 235, 0.1); padding:8px 12px; border-radius:8px; border:1px solid rgba(37, 99, 235, 0.2);">
                     <div style="text-align:center; flex:1;">
                         <div style="font-size:10px; color:#cbd5e1;">當前本益比 (PE)</div>
-                        <div style="font-size:15px; font-weight:700; color:#ffffff;">${twseBasic?.pe ? twseBasic.pe + ' 倍' : 'N/A'}</div>
+                        <div style="font-size:15px; font-weight:700; color:#ffffff;">${currentPE ? safeFix(currentPE, 2) + ' 倍' : 'N/A'}</div>
                     </div>
                     <div style="width:1px; background:rgba(255,255,255,0.1); margin:0 10px;"></div>
                     <div style="text-align:center; flex:1;">
@@ -1379,28 +1385,33 @@ function renderDiagnostic(text) {
 }
 
 function renderPercentRow(label, value, isROE = false, showColor = true) {
-    if (value === null || value === undefined) return renderStatRow(label, 'N/A');
-    const color = showColor ? (value > 0 ? '#f87171' : (value < 0 ? '#4ade80' : '#fff')) : '#fff';
+    const num = Number(value);
+    if (value === null || value === undefined || !Number.isFinite(num)) return renderStatRow(label, 'N/A');
+    const color = showColor ? (num > 0 ? '#f87171' : (num < 0 ? '#4ade80' : '#fff')) : '#fff';
     const hasDef = termDefinitions && termDefinitions[label];
     const labelClass = hasDef ? 'analysis-label has-info' : 'analysis-label';
     return `
         <div class="analysis-stat-row">
-            <span class="${labelClass}" ${hasDef ? `onclick="showTermExplainer('${label}', '${value}%')"` : ''}>${label}</span>
-            <span class="analysis-value" style="color:${color}">${value > 0 ? '+' : ''}${value.toFixed(2)}%</span>
+            <span class="${labelClass}" ${hasDef ? `onclick="showTermExplainer('${label}', '${num}%')"` : ''}>${label}</span>
+            <span class="analysis-value" style="color:${color}">${num > 0 ? '+' : ''}${num.toFixed(2)}%</span>
         </div>
     `;
 }
 
 function safeFix(val, d) {
-    if (val === null || val === undefined || isNaN(val)) return 'N/A';
-    return Number(val).toFixed(d);
+    const num = Number(val);
+    if (val === null || val === undefined || !Number.isFinite(num)) return 'N/A';
+    return num.toFixed(d);
 }
 
 function formatCurrency(val) {
-    if (val === null || val === undefined) return 'N/A';
-    if (val >= 100000000) return (val / 100000000).toFixed(2) + ' 億';
-    if (val >= 10000) return (val / 10000).toFixed(2) + ' 萬';
-    return val.toLocaleString();
+    const num = Number(val);
+    if (val === null || val === undefined || !Number.isFinite(num)) return 'N/A';
+    const absNum = Math.abs(num);
+    const sign = num < 0 ? '-' : '';
+    if (absNum >= 100000000) return sign + (absNum / 100000000).toFixed(2) + ' 億';
+    if (absNum >= 10000) return sign + (absNum / 10000).toFixed(2) + ' 萬';
+    return num.toLocaleString();
 }
 
 function renderNetBuyRow(label, value) {
@@ -1415,15 +1426,17 @@ function renderNetBuyRow(label, value) {
 }
 
 function renderMARow(label, maVal, currentPrice) {
-    if (!maVal) return renderStatRow(label, 'N/A');
-    const diff = ((currentPrice - maVal) / maVal * 100).toFixed(1);
-    const color = currentPrice > maVal ? '#f87171' : '#4ade80';
+    const ma = Number(maVal);
+    const price = Number(currentPrice);
+    if (!Number.isFinite(ma) || ma === 0 || !Number.isFinite(price)) return renderStatRow(label, 'N/A');
+    const diff = ((price - ma) / ma * 100).toFixed(1);
+    const color = price > ma ? '#f87171' : '#4ade80';
     return `
         <div class="analysis-stat-row">
             <span class="analysis-label">${label}</span>
             <span class="analysis-value">
-                ${maVal.toFixed(2)} 
-                <span style="font-size:10px; color:${color}">(${currentPrice > maVal ? '+' : ''}${diff}%)</span>
+                ${ma.toFixed(2)} 
+                <span style="font-size:10px; color:${color}">(${price > ma ? '+' : ''}${diff}%)</span>
             </span>
         </div>
     `;
@@ -1439,16 +1452,18 @@ function renderValuationRow(label, value) {
 }
 
 function renderValuationRiverMap(label, current, percentile, bands) {
-    if (percentile === null || percentile === undefined) return '';
-    const color = percentile > 80 ? '#f87171' : (percentile < 20 ? '#4ade80' : '#fbbf24');
+    const pct = Number(percentile);
+    if (!Number.isFinite(pct)) return '';
+    const clampedPct = Math.max(0, Math.min(100, pct));
+    const color = clampedPct > 80 ? '#f87171' : (clampedPct < 20 ? '#4ade80' : '#fbbf24');
     return `
         <div class="valuation-river-container">
             <div style="display:flex; justify-content:space-between; font-size:10px; margin-bottom:4px;">
                 <span style="color:#cbd5e1;">${label}</span>
-                <span style="color:${color}; font-weight:800;">${percentile.toFixed(1)}%</span>
+                <span style="color:${color}; font-weight:800;">${pct.toFixed(1)}%</span>
             </div>
             <div class="valuation-river-bar">
-                <div class="valuation-river-pointer" style="left: ${percentile}%"></div>
+                <div class="valuation-river-pointer" style="left: ${clampedPct}%"></div>
             </div>
         </div>
     `;
@@ -1456,9 +1471,13 @@ function renderValuationRiverMap(label, current, percentile, bands) {
 
 function renderSectorComparison(sector, data) {
     const bench = sectorBenchmarks[sector] || sectorBenchmarks['其他'];
+    const pe = Number(data?.pe);
+    const gm = Number(data?.gm);
     const compare = (val, benchVal, isLowerBetter = false) => {
-        if (val === null || val === undefined || !benchVal) return '';
-        const diff = val - benchVal;
+        const v = Number(val);
+        const b = Number(benchVal);
+        if (!Number.isFinite(v) || !Number.isFinite(b) || b === 0) return '';
+        const diff = v - b;
         const isGood = isLowerBetter ? diff < 0 : diff > 0;
         return `<span style="color:${isGood ? '#4ade80' : '#f87171'}; font-size:10px; margin-left:4px;">(${diff > 0 ? '+' : ''}${diff.toFixed(1)})</span>`;
     };
@@ -1469,13 +1488,13 @@ function renderSectorComparison(sector, data) {
             ${renderStatRow('產業本益比', `${bench.pe} 倍`)}
             <div class="analysis-stat-row">
                 <span class="analysis-label">本股本益比</span>
-                <span class="analysis-value">${data.pe ? data.pe.toFixed(1) : 'N/A'} ${compare(data.pe, bench.pe, true)}</span>
+                <span class="analysis-value">${Number.isFinite(pe) ? pe.toFixed(1) : 'N/A'} ${compare(pe, bench.pe, true)}</span>
             </div>
             <div class="analysis-stat-row">
                 <span class="analysis-label">本股毛利率</span>
-                <span class="analysis-value">${data.gm ? data.gm.toFixed(1) : 'N/A'}% ${compare(data.gm, bench.gm)}</span>
+                <span class="analysis-value">${Number.isFinite(gm) ? gm.toFixed(1) : 'N/A'}% ${compare(gm, bench.gm)}</span>
             </div>
-            ${renderDiagnostic(`與同業平均相比，該股在${data.pe < bench.pe ? '估值上較具優勢' : '評價相對較高'}。`)}
+            ${renderDiagnostic(`與同業平均相比，該股在${Number.isFinite(pe) && Number.isFinite(Number(bench.pe)) && pe < Number(bench.pe) ? '估值上較具優勢' : '評價相對較高'}。`)}
         </div>
     `;
 }

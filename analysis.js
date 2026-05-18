@@ -223,6 +223,8 @@ async function fetchStockChart(symbol) {
     let startDate = d.toISOString().split('T')[0];
     let url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${rawSymbol}&start_date=${startDate}&cb=${Date.now()}`;
     
+    // 宣告 json 變數，避免隱式全域變數問題
+    let json;
     try {
         json = await analysisFetchProxy(url, true);
     } catch (e) {
@@ -278,7 +280,9 @@ async function fetchStockChart(symbol) {
         const getH = (item) => (item.max || item.High || item.Max || item.high || getP(item));
         const getL = (item) => (item.min || item.Low || item.Min || item.low || getP(item));
 
-        const data = json.data.filter(item => getP(item) > 0);
+        const data = json.data
+            .filter(item => getP(item) > 0)
+            .sort((a, b) => (a.date || a.Date || '').localeCompare(b.date || b.Date || ''));
         if (data.length === 0) {
             const keys = Object.keys(json.data[0] || {}).join(', ');
             log(`Filtered data is empty. Original: ${json.data.length}. Keys: ${keys}`);
@@ -302,21 +306,27 @@ async function fetchStockChart(symbol) {
         const recentLows  = lows.slice(-252);
         const high52w = Math.max(...recentHighs);
         const low52w  = Math.min(...recentLows);
-        const posIn52w = (high52w - low52w) > 0 ? safeFix(((currentPrice - low52w) / (high52w - low52w) * 100), 1) : "0.0";
+        // 修正：posIn52w 應為數值型別，避免字串比較的隱式轉型問題
+        const posIn52w = (high52w - low52w) > 0 ? parseFloat(safeFix(((currentPrice - low52w) / (high52w - low52w) * 100), 1)) : 0;
         const rsi14 = calcRSI(closes, 14);
         const bb = calcBollinger(closes, 20, 2);
         const avgVol5 = vols.length >= 5 ? Math.round(vols.slice(-5).reduce((a,b)=>a+b,0) / 5) : null;
         const kd = calcKD(highs, lows, closes, 9);
         const macd = calcMACD(closes, 12, 26, 9);
-        const price10d = closes.length >= 10 ? ((currentPrice - closes[closes.length - 10]) / closes[closes.length - 10] * 100) : null;
-        const price1m = closes.length >= 20 ? ((currentPrice - closes[closes.length - 20]) / closes[closes.length - 20] * 100) : null;
-        const price3m = closes.length >= 60 ? ((currentPrice - closes[closes.length - 60]) / closes[closes.length - 60] * 100) : null;
-        const mom6m = closes.length >= 126 ? ((currentPrice - closes[closes.length - 126]) / closes[closes.length - 126] * 100) : null;
-        const mom1y = closes.length >= 252 ? ((currentPrice - closes[closes.length - 252]) / closes[closes.length - 252] * 100) : null;
-        const mom2y = closes.length >= 504 ? ((currentPrice - closes[closes.length - 504]) / closes[closes.length - 504] * 100) : null;
-        const mom3y = closes.length >= 756 ? ((currentPrice - closes[closes.length - 756]) / closes[closes.length - 756] * 100) : null;
-        const mom4y = closes.length >= 1008 ? ((currentPrice - closes[closes.length - 1008]) / closes[closes.length - 1008] * 100) : null;
-        const mom5y = closes.length >= 1260 ? ((currentPrice - closes[closes.length - 1260]) / closes[closes.length - 1260] * 100) : null;
+        const calcReturn = (days) => {
+            const idx = closes.length - 1 - days;
+            if (idx < 0 || !closes[idx]) return null;
+            return ((currentPrice - closes[idx]) / closes[idx] * 100);
+        };
+        const price10d = calcReturn(10);
+        const price1m = calcReturn(20);
+        const price3m = calcReturn(60);
+        const mom6m = calcReturn(126);
+        const mom1y = calcReturn(252);
+        const mom2y = calcReturn(504);
+        const mom3y = calcReturn(756);
+        const mom4y = calcReturn(1008);
+        const mom5y = calcReturn(1260);
         const lastYearEndData = data.filter(x => new Date(x.date).getFullYear() < new Date().getFullYear()).pop();
         const momYTD = lastYearEndData ? ((currentPrice - lastYearEndData.close) / lastYearEndData.close * 100) : null;
 
@@ -727,9 +737,11 @@ function calcMACD(closes, fast = 12, slow = 26, signal = 9) {
 
 function calcBollinger(prices, period, stdDev) {
     if (prices.length < period) return null;
-    const mid = calcMA(prices.slice(-period), period);
-    const sumSq = prices.slice(-period).reduce((a, b) => a + Math.pow(b - mid, 2), 0);
-    const sigma = Math.sqrt(sumSq / Math.max(1, period - 1));
+    const slice = prices.slice(-period);
+    const mid = slice.reduce((a, b) => a + b, 0) / period; // 直接計算均值，避免雙重 slice
+    const sumSq = slice.reduce((a, b) => a + Math.pow(b - mid, 2), 0);
+    // 布林通道使用母體標準差 (除以 n)，而非樣本標準差 (除以 n-1)
+    const sigma = Math.sqrt(sumSq / period);
     return {
         upper: parseFloat(safeFix(mid + sigma * stdDev, 2)),
         mid: parseFloat(safeFix(mid, 2)),
@@ -824,7 +836,10 @@ function calculateRiskMetrics(stockData, marketData, lookback = 252) {
     
     // 3. 計算簡化夏普值 (Sharpe Ratio)
     // 算法：(年化報酬率 - 無風險利率) / 年化波動率
-    const mom1y = (stockData[stockData.length - 1].close / stockData[Math.max(0, stockData.length - 252)].close - 1) * 100;
+    const latestSharpePrice = stockData[stockData.length - 1].close || stockData[stockData.length - 1].Close || 0;
+    const baseSharpePoint = stockData[Math.max(0, stockData.length - 1 - 252)];
+    const baseSharpePrice = baseSharpePoint.close || baseSharpePoint.Close || 0;
+    const mom1y = (latestSharpePrice > 0 && baseSharpePrice > 0) ? (latestSharpePrice / baseSharpePrice - 1) * 100 : 0;
     const sharpeRatio = volatility > 0 ? (mom1y - ANALYSIS_CONFIG.riskFreeRate) / volatility : null;
 
     // 4. 計算 RSR (Relative Strength Ratio)
@@ -851,11 +866,10 @@ function calculateRiskMetrics(stockData, marketData, lookback = 252) {
         if (mPricePrev === 0) return null;
         const mRet = (mPriceNow - mPricePrev) / mPricePrev; // 報酬率
 
-        if (mRet === 0) return sRet > 0 ? 1.5 : (sRet < 0 ? 0.5 : 1.0); 
-        
-        let rsr = sRet / mRet;
-        // 如果是背離情況 (一正一負)，rsr 會是負數。
-        // 但我們希望呈現「相對強度」，所以如果是個股漲、大盤跌，這是極強。
+        if (1 + mRet === 0) return null;
+
+        const rsr = (1 + sRet) / (1 + mRet);
+        // 使用相對報酬比，避免「個股與大盤同跌」時除以負報酬造成強弱方向反轉。
         return parseFloat(rsr.toFixed(2));
     };
 
@@ -1090,7 +1104,7 @@ async function fetchTWSEBasic(symbol) {
         }
 
         if (json && json.data && json.data.length > 0) {
-            const data = json.data;
+            const data = [...json.data].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
             const latest = data[data.length - 1];
             
             // 提取有效的 PE/PB 列表用於統計
@@ -1482,27 +1496,40 @@ async function fetchFinMindRevenue(symbol) {
     }
 
     if (json && json.data && json.data.length >= 2) {
-        const data = json.data;
+        const data = [...json.data].sort((a, b) => {
+            const da = a.date || `${a.revenue_year}-${String(a.revenue_month).padStart(2, '0')}`;
+            const db = b.date || `${b.revenue_year}-${String(b.revenue_month).padStart(2, '0')}`;
+            return da.localeCompare(db);
+        });
         const current = data[data.length - 1];
         const prev    = data[data.length - 2];
-        const lastYear = data.find(x => x.revenue_year === current.revenue_year - 1 && x.revenue_month === current.revenue_month);
+        const toNumber = (value) => {
+            const num = Number(value);
+            return Number.isFinite(num) ? num : 0;
+        };
+        const getRevenue = (item) => toNumber(item?.revenue ?? item?.Revenue ?? 0);
+        const getRevenueYear = (item) => toNumber(item?.revenue_year ?? (item?.date || '').slice(0, 4));
+        const getRevenueMonth = (item) => toNumber(item?.revenue_month ?? (item?.date || '').slice(5, 7));
+        const currentYear = getRevenueYear(current);
+        const currentMonth = getRevenueMonth(current);
+        const lastYear = data.find(x => getRevenueYear(x) === currentYear - 1 && getRevenueMonth(x) === currentMonth);
         
-        const curRev = current.revenue || current.Revenue || 0;
-        const preRev = prev.revenue || prev.Revenue || 0;
-        const lyRev  = lastYear ? (lastYear.revenue || lastYear.Revenue || 0) : 0;
+        const curRev = getRevenue(current);
+        const preRev = getRevenue(prev);
+        const lyRev  = lastYear ? getRevenue(lastYear) : 0;
 
         const mom = preRev > 0 ? ((curRev - preRev) / preRev) * 100 : null;
         const yoy = lyRev > 0 ? ((curRev - lyRev) / lyRev) * 100 : null;
         
         const last12 = data.slice(-12);
-        const cum12m = last12.reduce((s, x) => s + (x.revenue || x.Revenue || 0), 0);
+        const cum12m = last12.reduce((s, x) => s + getRevenue(x), 0);
         
-        const ytdMonths = data.filter(x => x.revenue_year === current.revenue_year);
-        const ytd = ytdMonths.reduce((s, x) => s + (x.revenue || x.Revenue || 0), 0);
+        const ytdMonths = data.filter(x => getRevenueYear(x) === currentYear);
+        const ytd = ytdMonths.reduce((s, x) => s + getRevenue(x), 0);
         
         // 新增：去年同期累計 (Last Year YTD)
-        const lyYtdMonths = data.filter(x => x.revenue_year === current.revenue_year - 1 && x.revenue_month <= current.revenue_month);
-        const lyYtd = lyYtdMonths.reduce((s, x) => s + (x.revenue || x.Revenue || 0), 0);
+        const lyYtdMonths = data.filter(x => getRevenueYear(x) === currentYear - 1 && getRevenueMonth(x) <= currentMonth);
+        const lyYtd = lyYtdMonths.reduce((s, x) => s + getRevenue(x), 0);
         const cumYoy = lyYtd > 0 ? ((ytd - lyYtd) / lyYtd * 100) : null;
         
         let yoyUpMonths = 0;
@@ -1512,9 +1539,11 @@ async function fetchFinMindRevenue(symbol) {
         // 計算近 12 個月的逐月 YoY，並統計近 6 個月的平均值
         for (let i = 0; i < last12.length; i++) {
             const m = last12[i];
-            const ly = data.find(x => x.revenue_year === m.revenue_year - 1 && x.revenue_month === m.revenue_month);
-            const mRev = m.revenue || m.Revenue || 0;
-            const lyR = ly ? (ly.revenue || ly.Revenue || 0) : 0;
+            const mYear = getRevenueYear(m);
+            const mMonth = getRevenueMonth(m);
+            const ly = data.find(x => getRevenueYear(x) === mYear - 1 && getRevenueMonth(x) === mMonth);
+            const mRev = getRevenue(m);
+            const lyR = ly ? getRevenue(ly) : 0;
             if (lyR > 0) {
                 const currentYoY = ((mRev - lyR) / lyR) * 100;
                 if (mRev > lyR) yoyUpMonths++;
@@ -1528,7 +1557,7 @@ async function fetchFinMindRevenue(symbol) {
         }
 
         return {
-            month: `${current.revenue_year}年${current.revenue_month}月`,
+            month: `${currentYear}年${currentMonth}月`,
             revenue: curRev,
             mom,
             yoy,
@@ -1601,8 +1630,11 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
         }
         // 備援：若仍缺失，從資產負債表「股本」反算 (股本 / 10)
         if (!sharesFromInfo && jsonB?.data) {
-            const latestB = jsonB.data.filter(x => x.type === 'Equity' || x.type === 'TotalEquity' || x.type === 'CapitalStock' || x.type === 'OrdinaryShareCapital').pop();
-            const capital = jsonB.data.filter(x => x.type.includes('Capital')).pop()?.value || 0;
+            const capitalTypes = ['CapitalStock', 'Capital_Stock', 'OrdinaryShareCapital', 'Ordinary_share_capital'];
+            const capital = jsonB.data
+                .filter(x => capitalTypes.includes(x.type) && !/_per$/i.test(x.type))
+                .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+                .pop()?.value || 0;
             if (capital > 0) sharesFromInfo = capital / 10;
         }
 
@@ -1618,23 +1650,29 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             const getVal = (qData, types) => {
                 if (!qData || qData.length === 0) return 0;
                 if (typeof types === 'string') types = [types];
+                const toNumber = (value) => {
+                    const num = Number(value);
+                    return Number.isFinite(num) ? num : 0;
+                };
                 
                 // 1. 精確比對
                 for (let t of types) {
                     const item = qData.find(x => x.type === t);
-                    if (item && item.value !== undefined) return item.value;
+                    if (item && item.value !== undefined) return toNumber(item.value);
                 }
                 
                 // 2. 寬鬆比對 (忽略大小寫、底線、空格)
                 const cleanStr = (s) => (s || "").toLowerCase().replace(/_/g, '').replace(/\s/g, '').replace(/-/g, '');
                 const cleanTypes = types.map(t => cleanStr(t));
+                const allowPercentField = types.some(t => /(^|_)per$/i.test(t) || /percent|percentage|ratio/i.test(t));
 
                 for (let ct of cleanTypes) {
                     const item = qData.find(x => {
+                        if (!allowPercentField && /(^|_)per$/i.test(x.type || '')) return false;
                         const cx = cleanStr(x.type);
                         return cx === ct || cx.includes(ct);
                     });
-                    if (item && item.value !== undefined) return item.value;
+                    if (item && item.value !== undefined) return toNumber(item.value);
                 }
                 return 0;
             };
@@ -1670,14 +1708,23 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
 
             // 擴展關鍵欄位的匹配名稱，優先選用「歸屬於母公司」之數值 (整合版)
             const niSyns = ['Consolidated_net_income_attributable_to_owners_of_parent', 'Net_income_loss_attributable_to_owners_of_parent', 'NetIncomeAttributableToParent', 'NetIncome', 'Net_Income', 'IncomeAfterTaxes'];
-            const eqSyns = ['Total_equity_attributable_to_owners_of_parent', 'Equity_attributable_to_owners_of_parent', 'TotalEquity', 'Total_Equity', 'Equity'];
+            const eqSyns = ['Total_equity_attributable_to_owners_of_parent', 'Equity_attributable_to_owners_of_parent', 'TotalEquityAttributableToOwnersOfParent', 'EquityAttributableToOwnersOfParent', 'TotalEquity', 'Total_Equity', 'Equity'];
             const assetSyns = ['TotalAssets', 'Assets', 'Total_Assets', 'Total_assets'];
 
-            const rev = getVal(latestS, ['Revenue', 'revenue', 'OperatingRevenue', 'Total_Operating_Revenue', 'Operating_Revenue']);
+            const revenueSyns = ['Revenue', 'revenue', 'OperatingRevenue', 'Total_Operating_Revenue', 'Operating_Revenue'];
+            const grossProfitSyns = ['GrossProfit', 'Gross_Profit', 'gross_profit', 'Gross_Profit_Loss', 'Gross_profit_loss_from_operations'];
+            const opIncomeSyns = ['OperatingIncome', 'Operating_Income', 'operating_income', 'Operating_Income_Loss', 'Operating_income_loss'];
+            const preTaxIncomeSyns = ['PreTaxIncome', 'IncomeBeforeTax', 'ProfitBeforeTax', 'Profit_Loss_Before_Tax', 'income_before_tax', 'Profit_loss_before_tax'];
+            const interestExpSyns = ['FinancialCost', 'InterestExpense', 'FinanceCosts', 'Finance_Costs', 'interest_expense', 'Interest_expense', 'Financial_costs'];
+            const ocfSyns = ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities', 'Cash_flows_from_used_in_operating_activities', 'Net_cash_flows_from_used_in_operating_activities', 'Net_cash_generated_from_used_in_operating_activities', 'OperatingCashFlow', 'Operating_cash_flow', 'Net_cash_inflow_from_operating_activities'];
+            const investingCFSyns = ['CashProvidedByInvestingActivities', 'CashFlowsFromInvestingActivities', 'NetCashInflowFromInvestingActivities', 'InvestingCashFlow', 'Investing_cash_flow', 'Net_cash_used_in_investing_activities'];
+            const capexSyns = ['Acquisition_of_property_plant_and_equipment', 'PropertyAndPlantAndEquipment', 'AcquisitionOfPropertyPlantAndEquipment', 'Acquisition_of_property_plant_and_equipment_and_other_assets', 'purchase_of_property_plant_and_equipment'];
+
+            const rev = getVal(latestS, revenueSyns);
             const netIncome = getVal(latestS, niSyns);
-            const opIncome = getVal(latestS, ['OperatingIncome', 'Operating_Income', 'operating_income', 'Operating_Income_Loss', 'Operating_income_loss']);
-            const grossProfit = getVal(latestS, ['GrossProfit', 'Gross_Profit', 'gross_profit', 'Gross_Profit_Loss', 'Gross_profit_loss_from_operations']);
-            const preTaxIncome = getVal(latestS, ['PreTaxIncome', 'IncomeBeforeTax', 'ProfitBeforeTax', 'Profit_Loss_Before_Tax', 'income_before_tax', 'Profit_loss_before_tax']);
+            const opIncome = getVal(latestS, opIncomeSyns);
+            const grossProfit = getVal(latestS, grossProfitSyns);
+            const preTaxIncome = getVal(latestS, preTaxIncomeSyns);
             
             const equity = getVal(latestB, eqSyns) || 1;
             const assets = getVal(latestB, assetSyns) || 1;
@@ -1693,9 +1740,9 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             const ppe = getVal(latestB, ['Property_plant_and_equipment', 'PropertyPlantAndEquipment', 'PropertyPlantAndEquipmentNet', 'property_plant_and_equipment']);
             const depr = getVal(latestC, ['Depreciation', 'Depreciation_and_amortization_expense', 'depreciation']);
             const sga = getVal(latestS, ['Selling_general_and_administrative_expenses', 'OperatingExpenses', 'Total_operating_expenses', 'operating_expenses']);
-            const cfo = getVal(latestC, ['Net_cash_flows_from_used_in_operating_activities', 'CashFlowsFromUsedInOperatingActivities', 'operating_cash_flow']);
+            const cfo = getVal(latestC, ocfSyns);
 
-            const interestExp = Math.abs(getVal(latestS, ['FinancialCost', 'InterestExpense', 'FinanceCosts', 'Finance_Costs', 'interest_expense', 'Interest_expense', 'Financial_costs']));
+            const interestExp = Math.abs(getVal(latestS, interestExpSyns));
             const nonOpIncome = getVal(latestS, ['TotalNonoperatingIncomeAndExpense', 'NonOperatingIncome', 'TotalNonOperatingIncomeAndExpenses', 'Total_non_operating_income_and_expenses', 'Non-operating_income_and_expenses', 'Net_non_operating_income_and_expenses']);
             const cash = getVal(latestB, ['CashAndCashEquivalents', 'Cash_And_Cash_Equivalents', 'cash_and_cash_equivalents', 'Cash_and_cash_equivalents']);
             const nonOpRate = (netIncome !== 0) ? (nonOpIncome / Math.abs(netIncome) * 100) : 0;
@@ -1710,8 +1757,44 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             const avgEquity = (equity + prevEquity) / 2;
             const avgAssets = (assets + prevAssets) / 2;
 
+            const ttmDates = allDates.slice(-4);
+            const sumStatementTTM = (types) => ttmDates.reduce((sum, date) => {
+                return sum + (getVal(getQData(jsonS.data, date), types) || 0);
+            }, 0);
+            const normalizeCapexOutflow = (value) => {
+                if (!value) return 0;
+                return value > 0 ? -value : value;
+            };
+            const sumCashFlowTTM = (types, normalizeCapex = false) => ttmDates.reduce((sum, date) => {
+                const value = getDiscreteVal(jsonC?.data, date, types) || 0;
+                return sum + (normalizeCapex ? normalizeCapexOutflow(value) : value);
+            }, 0);
+            const getAverageBalanceEnding = (endDate, types) => {
+                const endIdx = allDates.indexOf(endDate);
+                const startDate = endIdx >= 4 ? allDates[endIdx - 4] : (endIdx > 0 ? allDates[endIdx - 1] : endDate);
+                const endB = getLatestDataFromDataset(jsonB?.data, endDate);
+                const startB = getLatestDataFromDataset(jsonB?.data, startDate);
+                const endValue = endB.length > 0 ? getVal(endB, types) : getVal(latestB, types);
+                const startValue = startB.length > 0 ? getVal(startB, types) : endValue;
+                return (startValue > 0 && endValue > 0) ? ((startValue + endValue) / 2) : (endValue || startValue || 0);
+            };
+            const getAverageBalanceTTM = (types) => getAverageBalanceEnding(latestDate, types);
+
+            const ttmRevenue = sumStatementTTM(revenueSyns);
+            const ttmNetIncome = sumStatementTTM(niSyns);
+            const ttmOpIncome = sumStatementTTM(opIncomeSyns);
+            const ttmPreTaxIncome = sumStatementTTM(preTaxIncomeSyns);
+            const ttmInterestExp = Math.abs(sumStatementTTM(interestExpSyns));
+            const ttmOCF = sumCashFlowTTM(ocfSyns);
+            const ttmInvestingCF = sumCashFlowTTM(investingCFSyns);
+            const ttmCapEx = sumCashFlowTTM(capexSyns, true);
+            const ttmFCF = ttmOCF + ttmCapEx;
+            const avgEquityTTM = getAverageBalanceTTM(eqSyns) || avgEquity;
+            const avgAssetsTTM = getAverageBalanceTTM(assetSyns) || avgAssets;
+            const cfoForAnnualMetrics = ttmOCF || cfo || 0;
+
             // Calculate Market Cap if possible
-            const shares = sharesFromChips || getVal(latestB, ['Shares_issued', 'NumberOfSharesIssued', 'Total_shares_issued', 'Ordinary_shares_issued', 'Ordinary_shares_outstanding', 'Total_shares_outstanding']) || 0;
+            const shares = sharesFromChips || sharesFromInfo || getVal(latestB, ['Shares_issued', 'NumberOfSharesIssued', 'Total_shares_issued', 'Ordinary_shares_issued', 'Ordinary_shares_outstanding', 'Total_shares_outstanding']) || 0;
             const marketCap = (currentPrice > 0 && shares > 0) ? (currentPrice * shares / 100000000) : 0; // 億元
 
             // 計算 8 季 EPS 趨勢
@@ -1731,8 +1814,8 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 const lastYearEps = getVal(lastYearS, epsSynonyms);
                 if (lastYearEps !== 0) epsYoY = ((currentEps - lastYearEps) / Math.abs(lastYearEps)) * 100;
                 
-                const lastYearRev = getVal(lastYearS, 'Revenue');
-                const lastYearGross = getVal(lastYearS, 'GrossProfit');
+                const lastYearRev = getVal(lastYearS, revenueSyns);
+                const lastYearGross = getVal(lastYearS, grossProfitSyns);
                 if (rev > 0 && lastYearRev > 0) {
                     const currentGM = (grossProfit / rev) * 100;
                     const lastYearGM = (lastYearGross / lastYearRev) * 100;
@@ -1743,7 +1826,7 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             const marginTrend4 = allDates.slice(-4).map(date => {
                 const qd = getQData(jsonS.data, date);
                 const qb = getLatestDataFromDataset(jsonB?.data, date);
-                const qRev = getVal(qd, ['Revenue', 'OperatingRevenue', 'Total_Operating_Revenue']);
+                const qRev = getVal(qd, revenueSyns);
                 const qNet = getVal(qd, niSyns);
                 const currentEquity = getVal(qb, eqSyns) || 1;
                 const currentAssets = getVal(qb, assetSyns) || 1;
@@ -1761,8 +1844,8 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
 
                 return {
                     date: date,
-                    grossMargin: qRev > 0 ? (getVal(qd, ['GrossProfit', 'gross_profit']) / qRev * 100) : 0,
-                    operatingMargin: qRev > 0 ? (getVal(qd, ['OperatingIncome', 'operating_income']) / qRev * 100) : 0,
+                    grossMargin: qRev > 0 ? (getVal(qd, grossProfitSyns) / qRev * 100) : 0,
+                    operatingMargin: qRev > 0 ? (getVal(qd, opIncomeSyns) / qRev * 100) : 0,
                     netMargin: qRev > 0 ? (qNet / qRev * 100) : 0,
                     roe: avgEq > 0 ? (qNet / avgEq * 100) : 0,
                     assetTurnover: avgAssets > 0 ? (qRev / avgAssets) : 0,
@@ -1784,16 +1867,16 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             }
 
             // 獲利品質 (OCF / NI)
-            const ocf = getVal(latestC, ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities', 'Cash_flows_from_used_in_operating_activities', 'Net_cash_generated_from_used_in_operating_activities', 'OperatingCashFlow', 'Operating_cash_flow', 'Net_cash_inflow_from_operating_activities']);
-            const investingCF = getVal(latestC, ['CashProvidedByInvestingActivities', 'CashFlowsFromInvestingActivities', 'NetCashInflowFromInvestingActivities', 'InvestingCashFlow', 'Investing_cash_flow', 'Net_cash_used_in_investing_activities']);
-            const capex = getVal(latestC, ['Acquisition_of_property_plant_and_equipment', 'PropertyAndPlantAndEquipment', 'AcquisitionOfPropertyPlantAndEquipment', 'Acquisition_of_property_plant_and_equipment_and_other_assets', 'purchase_of_property_plant_and_equipment']) || 0;
-            const earningsQuality = (ocf && netIncome > 0) ? (ocf / netIncome * 100) : null;
+            const ocf = ttmOCF;
+            const investingCF = ttmInvestingCF;
+            const capex = ttmCapEx;
+            const earningsQuality = (cfoForAnnualMetrics && ttmNetIncome > 0) ? (cfoForAnnualMetrics / ttmNetIncome * 100) : null;
 
             // Altman Z-Score Calculation (approximate)
             const zA = assets > 0 ? (curAssets - curLiab) / assets : 0;
             const zB = assets > 0 ? retainedEarnings / assets : 0;
-            const zC = assets > 0 ? opIncome / assets : 0;
-            const zE = assets > 0 ? rev / assets : 0;
+            const zC = assets > 0 ? ttmOpIncome / assets : 0;
+            const zE = assets > 0 ? ttmRevenue / assets : 0;
 
             const dio = (inv > 0 && rev > grossProfit) ? (inv / ((rev - grossProfit) / 90)) : 0;
             const dso = (receivables > 0 && rev > 0) ? (receivables / (rev / 90)) : 0;
@@ -1807,12 +1890,19 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 const prevS = getQData(jsonS.data, prevYearDate);
                 const prevB = getLatestDataFromDataset(jsonB?.data, prevYearDate);
                 
-                const ni = getVal(latestS, ['IncomeAfterTaxes', 'NetIncome', 'Net_Income']);
-                const pni = getVal(prevS, ['IncomeAfterTaxes', 'NetIncome', 'Net_Income']);
-                const roa = assets > 0 ? ni / assets : 0;
+                const prevYearIdx = allDates.indexOf(prevYearDate);
+                const prevTtmDates = prevYearIdx >= 3 ? allDates.slice(prevYearIdx - 3, prevYearIdx + 1) : [prevYearDate];
+                const sumPrevStatement = (types) => prevTtmDates.reduce((sum, date) => {
+                    return sum + (getVal(getQData(jsonS.data, date), types) || 0);
+                }, 0);
+
+                const ni = ttmNetIncome;
+                const pni = sumPrevStatement(niSyns);
+                const roa = avgAssetsTTM > 0 ? ni / avgAssetsTTM : 0;
                 const pAssets = getVal(prevB, ['TotalAssets', 'Assets', 'Total_Assets']);
-                const proa = pAssets > 0 ? pni / pAssets : 0;
-                const curOCF = ocf || 0;
+                const prevAvgAssets = getAverageBalanceEnding(prevYearDate, assetSyns) || pAssets;
+                const proa = prevAvgAssets > 0 ? pni / prevAvgAssets : 0;
+                const curOCF = cfoForAnnualMetrics || 0;
                 
                 const curLTD = getVal(latestB, ['LongTermLiabilities', 'NonCurrentLiabilities', 'TotalNonCurrentLiabilities']) || 0;
                 const pLTD = getVal(prevB, ['LongTermLiabilities', 'NonCurrentLiabilities', 'TotalNonCurrentLiabilities']) || 0;
@@ -1822,37 +1912,39 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 const pCR = prevCL > 0 ? prevCA / prevCL : 0;
                 
                 const curGM = rev > 0 ? grossProfit / rev : 0;
-                const prevRev = getVal(prevS, 'Revenue');
-                const prevGP = getVal(prevS, ['GrossProfit', 'Gross_Profit']);
+                const prevRev = sumPrevStatement(revenueSyns);
+                const prevGP = sumPrevStatement(grossProfitSyns);
                 const pGM = prevRev > 0 ? prevGP / prevRev : 0;
                 
-                const curAT = assets > 0 ? rev / assets : 0;
-                const pAT = pAssets > 0 ? prevRev / pAssets : 0;
+                const curAT = avgAssetsTTM > 0 ? ttmRevenue / avgAssetsTTM : 0;
+                const pAT = prevAvgAssets > 0 ? prevRev / prevAvgAssets : 0;
 
                 const check = (cond, msg) => { 
                     if(cond) { fScore++; fDetails.push({msg, ok:true}); } 
                     else { fDetails.push({msg, ok:false}); } 
                 };
                 
-                check(ni > 0, "ROA (本期淨利) 為正值 (F1)");
-                check(curOCF > 0, "營運現金流 (OCF) 為正值 (F2)");
-                check(roa > proa, "ROA 較去年同期進步 (F3)");
-                check(curOCF > ni, "獲利品質優良 (OCF > 淨利) (F4)");
-                check(curLTD <= pLTD, "長期負債未增加 (F5)");
-                check(curCR > pCR, "流動比率較去年同期進步 (F6)");
-                check(curGM > pGM, "毛利率較去年同期進步 (F8)");
-                check(curAT > pAT, "資產週轉率較去年同期進步 (F9)");
+                check(ni > 0, "ROA (近四季淨利) 為正值");
+                check(curOCF > 0, "營運現金流 (OCF) 為正值");
+                check(roa > proa, "ROA 較去年同期進步");
+                check(curOCF > ni, "獲利品質優良 (OCF > 淨利)");
+                // F5：財務槓桿 (長債/總資產) 未增加 —— 使用比率而非絕對值，避免資產規模膨脹時誤判
+                const curLev = avgAssetsTTM > 0 ? curLTD / avgAssetsTTM : 0;
+                const pLev   = prevAvgAssets > 0 ? pLTD / prevAvgAssets : 0;
+                check(curLev <= pLev, "財務槓桿 (長債/資產比) 未增加");
+                check(curCR > pCR, "流動比率較去年同期進步");
                 // 股份稀釋檢核：比對本期與去年同期的發行股數
                 const shareSyns = ['Shares_issued', 'NumberOfSharesIssued', 'Total_shares_issued', 'Ordinary_shares_issued', 'Ordinary_shares_outstanding', 'Total_shares_outstanding'];
                 const curShares = shares || getVal(latestB, shareSyns);
                 const pShares   = getVal(prevB, shareSyns);
-                
                 // 只有在資料齊全，且今年股數不超過去年時才給分 (允許減資，不允許增資稀釋)
                 if (curShares > 0 && pShares > 0) {
                     check(curShares <= pShares, "股份稀釋檢核 (無增資行為)");
                 } else {
-                    check(true, "股份稀釋檢核 (數據不足，暫予通過)"); 
-                } 
+                    check(true, "股份稀釋檢核 (數據不足，暫予通過)");
+                }
+                check(curGM > pGM, "毛利率較去年同期進步");
+                check(curAT > pAT, "資產週轉率較去年同期進步");
             }
 
             // --- 新增：Beneish M-Score 舞弊診斷 (優化版) ---
@@ -1885,7 +1977,8 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     const depr_t = depr, depr_t1 = getVal(prevC, ['Depreciation', 'Depreciation_and_amortization_expense']) || 0;
                     const sga_t = sga, sga_t1 = getVal(prevS, ['Selling_general_and_administrative_expenses', 'OperatingExpenses', 'operating_expenses']) || 1;
                     const lb_t = liabilities, lb_t1 = getVal(prevB, ['TotalLiabilities', 'Liabilities']) || 1;
-                    const ni_t = netIncome, cfo_t = cfo || 0;
+                    const ni_t = ttmNetIncome || netIncome;
+                    const cfo_t = cfoForAnnualMetrics;
 
                     const safeDiv = (a, b) => (b && b !== 0) ? a / b : 1;
 
@@ -1919,7 +2012,7 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 if (ttmEps > 0) historicalTTM.push({ date, ttm: ttmEps });
                 
                 // TTM Revenue & Shares (for PS Ratio)
-                const ttmRev = qDataArray.reduce((sum, qd) => sum + (getVal(qd, ['Revenue', 'OperatingRevenue', 'Total_Operating_Revenue']) || 0), 0);
+                const ttmRev = qDataArray.reduce((sum, qd) => sum + (getVal(qd, revenueSyns) || 0), 0);
                 const qb = getLatestDataFromDataset(jsonB?.data, date);
                 const histShares = getVal(qb, ['Shares_issued', 'NumberOfSharesIssued', 'Total_shares_issued', 'Ordinary_shares_issued', 'Ordinary_shares_outstanding', 'Total_shares_outstanding']) || 
                                    (getVal(qb, ['Ordinary_share_capital', 'CapitalStock', 'Capital_Stock']) / 10) || 0;
@@ -1928,21 +2021,23 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     historicalPSData.push({ date, ttmRev, shares: histShares });
                 }
             }
-            // 進階機構指標計算：ROIC 與 EV/EBIT
-            const ttmOpIncome = allDates.slice(-4).reduce((sum, date) => {
-                const qd = getQData(jsonS.data, date);
-                return sum + getVal(qd, ['OperatingIncome', 'Operating_Income', 'operating_income', 'Operating_Income_Loss', 'Operating_income_loss']);
-            }, 0);
-            
+            // 進階機構指標計算：ROIC 與 EV/EBIT 使用近四季 EBIT，避免單季數字年化失真
             const rawMarketCap = (currentPrice > 0 && shares > 0) ? (currentPrice * shares) : 0;
-            // 優先抓取有息負債 (短期借款、長期借款、應付公司債等)
-            const finDebt = getVal(latestB, [
-                'ShortTermBorrowings', 'LongTermBorrowings', 'ShortTermLoan', 'LongTermLoan', 
-                'Borrowings', 'LoansAndBorrowings', 'BondsPayable', 'Short-term_borrowings', 'Long-term_borrowings'
-            ]) || (liabilities * 0.4); // ⚠ 近似值：若 API 無法拆分，以總負債 40% 替代有息負債
+            // 優先加總明確有息負債科目，避免 getVal 只抓到第一個科目而低估 EV。
+            const debtExactTypes = [
+                'ShortTermBorrowings', 'Short-term_borrowings', 'ShortTermLoan', 'Short_term_loans',
+                'LongTermBorrowings', 'Long-term_borrowings', 'LongTermLoan', 'Long_term_loans',
+                'Current_portion_of_long_term_borrowings', 'CurrentPortionOfLongTermBorrowings',
+                'BondsPayable', 'Bonds_payable'
+            ];
+            const finDebtExact = debtExactTypes.reduce((sum, type) => {
+                const item = latestB.find(x => x.type === type);
+                return sum + (item && item.value !== undefined ? Math.abs(item.value) : 0);
+            }, 0);
+            const finDebt = finDebtExact || getVal(latestB, ['Borrowings', 'LoansAndBorrowings']) || (liabilities * 0.4); // 近似值：若 API 無法拆分，以總負債 40% 替代有息負債
             const ev = rawMarketCap > 0 ? (rawMarketCap + finDebt - cash) : 0;
             const evEbit = (ev > 0 && ttmOpIncome > 0) ? (ev / ttmOpIncome) : null;
-            const investedCapital = assets - curLiab;
+            const investedCapital = equity + finDebt - cash;
             const roic = (investedCapital > 0) ? (ttmOpIncome * 0.8 / investedCapital * 100) : null;
 
             return {
@@ -1964,12 +2059,12 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     return sum + (getVal(qd, 'EPS') || 0);
                 }, 0),
                 epsYoY:      epsYoY,
-                roe:         avgEquity > 0 ? (netIncome / avgEquity) * 100 : null,
-                roa:         avgAssets > 0 ? (netIncome / avgAssets) * 100 : null,
+                roe:         avgEquityTTM > 0 ? (ttmNetIncome / avgEquityTTM) * 100 : null,
+                roa:         avgAssetsTTM > 0 ? (ttmNetIncome / avgAssetsTTM) * 100 : null,
                 equity:      equity,
                 assets:      assets,
                 liabilities: liabilities,
-                assetTurnover: avgAssets > 0 ? rev / avgAssets : null,
+                assetTurnover: avgAssetsTTM > 0 ? ttmRevenue / avgAssetsTTM : null,
                 equityMultiplier: equity > 0 ? assets / equity : null,
                 debtRatio:   getVal(latestB, 'Liabilities_per') || (liabilities / assets * 100),
                 currentRatio: curLiab > 0 ? (curAssets / curLiab) * 100 : null,
@@ -1978,12 +2073,13 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 inventoryDays: dio || null, 
                 receivableDays: dso || null,
                 payableDays: dpo || null,
-                ccc: (dio + dso - dpo) || null,
-                interestCoverage: interestExp > 0 ? (preTaxIncome + interestExp) / interestExp : (preTaxIncome > 0 ? 999 : null),
+                // 修正：使用明確條件判斷，避免 CCC=0 時被 || 誤判為 null
+                ccc: (dio > 0 || dso > 0 || dpo > 0) ? (dio + dso - dpo) : null,
+                interestCoverage: ttmInterestExp > 0 ? (ttmPreTaxIncome + ttmInterestExp) / ttmInterestExp : (ttmPreTaxIncome > 0 ? 999 : null),
                 earningsQuality: earningsQuality,
                 fcfTrend:    allDates.slice(-8).map(date => {
-                    const ocfVal = getDiscreteVal(jsonC?.data, date, ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities', 'OperatingCashFlow', 'Operating_cash_flow', 'Net_cash_generated_from_used_in_operating_activities']);
-                    const capexVal = getDiscreteVal(jsonC?.data, date, ['Acquisition_of_property_plant_and_equipment', 'PropertyAndPlantAndEquipment', 'AcquisitionOfPropertyPlantAndEquipment', 'Acquisition_of_property_plant_and_equipment_and_other_assets', 'purchase_of_property_plant_and_equipment']);
+                    const ocfVal = getDiscreteVal(jsonC?.data, date, ocfSyns);
+                    const capexVal = normalizeCapexOutflow(getDiscreteVal(jsonC?.data, date, capexSyns));
                     return { date, ocf: ocfVal, capex: capexVal, fcf: ocfVal + capexVal };
                 }),
                 latestOCF: ocf,
@@ -2040,7 +2136,7 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     last8.forEach(date => {
                         const sData = getQData(jsonS.data, date);
                         const ni = getVal(sData, ['IncomeAfterTaxes', 'NetIncome', 'Net_Income', 'income_after_taxes', 'NetIncomeAttributableToParent', 'Net_Income_Loss', 'Consolidated_net_income_attributable_to_owners_of_parent']);
-                        const ocf = getDiscreteVal(jsonC?.data, date, ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities', 'OperatingCashFlow', 'Operating_cash_flow', 'Net_cash_generated_from_used_in_operating_activities']);
+                        const ocf = getDiscreteVal(jsonC?.data, date, ocfSyns);
                         
                         totalOCF += ocf;
                         totalNI += ni;
@@ -2160,8 +2256,8 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     const last20 = allDates.slice(-20);
                     let total = 0;
                     last20.forEach(date => {
-                        const ocfVal = getDiscreteVal(jsonC?.data, date, ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities', 'OperatingCashFlow', 'Operating_cash_flow', 'Net_cash_generated_from_used_in_operating_activities']) || 0;
-                        const capexVal = getDiscreteVal(jsonC?.data, date, ['Acquisition_of_property_plant_and_equipment', 'PropertyAndPlantAndEquipment', 'AcquisitionOfPropertyPlantAndEquipment', 'Acquisition_of_property_plant_and_equipment_and_other_assets', 'purchase_of_property_plant_and_equipment']) || 0;
+                        const ocfVal = getDiscreteVal(jsonC?.data, date, ocfSyns) || 0;
+                        const capexVal = normalizeCapexOutflow(getDiscreteVal(jsonC?.data, date, capexSyns) || 0);
                         total += (ocfVal + capexVal);
                     });
                     return total;
@@ -2171,8 +2267,8 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     const yearlyFCF = {};
                     allDates.forEach(date => {
                         const year = date.split('-')[0];
-                        const ocfVal = getDiscreteVal(jsonC?.data, date, ['CashFlowsFromOperatingActivities', 'NetCashInflowFromOperatingActivities', 'OperatingCashFlow', 'Operating_cash_flow', 'Net_cash_generated_from_used_in_operating_activities']) || 0;
-                        const capexVal = getDiscreteVal(jsonC?.data, date, ['Acquisition_of_property_plant_and_equipment', 'PropertyAndPlantAndEquipment', 'AcquisitionOfPropertyPlantAndEquipment', 'Acquisition_of_property_plant_and_equipment_and_other_assets', 'purchase_of_property_plant_and_equipment']) || 0;
+                        const ocfVal = getDiscreteVal(jsonC?.data, date, ocfSyns) || 0;
+                        const capexVal = normalizeCapexOutflow(getDiscreteVal(jsonC?.data, date, capexSyns) || 0);
                         const fcf = ocfVal + capexVal;
                         yearlyFCF[year] = (yearlyFCF[year] || 0) + fcf;
                     });
@@ -2195,11 +2291,11 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                         isExcellent: continuousPositiveYears >= 5 || (positiveCount >= 8 && last10Years.length >= 8)
                     };
                 })(),
-                fcfYield: (marketCap > 0) ? (((ocf + capex) / 100000000) / marketCap * 100) : 0,
+                fcfYield: (marketCap > 0) ? ((ttmFCF / 100000000) / marketCap * 100) : 0,
                 marketCap: marketCap,
                 opCashFlow: ocf,
                 investingCashFlow: investingCF,
-                freeCashFlow: ocf + capex,
+                freeCashFlow: ttmFCF,
                 allTypes: latestC ? latestC.map(x => x.type).join(', ') : 'EMPTY'
             };
         }
@@ -2249,15 +2345,21 @@ async function fetchIndustryPeersMetrics(industry, currentSymbol) {
                 const prevYearDate = allDates[allDates.length - 5];
 
                 const getVal = (qData, types) => {
+                    const toNumber = (value) => {
+                        const num = Number(value);
+                        return Number.isFinite(num) ? num : 0;
+                    };
                     for (let t of (Array.isArray(types) ? types : [types])) {
                         const item = qData.find(x => x.type === t);
-                        if (item) return item.value;
+                        if (item) return toNumber(item.value);
                     }
                     return 0;
                 };
 
                 const s = jsonS.data.filter(x => x.date === latestDate);
-                const b = jsonB?.data ? jsonB.data.filter(x => x.date === latestDate || x.date === (allDates.find(d => d <= latestDate) || latestDate)) : [];
+                const balanceDates = jsonB?.data ? [...new Set(jsonB.data.map(x => x.date))].sort() : [];
+                const balanceDate = balanceDates.filter(d => d <= latestDate).pop() || balanceDates[balanceDates.length - 1];
+                const b = balanceDate ? jsonB.data.filter(x => x.date === balanceDate) : [];
                 const p = jsonP?.data ? jsonP.data[jsonP.data.length - 1] : null;
                 const r = jsonR?.data ? jsonR.data.slice(-13) : [];
 
@@ -2307,7 +2409,7 @@ async function fetchIndustryPeersMetrics(industry, currentSymbol) {
                     roe: equity > 0 ? (ni / equity * 100) : 0,
                     roa: assets > 0 ? (ni / assets * 100) : 0,
                     rd: rdRatio,
-                    dio: dio, dso: dso, dpo: dpo, ccc: dio + dso - dpo,
+                    dio: dio, dso: dso, dpo: dpo, ccc: (dio > 0 || dso > 0 || dpo > 0) ? (dio + dso - dpo) : null,
                     at: assets > 0 ? (rev / assets) : 0,
                     dr: assets > 0 ? (liab / assets * 100) : 0,
                     cr: cLiab > 0 ? (cAssets / cLiab * 100) : 0,
@@ -2417,15 +2519,19 @@ async function fetchFinMindMargin(symbol) {
     try {
         const json = await analysisFetchProxy(url, true);
         if (json && json.data && json.data.length > 0) {
-            const data = json.data;
+            const data = [...json.data].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
             const latest = data[data.length - 1];
             
             // 強化欄位提取邏輯
-            const getMarginBal = (item) => item.MarginPurchaseTodayBalance ?? item.margin_purchase_today_balance ?? item.MarginPurchaseBalance ?? item.margin_purchase_balance ?? 0;
+            const toNumber = (value) => {
+                const num = Number(value);
+                return Number.isFinite(num) ? num : 0;
+            };
+            const getMarginBal = (item) => toNumber(item?.MarginPurchaseTodayBalance ?? item?.margin_purchase_today_balance ?? item?.MarginPurchaseBalance ?? item?.margin_purchase_balance ?? 0);
             
             const marginBal = getMarginBal(latest);
-            const shortBal  = latest.ShortSaleTodayBalance ?? latest.short_sale_today_balance ?? latest.ShortSaleBalance ?? latest.short_sale_balance ?? 0;
-            const marginLim = latest.MarginPurchaseLimit ?? latest.margin_purchase_limit ?? 0;
+            const shortBal  = toNumber(latest.ShortSaleTodayBalance ?? latest.short_sale_today_balance ?? latest.ShortSaleBalance ?? latest.short_sale_balance ?? 0);
+            const marginLim = toNumber(latest.MarginPurchaseLimit ?? latest.margin_purchase_limit ?? 0);
             
             // 計算近 10 日趨勢 (斜率與變動百分比)
             let marginTrend = null;
@@ -2731,10 +2837,10 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     
     // 計算歷史 PE 分佈與分位數 (優化：使用 filter().pop() 取得最接近日期的價格)
     const epsLTM = finData?.ttmEps || 0;
-    const currentPE = epsLTM > 0 ? currentPrice / epsLTM : 0;
-    let pePercentile = 0;
+    const currentPE = epsLTM > 0 ? currentPrice / epsLTM : (twseBasic?.pe || null);
+    let pePercentile = twseBasic?.pePercentile ?? null;
     let valuationBands = null;
-    if (finData?.historicalTTM && chartData?.prices) {
+    if (finData?.historicalTTM && chartData?.prices && currentPE > 0) {
         const peSamples = finData.historicalTTM.map(h => {
             const p = chartData.prices.filter(p => p.date <= h.date).pop(); 
             return (p && p.close > 0) ? p.close / h.ttm : null;
@@ -2754,6 +2860,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     // 計算 PS Ratio 歷史位階 (PS Percentile)
     const currentPS = psRatio;
     let psPercentile = null;
+    let psBands = null;
     if (finData?.historicalPSData && chartData?.prices && currentPS > 0) {
         const psSamples = finData.historicalPSData.map(h => {
             const p = chartData.prices.filter(p => p.date <= h.date).pop();
@@ -2765,10 +2872,9 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             const rank = psSamples.filter(v => v < currentPS).length;
             psPercentile = (rank / psSamples.length) * 100;
             // 為 PS 位階也建立簡單的 bands 結構供圖表顯示 min/max
-            valuationBandsPS = { min: psSamples[0], max: psSamples[psSamples.length - 1] };
+            psBands = { min: psSamples[0], max: psSamples[psSamples.length - 1] };
         }
     }
-    const psBands = valuationBandsPS;
 
     // Z-Score 計算
     let zScore = null;
@@ -2824,12 +2930,13 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     // 如果 API 沒給殖利率，則根據近一年股利自行計算
     const calcYield = (totalDiv12m > 0 && currentPrice > 0) ? (totalDiv12m / currentPrice * 100) : null;
     const finalYield = twseBasic?.yield || calcYield;
-    const currentDiv = (finalYield && currentPrice) ? (currentPrice * (finalYield / 100)) : (totalDiv12m || null);
+    const currentDiv = totalDiv12m > 0 ? totalDiv12m : ((finalYield && currentPrice) ? (currentPrice * (finalYield / 100)) : null);
     
     // 成本殖利率
     const costYield = (avgCost && avgCost > 0 && totalDiv12m > 0) ? (totalDiv12m / avgCost * 100) : null;
     
     // 便宜/合理/昂貴價推算 (統一使用近四季加總 EPS LTM 以確保專業精度)
+    // 修正：EPS fallback 優先使用 TTM (epsLTM)，次用本益比反推，最後才用單季 × 4 (粗估)
     const eps = epsLTM > 0 ? epsLTM : (twseBasic?.pe && currentPrice ? currentPrice / twseBasic.pe : (finData?.eps ? finData.eps * 4 : null));
     const divCheap = currentDiv ? currentDiv / 0.05 : null;
     const divReasonable = currentDiv ? currentDiv / 0.04 : null;
@@ -2860,7 +2967,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     let profile = "穩健型";
     if (revData?.yoy > 20 && finData?.epsYoY > 20) profile = "強勢成長型";
     else if (twseBasic?.yield > 6 && chipsData.divConsecutiveYears > 10) profile = "高息定存型";
-    else if (twseBasic?.pe < 10 && finData?.roe > 10) profile = "低估價值型";
+    else if (currentPE && currentPE < 10 && finData?.roe > 10) profile = "低估價值型";
     else if (price3m > 30) profile = "飆悍動能型";
     
     summaryText += `<br><span style="background:#3b82f6; color:#ffffff; padding:2px 6px; border-radius:4px; font-size:10px; margin-right:8px;">${profile}標的</span>`;
@@ -2999,10 +3106,10 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
     }
 
     // --- 3. 獲利與評價 ---
-    if (twseBasic?.pe && twseBasic.pe < 12) {
-        summaryText += `當前本益比 ${twseBasic.pe} 倍，處於歷史低估區間。`;
-    } else if (twseBasic?.pe && twseBasic.pe > 25) {
-        summaryText += `本益比 ${twseBasic.pe} 倍偏高，需有更高成長性支撐。`;
+    if (currentPE && currentPE < 12) {
+        summaryText += `當前本益比 ${safeFix(currentPE, 1)} 倍，處於歷史低估區間。`;
+    } else if (currentPE && currentPE > 25) {
+        summaryText += `本益比 ${safeFix(currentPE, 1)} 倍偏高，需有更高成長性支撐。`;
     }
 
     if (psPercentile !== null) {
@@ -3199,10 +3306,10 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             <!-- 1.5 產業橫向對比 (Sector Comparison) -->
             ${(() => {
                 // 統一使用即時價格計算 P/E, P/B 以確保全頁面一致
-                const epsLTM = finData?.epsLTM || twseBasic?.eps || 0;
+                const epsLTMForCompare = eps || 0;
                 const netWorth = (finData?.equity && finData?.sharesIssued > 0) ? (finData.equity / finData.sharesIssued) : 0;
                 
-                let realTimePE = (epsLTM > 0) ? (currentPrice / epsLTM) : (twseBasic?.pe || 0);
+                let realTimePE = (epsLTMForCompare > 0) ? (currentPrice / epsLTMForCompare) : (twseBasic?.pe || 0);
                 let realTimePB = (netWorth > 0) ? (currentPrice / netWorth) : (twseBasic?.pb || 0);
                 
                 // 安全回退：如果計算出的 PB/PE 異常(例如 0.00 或 NaN)，則使用官方數據
@@ -3237,7 +3344,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 <div style="display:flex; justify-content:space-between; margin-bottom:12px; background:rgba(37, 99, 235, 0.1); padding:8px 12px; border-radius:8px; border:1px solid rgba(37, 99, 235, 0.2);">
                     <div style="text-align:center; flex:1;">
                         <div style="font-size:10px; color:#cbd5e1;">當前本益比 (PE)</div>
-                        <div style="font-size:15px; font-weight:700; color:#ffffff;">${twseBasic?.pe ? twseBasic.pe + ' 倍' : 'N/A'}</div>
+                        <div style="font-size:15px; font-weight:700; color:#ffffff;">${currentPE ? safeFix(currentPE, 2) + ' 倍' : 'N/A'}</div>
                     </div>
                     <div style="width:1px; background:rgba(255,255,255,0.1); margin:0 10px;"></div>
                     <div style="text-align:center; flex:1;">
@@ -3269,10 +3376,11 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     if (finData?.fcfTrend && finData.fcfTrend.length >= 4) {
                         ttmFcf = finData.fcfTrend.slice(-4).reduce((sum, item) => sum + (item.fcf || 0), 0);
                     } else {
-                        ttmFcf = (finData?.freeCashFlow || 0) * 4;
+                        ttmFcf = finData?.freeCashFlow || 0;
                     }
                     const calculatedFcfYield = (marketCap && marketCap > 0) ? ((ttmFcf / 100000000) / marketCap * 100) : 0;
-                    return renderStatRow('自由現金流殖利率', calculatedFcfYield ? safeFix(calculatedFcfYield, 2) + '%' : 'N/A');
+                    // 修正：FCF 殖利率為 0 時不應顯示 N/A，應明確判斷 null/undefined
+                    return renderStatRow('自由現金流殖利率', (calculatedFcfYield !== null && calculatedFcfYield !== undefined) ? safeFix(calculatedFcfYield, 2) + '%' : 'N/A');
                 })()}
 
                 <div style="font-size:11px; color:#cbd5e1; margin:12px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px;">📊 估值倍數與成長</div>
@@ -3280,7 +3388,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderStatRow('市淨率 (P/B)', (currentPrice && bps) ? safeFix(currentPrice / bps, 2) + ' 倍' : 'N/A')}
                 ${renderStatRow('企業價值倍數 (EV/EBIT)', finData?.evEbit !== undefined && finData?.evEbit !== null ? safeFix(finData.evEbit, 2) + ' 倍' : 'N/A')}
                 ${(() => {
-                    const earningsYield = twseBasic?.pe > 0 ? (100 / twseBasic.pe) : 0;
+                    const earningsYield = currentPE > 0 ? (100 / currentPE) : 0;
                     const us10y = ANALYSIS_CONFIG.riskFreeRate; // 使用全域預設值
                     const erp = earningsYield > 0 ? (earningsYield - us10y) : null;
                     
@@ -3295,9 +3403,11 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderDiagnostic(
                     (() => {
                         const earningsYield = twseBasic?.pe > 0 ? (100 / twseBasic.pe) : 0;
-                        const erp = earningsYield > 0 ? (earningsYield - ANALYSIS_CONFIG.riskFreeRate) : 999;
+                        // 修正：PE 為負 (虧損) 或 earningsYield ≤ 0 時不計算 ERP，避免顯示誤導性高溢酬
+                        const erp = earningsYield > 0 ? (earningsYield - ANALYSIS_CONFIG.riskFreeRate) : null;
                         let erpDiag = "";
-                        if (erp < 2) erpDiag = "⚠️ 警訊：股權風險溢酬 (ERP) 過低，股市相對債券不具吸引力。";
+                        if (erp === null) erpDiag = "⚠️ 注意：公司目前 PE 為負或無效，無法計算股權風險溢酬 (ERP)。";
+                        else if (erp < 2) erpDiag = "⚠️ 警訊：股權風險溢酬 (ERP) 過低，股市相對債券不具吸引力。";
                         else if (erp > 5) erpDiag = "🚀 股市風險溢酬極高，具備極佳長線佈局價值。";
 
                         return (erpDiag ? erpDiag + " " : "") + 
@@ -3314,7 +3424,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:8px;">
                         <div>
                             <div style="font-size:10px; color:#cbd5e1; margin-bottom:2px;">當前 TTM 本益比 (近 4 季累計)</div>
-                            <div style="font-size:22px; font-weight:800; color:#ffffff;">${safeFix(twseBasic?.pe || currentPE, 1)} <span style="font-size:12px; font-weight:400; color:#cbd5e1;">倍</span></div>
+                            <div style="font-size:22px; font-weight:800; color:#ffffff;">${safeFix(currentPE || twseBasic?.pe, 1)} <span style="font-size:12px; font-weight:400; color:#cbd5e1;">倍</span></div>
                         </div>
                         <div style="text-align:right;">
                             <div style="font-size:10px; color:#cbd5e1; margin-bottom:2px;">歷史百分位數 (5年)</div>
@@ -3351,7 +3461,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     const forwardEPS = epsLTM * (1 + (revGrowth / 100));
                     const forwardPE = forwardEPS > 0 ? (currentPrice / forwardEPS) : 0;
                     const growthColor = revGrowth >= 0 ? '#f87171' : '#4ade80';
-                    const peComparison = forwardPE < (twseBasic?.pe || currentPE);
+                    const peComparison = forwardPE < (currentPE || twseBasic?.pe);
                     
                     return `
                     <div style="background:linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(37, 99, 235, 0.05) 100%); padding:12px; border-radius:10px; margin-bottom:12px; border:1px solid rgba(59, 130, 246, 0.2); position:relative; overflow:hidden;">
@@ -4022,7 +4132,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     if (finData?.fcfTrend && finData.fcfTrend.length >= 4) {
                         ttmFcf = finData.fcfTrend.slice(-4).reduce((sum, item) => sum + (item.fcf || 0), 0);
                     } else {
-                        ttmFcf = (finData?.freeCashFlow || 0) * 4;
+                        ttmFcf = finData?.freeCashFlow || 0;
                     }
                     
                     const fcfPerShare = (shares > 0) ? (ttmFcf / shares) : 0;
@@ -4044,7 +4154,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         if (finData?.fcfTrend && finData.fcfTrend.length >= 4) {
                             ttmFcf = finData.fcfTrend.slice(-4).reduce((sum, item) => sum + (item.fcf || 0), 0);
                         } else {
-                            ttmFcf = (finData?.freeCashFlow || 0) * 4;
+                            ttmFcf = finData?.freeCashFlow || 0;
                         }
                         const fcfPerShare = (shares > 0) ? (ttmFcf / shares) : 0;
                         const fcfPayout = (totalDiv12m > 0 && fcfPerShare > 0) ? (totalDiv12m / fcfPerShare * 100) : null;
@@ -4440,10 +4550,10 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     return renderStatRow('FCF 連貫性 (5年)', text);
                 })()}
 
-                <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:6px;">💸 現金流量 (年化估算)</div>
-                ${renderStatRow('營業現金流 (OCF)', (finData?.opCashFlow !== undefined) ? formatCurrency(finData.opCashFlow) : 'N/A')}
-                ${renderStatRow('投資現金流 (ICF)', (finData?.investingCashFlow !== undefined) ? formatCurrency(finData.investingCashFlow) : 'N/A')}
-                ${renderStatRow('自由現金流 (FCF)', (finData?.freeCashFlow !== undefined) ? formatCurrency(finData.freeCashFlow) : 'N/A')}
+                <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:6px;">💸 現金流量 (近四季 TTM)</div>
+                ${renderStatRow('近四季營業現金流 (OCF)', (finData?.opCashFlow !== undefined) ? formatCurrency(finData.opCashFlow) : 'N/A')}
+                ${renderStatRow('近四季投資現金流 (ICF)', (finData?.investingCashFlow !== undefined) ? formatCurrency(finData.investingCashFlow) : 'N/A')}
+                ${renderStatRow('近四季自由現金流 (FCF)', (finData?.freeCashFlow !== undefined) ? formatCurrency(finData.freeCashFlow) : 'N/A')}
                 ${renderStatRow('淨負債 (總負債-現金)', finData?.netDebt ? formatCurrency(finData.netDebt) : 'N/A')}
                 ${renderDiagnostic(
                     (zScore > 2.99 ? "財務體質極佳，短期無倒閉風險。" : (zScore < 1.8 ? "財務壓力較大，需警惕債務違約風險。" : "財務結構尚可，屬正常範圍。")) +
@@ -4521,8 +4631,8 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                             let arrowColor = '#94a3b8';
                             if (i > 0) {
                                 const prevYield = (trend[i-1].fcf / 100000000) / marketCap * 100;
-                                if (yieldVal > prevYield) { arrow = '↑'; arrowColor = '#f87171'; }
-                                else if (yieldVal < prevYield) { arrow = '↓'; arrowColor = '#4ade80'; }
+                                if (yieldVal > prevYield) { arrow = '↑'; arrowColor = '#4ade80'; }
+                                else if (yieldVal < prevYield) { arrow = '↓'; arrowColor = '#f87171'; }
                             }
                             // 修正日期格式：將 2024-12-31 轉換為 2024 Q4
                             const dateParts = d.date.split('-');
@@ -4986,18 +5096,20 @@ function renderPercentRow(label, percentVal, showSign = true, useColor = true, o
 }
 
 function safeFix(val, n) {
-    if (val === null || val === undefined || isNaN(val)) return 'N/A';
-    return val.toFixed(n);
+    const num = Number(val);
+    if (val === null || val === undefined || !Number.isFinite(num)) return 'N/A';
+    return num.toFixed(n);
 }
 
 function formatCurrency(num) {
-    if (num === null || num === undefined || isNaN(num)) return 'N/A';
-    const absNum = Math.abs(num);
-    const sign = num < 0 ? '-' : '';
+    const value = Number(num);
+    if (num === null || num === undefined || !Number.isFinite(value)) return 'N/A';
+    const absNum = Math.abs(value);
+    const sign = value < 0 ? '-' : '';
     if (absNum >= 1000000000000) return sign + (absNum / 1000000000000).toFixed(2) + ' 兆';
     if (absNum >= 100000000) return sign + (absNum / 100000000).toFixed(2) + ' 億';
     if (absNum >= 10000) return sign + (absNum / 10000).toFixed(2) + ' 萬';
-    return num.toLocaleString();
+    return value.toLocaleString();
 }
 
 function renderNetBuyRow(label, netLots) {
@@ -5168,11 +5280,15 @@ function renderSectorComparison(industry, stats) {
         { key: 'pb', label: '股價淨值比', unit: '倍', category: '估值位階', lowerBetter: true }
     ];
 
-    const items = metricConfigs.map(cfg => ({
-        ...cfg,
-        val: stats[cfg.key],
-        avg: bench[cfg.key]
-    })).filter(i => i.val != null); // 只要個股有數據就顯示，平均值缺失則顯示 N/A
+    const items = metricConfigs.map(cfg => {
+        const val = Number(stats[cfg.key]);
+        const avg = Number(bench[cfg.key]);
+        return {
+            ...cfg,
+            val,
+            avg: Number.isFinite(avg) ? avg : null
+        };
+    }).filter(i => Number.isFinite(i.val)); // 只要個股有數據就顯示，平均值缺失則顯示 N/A
 
     if (items.length === 0) return '';
 
@@ -5667,8 +5783,8 @@ const termDefinitions = {
     },
     '相對強弱 (RSR)': {
         type: '風險與動能',
-        desc: 'Relative Strength Ratio，衡量個股漲跌幅相對於大盤（加權指數）的倍數。反映個股在特定期間內的「吸金」能力與相對強弱。',
-        rule: 'RSR > 1 代表強於大盤（主動強勢）；RSR < 1 代表弱於大盤。',
+        desc: 'Relative Strength Ratio，衡量個股期間報酬相對於大盤（加權指數）的比值。反映個股在特定期間內的「吸金」能力與相對強弱。',
+        rule: '公式：(1 + 個股報酬率) / (1 + 大盤報酬率)。RSR > 1 代表強於大盤；RSR < 1 代表弱於大盤。',
         advice: '當 20日 RSR > 1 時，代表短線資金正在流入，具備攻擊性。若 20日與60日皆 > 1，則是理想的多頭強勢標的。',
         analyze: (v, currentVal) => {
             let val = parseFloat(v);
@@ -7167,16 +7283,25 @@ function showRevenueTrendChart(symbol, type) {
 
     const name = window._lastChipsData?.stockName || symbol;
     const historyRaw = revData.history;
+    const toNumber = (value) => {
+        const num = Number(value);
+        return Number.isFinite(num) ? num : 0;
+    };
+    const getRevenue = (item) => toNumber(item?.revenue ?? item?.Revenue ?? 0);
+    const getRevenueYear = (item) => toNumber(item?.revenue_year ?? (item?.date || '').slice(0, 4));
+    const getRevenueMonth = (item) => toNumber(item?.revenue_month ?? (item?.date || '').slice(5, 7));
     
     // 計算趨勢歷史數據
     let trendHistory = [];
     historyRaw.forEach((item, index) => {
-        const curRev = item.revenue || item.Revenue || 0;
+        const curRev = getRevenue(item);
+        const itemYear = getRevenueYear(item);
+        const itemMonth = getRevenueMonth(item);
         let val = 0;
         
         if (type === 'MoM') {
             const prev = historyRaw[index - 1];
-            const preRev = prev ? (prev.revenue || prev.Revenue || 0) : 0;
+            const preRev = prev ? getRevenue(prev) : 0;
             if (preRev > 0) {
                 val = ((curRev - preRev) / preRev) * 100;
             } else {
@@ -7184,8 +7309,8 @@ function showRevenueTrendChart(symbol, type) {
             }
         } else if (type === 'YoY') {
             // YoY (年增率)
-            const ly = historyRaw.find(x => x.revenue_year === item.revenue_year - 1 && x.revenue_month === item.revenue_month);
-            const lyRev = ly ? (ly.revenue || ly.Revenue || 0) : 0;
+            const ly = historyRaw.find(x => getRevenueYear(x) === itemYear - 1 && getRevenueMonth(x) === itemMonth);
+            const lyRev = ly ? getRevenue(ly) : 0;
             if (lyRev > 0) {
                 val = ((curRev - lyRev) / lyRev) * 100;
             } else {
@@ -7193,12 +7318,12 @@ function showRevenueTrendChart(symbol, type) {
             }
         } else if (type === 'CumYoY') {
             // 累計年增率 (YTD YoY)
-            const ytdData = historyRaw.filter(x => x.revenue_year === item.revenue_year && x.revenue_month <= item.revenue_month);
-            const lyYtdData = historyRaw.filter(x => x.revenue_year === item.revenue_year - 1 && x.revenue_month <= item.revenue_month);
+            const ytdData = historyRaw.filter(x => getRevenueYear(x) === itemYear && getRevenueMonth(x) <= itemMonth);
+            const lyYtdData = historyRaw.filter(x => getRevenueYear(x) === itemYear - 1 && getRevenueMonth(x) <= itemMonth);
             
-            if (lyYtdData.length === item.revenue_month) { // 確保去年同期數據完整
-                const ytdSum = ytdData.reduce((s, x) => s + (x.revenue || x.Revenue || 0), 0);
-                const lyYtdSum = lyYtdData.reduce((s, x) => s + (x.revenue || x.Revenue || 0), 0);
+            if (lyYtdData.length === itemMonth) { // 確保去年同期數據完整
+                const ytdSum = ytdData.reduce((s, x) => s + getRevenue(x), 0);
+                const lyYtdSum = lyYtdData.reduce((s, x) => s + getRevenue(x), 0);
                 if (lyYtdSum > 0) val = ((ytdSum - lyYtdSum) / lyYtdSum) * 100;
                 else return;
             } else {
@@ -7207,7 +7332,7 @@ function showRevenueTrendChart(symbol, type) {
         }
         
         trendHistory.push({
-            date: `${item.revenue_year}/${String(item.revenue_month).padStart(2, '0')}`,
+            date: `${itemYear}/${String(itemMonth).padStart(2, '0')}`,
             val: val,
             revenue: curRev
         });
