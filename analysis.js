@@ -4376,7 +4376,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         ${finData?.marginMomentumCount || 0} 季 ${(finData?.marginMomentumCount || 0) >= 2 ? '🔥' : ''}
                     </span>
                 </div>
-                ${renderStatRow('單季 EPS 📈', (finData?.eps ? finData.eps + ' 元' : 'N/A'), null, `showEPSTrendChart('${finData.symbol}')`)}
+                ${renderStatRow('單季 EPS 📈', (finData?.eps ? finData.eps + ' 元' : 'N/A'), null, finData?.symbol ? `showEPSTrendChart('${finData.symbol}')` : null)}
                 ${renderPercentRow('ROE (股東權益報酬)', finData?.roe, true, false)}
                 ${renderPercentRow('ROIC (投入資本回報)', finData?.roic, true, false)}
                 ${renderPercentRow('ROA (資產報酬率)', finData?.roa, true, false)}
