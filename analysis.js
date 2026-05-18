@@ -85,86 +85,87 @@ function createRateLimiter(maxConcurrent, minIntervalMs) {
 }
 
 // 各 domain 獨立限制，互不影響
-const finmindLimiter  = createRateLimiter(2, 250);  // 回調穩定參數
-const scrapingLimiter = createRateLimiter(1, 600);  // 回調穩定參數
+// finmind: 同時最多 3 個請求，每完成一個後間隔 150ms → 較舊版快 ~40%，仍安全
+const finmindLimiter  = createRateLimiter(3, 150);
+// scraping (moneydj/fbs): 同時最多 2 個，間隔 350ms
+const scrapingLimiter = createRateLimiter(2, 350);
 
-// === Global Connection Engine (Moved to Top for Reliability) ===
+// === Global Connection Engine ===
 async function analysisFetchProxy(url, isJson = false) {
     window._fetchLogs = window._fetchLogs || [];
-    const log = (msg) => { 
+    const log = (msg) => {
         try {
-            console.log(msg); 
+            console.log(msg);
             window._fetchLogs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
-            if(window._fetchLogs.length > 30) window._fetchLogs.shift();
+            if (window._fetchLogs.length > 30) window._fetchLogs.shift();
         } catch(e) {}
     };
 
     const proxies = [
-        (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-        (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-        (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-        (url) => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`, // JSON 模式 fallback
-        (url) => `https://yacdn.org/proxy/${encodeURIComponent(url)}`,
-        (url) => `https://cors-proxy.org/?url=${encodeURIComponent(url)}`
+        (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+        (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+        (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+        (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
+        (u) => `https://yacdn.org/proxy/${encodeURIComponent(u)}`,
+        (u) => `https://cors-proxy.org/?url=${encodeURIComponent(u)}`
     ];
 
-    async function tryFetch(targetUrl, useHeaders = true, retries = 0, timeout = 5000) {
-        for (let attempt = 0; attempt <= retries; attempt++) {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), timeout); 
-            try {
-                const fetchOptions = { signal: controller.signal };
-                if (useHeaders) {
-                    fetchOptions.headers = { 'Cache-Control': 'no-cache' };
-                }
-                const res = await fetch(targetUrl, fetchOptions);
-                clearTimeout(timeoutId);
+    // 代理成功記憶：記住每個來源 domain 上次成功的代理索引
+    window._vpHint = window._vpHint || {};
+    const domain = (url.match(/\/\/([\w.-]+)/) || [])[1] || 'other';
+    const hintIdx = (window._vpHint[domain] !== undefined) ? window._vpHint[domain] : -1; // -1=直連
 
-                // ✅ 僅在 429 時重試
-                if (res.status === 429) {
-                    if (attempt < retries) {
-                        const backoff = 1000 * Math.pow(2, attempt);
-                        log(`⏳ 429 速率限制，${backoff}ms 後重試...`);
-                        await new Promise(r => setTimeout(r, backoff));
-                        continue;
-                    }
-                    throw new Error(`HTTP 429`);
-                }
-
-                const buffer = await res.arrayBuffer();
-                let encoding = 'utf-8';
-                if (targetUrl.includes('moneydj.com') || targetUrl.includes('fbs.com.tw')) encoding = 'big5';
-                let text = new TextDecoder(encoding).decode(buffer).trim();
-                
-                if (targetUrl.includes('allorigins.win/get')) {
-                    try { const outer = JSON.parse(text); text = outer.contents; } catch(e) {}
-                }
-                
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                return text;
-            } catch (e) {
-                clearTimeout(timeoutId);
-                // 直接連線失敗時 (CORS/Timeout)，不在此處重試，交由 Proxy 處理
-                if (attempt < retries && e.message?.includes('429')) {
-                    const backoff = 1000 * Math.pow(2, attempt);
-                    await new Promise(r => setTimeout(r, backoff));
-                    continue;
-                }
-                throw e;
+    // 單次 fetch（含逾時中斷）
+    async function tryFetch(targetUrl, timeout = 7000) {
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), timeout);
+        try {
+            const opts = { signal: controller.signal };
+            if (targetUrl === url) opts.headers = { 'Cache-Control': 'no-cache' };
+            const res = await fetch(targetUrl, opts);
+            clearTimeout(tid);
+            if (res.status === 429) throw new Error('HTTP 429');
+            const buffer = await res.arrayBuffer();
+            const enc = (url.includes('moneydj.com') || url.includes('fbs.com.tw')) ? 'big5' : 'utf-8';
+            let text = new TextDecoder(enc).decode(buffer).trim();
+            if (targetUrl.includes('allorigins.win/get')) {
+                try { text = JSON.parse(text).contents; } catch(e) {}
             }
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return text;
+        } catch (e) {
+            clearTimeout(tid);
+            throw e;
         }
     }
 
-    log(`🌐 發起請求: ${url.substring(0, 40)}...`);
-    
-    // 定義統一的解析器
+    // 帶速率限制的直連（僅對直連請求套用，代理請求不套用以避免阻塞）
+    async function tryFetchDirect(timeout = 5000) {
+        const isFinMind = url.includes('finmindtrade.com');
+        const isScraping = url.includes('moneydj.com') || url.includes('fbs.com.tw') || url.includes('norway.twsthr.info');
+        if (isFinMind)  return finmindLimiter(() => tryFetch(url, timeout));
+        if (isScraping) return scrapingLimiter(() => tryFetch(url, timeout));
+        return tryFetch(url, timeout);
+    }
+
+    // 競速函數：同時啟動多個 task，最快成功者獲勝；全敗才 reject
+    function raceSuccess(taskFns) {
+        return new Promise((resolve, reject) => {
+            let fails = 0;
+            let done = false;
+            const n = taskFns.length;
+            taskFns.forEach(fn => {
+                fn().then(r  => { if (!done) { done = true; resolve(r); } })
+                    .catch(() => { if (++fails === n && !done) { done = true; reject(new Error('all failed')); } });
+            });
+        });
+    }
+
     const parseResponse = (text) => {
         if (!isJson) return text;
         try {
             const parsed = JSON.parse(text);
-            if (parsed && parsed.status && parsed.status !== 200 && parsed.msg) {
-                throw new Error(`API ${parsed.status}: ${parsed.msg}`);
-            }
+            if (parsed?.status && parsed.status !== 200 && parsed.msg) throw new Error(`API ${parsed.status}: ${parsed.msg}`);
             if (Array.isArray(parsed)) return { status: 200, data: parsed };
             if (parsed && !parsed.data && !parsed.chart) {
                 if (parsed.msg || parsed.error) throw new Error(parsed.msg || parsed.error);
@@ -172,42 +173,62 @@ async function analysisFetchProxy(url, isJson = false) {
             }
             return parsed;
         } catch(e) {
-            if (text.length < 5) throw new Error("回傳數據格式不正確 (Empty)");
+            if (text.length < 5) throw new Error('回傳數據格式不正確 (Empty)');
             throw new Error(`JSON 解析失敗: ${e.message.substring(0, 20)}`);
         }
     };
 
-    // Attempt 1: Direct (with per-domain rate limiting)
+    log(`🌐 ${url.substring(0, 50)}...`);
+
+    // ── 第一階段：直連 + 上次成功的代理 同時競速（最快路徑）──
+    const phase1 = [() => tryFetchDirect(5000)];
+    if (hintIdx >= 0 && hintIdx < proxies.length) {
+        phase1.push(() => tryFetch(proxies[hintIdx](url), 7000).then(r => {
+            window._vpHint[domain] = hintIdx; return r;
+        }));
+    }
     try {
-        let dText;
-        if (url.includes('finmindtrade.com')) {
-            // ✅ Direct 階段不重試，快速失敗以切換 Proxy
-            dText = await finmindLimiter(() => tryFetch(url, true, 0));
-        } else if (url.includes('moneydj.com') || url.includes('fbs.com.tw') || url.includes('norway.twsthr.info')) {
-            dText = await scrapingLimiter(() => tryFetch(url, true, 0));
-        } else {
-            dText = await tryFetch(url, true, 0, 5000);
-        }
-        log(`✅ 直連成功`);
-        return parseResponse(dText);
-    } catch (e) {
-        log(`❌ 直連失敗: ${e.message.substring(0, 15)}`);
+        const text = await raceSuccess(phase1);
+        log('✅ 快速通道成功');
+        return parseResponse(text);
+    } catch(e) {
+        log('⚡ 快速通道全敗，競速前三代理...');
     }
 
-    // Attempt 2-N: Proxies
-    for (let i = 0; i < proxies.length; i++) {
-        const proxyUrl = proxies[i](url);
+    // ── 第二階段：同時競速前三個 proxy（排除已在第一階段試過的 hint）──
+    const phase2 = [];
+    for (let i = 0; i < 3; i++) {
+        if (i === hintIdx) continue;
+        const pi = i;
+        phase2.push(() => tryFetch(proxies[pi](url), 7000).then(r => {
+            window._vpHint[domain] = pi; return r;
+        }));
+    }
+    if (phase2.length > 0) {
         try {
-            log(`🔄 嘗試代理節點 ${i+1}...`);
-            // ✅ 在 Proxy 階段增加超時至 10s，因為代理站點解析大數據（如全台股清單）需要時間
-            const pText = await tryFetch(proxyUrl, false, 1, 10000);
-            log(`✅ 節點 ${i+1} 連線成功`);
-            return parseResponse(pText);
-        } catch (e) {
-            log(`❌ 節點 ${i+1} 失敗: ${e.message.substring(0, 15)}`);
+            const text = await raceSuccess(phase2);
+            log('✅ 代理競速成功');
+            return parseResponse(text);
+        } catch(e) {
+            log('❌ 前三代理均失敗，嘗試備援代理...');
         }
     }
-    throw new Error("所有連線管道皆失敗，請檢查網路或稍後重試。");
+
+    // ── 第三階段：備援代理循序嘗試 ──
+    for (let i = 3; i < proxies.length; i++) {
+        if (i === hintIdx) continue;
+        try {
+            log(`🔄 備援代理 ${i + 1}...`);
+            const text = await tryFetch(proxies[i](url), 7000);
+            window._vpHint[domain] = i;
+            log(`✅ 備援代理 ${i + 1} 成功`);
+            return parseResponse(text);
+        } catch(e) {
+            log(`❌ 備援代理 ${i + 1} 失敗`);
+        }
+    }
+
+    throw new Error('所有連線管道皆失敗，請檢查網路或稍後重試。');
 }
 
 async function fetchStockChart(symbol) {
@@ -361,7 +382,7 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
             <div class="analysis-spinner"></div>
             <span id="analysisLoadingStatus">${partialResults ? '正在修補缺失數據...' : '正在初始化數據引擎...'}</span>
             <div id="analysisTimer" style="font-size:14px; color:#60a5fa; margin-top:8px; font-family:monospace; font-weight:bold;">已耗時: 0.0s</div>
-            <div style="font-size:11px; color:#94a3b8; margin-top:4px;">(最長讀取時間約70秒，請耐心等候)</div>
+            <div style="font-size:11px; color:#94a3b8; margin-top:4px;">(初次載入約 15-30 秒，快取命中 &lt; 1 秒)</div>
             <div style="margin-top:15px;">
                 <div id="analysisProgressBar" style="width:200px; height:4px; background:rgba(255,255,255,0.1); border-radius:2px; margin:0 auto 10px; overflow:hidden;">
                     <div id="analysisProgressInner" style="width:${partialResults ? '50' : '10'}%; height:100%; background:#3b82f6; transition:width 0.3s;"></div>
@@ -502,11 +523,27 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
 
             let pChart = null;
             let pChips = null;
+            let peerPromise = null; // 🚀 chips 完成即提前啟動，不等 Promise.all 全部結束
 
             const fetchers = [
                 () => { pChart = (async () => { if (results[0]) { taskDone("跳過已載入股價"); return results[0]; } const r = await fetchStockChart(finalSymbol); taskDone("股價數據 OK"); return r; })(); return pChart; },
                 async () => { if (results[1]) { taskDone("跳過基本資料"); return results[1]; } const r = await fetchTWSEBasic(finalSymbol); taskDone("基本資料 OK"); return r; },
-                () => { pChips = (async () => { if (results[2]) { taskDone("跳過籌碼數據"); return results[2]; } const r = await fetchStockChips(finalSymbol); taskDone("籌碼數據 OK"); return r; })(); return pChips; },
+                () => { pChips = (async () => {
+                    if (results[2]) {
+                        // 即使命中快取，仍可提前啟動 peer 查詢
+                        if (!peerPromise && results[2]?.industry) {
+                            peerPromise = fetchIndustryPeersMetrics(results[2].industry, finalSymbol).catch(() => []);
+                        }
+                        taskDone("跳過籌碼數據"); return results[2];
+                    }
+                    const r = await fetchStockChips(finalSymbol);
+                    taskDone("籌碼數據 OK");
+                    // 🚀 chips 一完成立即啟動同業對比，與後續任務並行
+                    if (!peerPromise && r?.industry) {
+                        peerPromise = fetchIndustryPeersMetrics(r.industry, finalSymbol).catch(() => []);
+                    }
+                    return r;
+                })(); return pChips; },
                 async () => { if (results[3]) { taskDone("跳過營收數據"); return results[3]; } const r = await fetchFinMindRevenue(finalSymbol); taskDone("營收數據 OK"); return r; },
                 async () => { if (results[4]) { taskDone("跳過融資融券"); return results[4]; } const r = await fetchFinMindMargin(finalSymbol); taskDone("融資融券 OK"); return r; },
                 async () => { if (results[5]) { taskDone("跳過法人動態"); return results[5]; } const r = await fetchFinMindInstitutional(finalSymbol, 0); taskDone("法人動態 OK"); return r; },
@@ -550,8 +587,14 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
         window._lastInstitutionalData = instDataFinMind;
         window._lastRevData = revData; // 保存營收數據供趨勢圖使用
 
-        // 獲取同業專業對比數據 (延後獲取)
-        const peerCCCData = await fetchIndustryPeersMetrics(chipsData?.industry, finalSymbol).catch(() => []);
+        // 🚀 DJ 備援：非阻塞式提前啟動，不等 peer 結束才發請求
+        let djDataPromise = null;
+        if (!instDataFinMind || instDataFinMind.isFallback) {
+            djDataPromise = fetchInstitutionalMoneyDJ(finalSymbol).catch(() => null);
+        }
+
+        // 獲取同業專業對比數據 — 已在 chips 完成時提前啟動，通常此時已接近完成
+        const peerCCCData = await (peerPromise || fetchIndustryPeersMetrics(chipsData?.industry, finalSymbol).catch(() => []));
 
         // 計算風險指標
         let riskMetrics = null;
@@ -559,7 +602,7 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
             riskMetrics = calculateRiskMetrics(chartData.prices, marketDataRaw);
         }
 
-        // --- 新增：籌碼深度計算 ---
+        // --- 籌碼深度計算 ---
         let chipCosts = null;
         if (instDataFinMind?.daily && chartData?.prices) {
             chipCosts = calculateInstitutionalCosts(instDataFinMind.daily, chartData.prices);
@@ -584,9 +627,10 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
             holders: chipsData?.holders?.length || 0
         };
 
+        // 等待 DJ 備援結果（此時應已完成，幾乎無等待）
         let institutionalData = instDataFinMind;
-        if (!institutionalData || institutionalData.isFallback) {
-            const djData = await fetchInstitutionalMoneyDJ(finalSymbol).catch(() => null);
+        if (djDataPromise) {
+            const djData = await djDataPromise;
             if (djData) institutionalData = djData;
         }
         
@@ -3714,39 +3758,59 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     const posPercent = (high52w !== low52w) ? ((p - low52w) / (high52w - low52w) * 100).toFixed(1) : 50;
                     const vwapPos = (high52w !== low52w) ? ((vwap52w - low52w) / (high52w - low52w) * 100).toFixed(1) : 50;
 
-                    // --- 新增：成交量能特徵 (Volume Profile / POC) 計算 ---
-                    const range = high52w - low52w;
-                    // 根據目前股價點位自動決定步長 (Step)，確保低價股精確、高價股簡潔
-                    let step;
-                    if (p < 10) step = 0.1;
-                    else if (p < 50) step = 0.5;
-                    else if (p < 100) step = 1;
-                    else if (p < 500) step = 5;
-                    else if (p < 1000) step = 10;
-                    else step = 50;
+                    // --- 成交量能特徵 (Volume Profile / POC) 計算 ---
+                    // 每筆資料依【其自身價格】決定級距，確保跨區間52週資料各自正確分組
+                    const getVPStep = (px) => {
+                        if (px < 10)   return 0.1;
+                        if (px < 50)   return 0.5;
+                        if (px < 100)  return 1;
+                        if (px < 500)  return 5;
+                        if (px < 1000) return 10;
+                        return 50;
+                    };
+                    // 浮點安全的 floor-based 分桶 (防止 9.9/0.1 = 98.9999... 造成錯誤)
+                    const getVPFloor = (px) => {
+                        const st = getVPStep(px);
+                        if (st >= 1) return Math.floor(px / st) * st;
+                        const factor = Math.round(1 / st); // 0.1→10, 0.5→2
+                        return Math.floor(Math.round(px * factor * 10000) / 10000) / factor;
+                    };
+                    // 標籤生成：整數步距含頭含尾 (100-104)；小數步距顯示兩端 (9.9-10.0)；步距=1只顯示底值
+                    const getVPLabel = (fl, st) => {
+                        const end = fl + st;
+                        if (st < 1)   return `${fl.toFixed(1)}-${end.toFixed(1)}`;
+                        if (st === 1) return `${fl}`;
+                        return `${fl}-${end - 1}`;
+                    };
 
+                    // bins: key = string(依精度格式化的floor)，value = { vol, floor, step }
                     const bins = {};
                     let maxBinVol = 0;
-                    let pocBinKey = 0;
+                    let pocBinKey = '';
 
                     p52w.forEach(d => {
-                        const vol = getV(d);
-                        const close = getP(d);
-                        if (vol > 0 && close > 0) {
-                            // 以區間結束價格作為 Key (例如 1300)
-                            const binEnd = Math.ceil(close / step) * step;
-                            bins[binEnd] = (bins[binEnd] || 0) + vol;
-                            if (bins[binEnd] > maxBinVol) {
-                                maxBinVol = bins[binEnd];
-                                pocBinKey = binEnd;
+                        const vol      = getV(d);
+                        const rawClose = getP(d);
+                        if (vol > 0 && rawClose > 0) {
+                            const close = Math.round(rawClose * 100) / 100; // 四捨五入至分
+                            const st    = getVPStep(close);
+                            const fl    = getVPFloor(close);
+                            const prec  = st < 1 ? 1 : 0;
+                            const key   = fl.toFixed(prec);
+                            if (!bins[key]) bins[key] = { vol: 0, floor: fl, step: st };
+                            bins[key].vol += vol;
+                            if (bins[key].vol > maxBinVol) {
+                                maxBinVol = bins[key].vol;
+                                pocBinKey = key;
                             }
                         }
                     });
 
-
-                    const sortedBins = Object.keys(bins).map(Number).sort((a, b) => b - a);
-                    const pocPrice = pocBinKey - (step / 2); // POC 定位在密集區間的中點
-                    const pocDiff = ((p - pocPrice) / pocPrice * 100).toFixed(1);
+                    const sortedBins = Object.keys(bins).sort((a, b) => parseFloat(b) - parseFloat(a));
+                    const pocFloor = bins[pocBinKey]?.floor ?? 0;
+                    const pocStep  = bins[pocBinKey]?.step  ?? getVPStep(p);
+                    const pocPrice = pocFloor + pocStep / 2; // POC 定位在密集區間中點
+                    const pocDiff  = pocPrice > 0 ? ((p - pocPrice) / pocPrice * 100).toFixed(1) : '0.0';
 
                     return `
                         <div style="background:rgba(255,255,255,0.03); padding:12px; border-radius:12px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.05);">
@@ -3795,10 +3859,10 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                 const upperLimit = p * 1.10; // 上方 10% 區間
 
                                 Object.keys(bins).forEach(bpStr => {
-                                    const bp = parseFloat(bpStr);
-                                    const v = bins[bpStr];
+                                    const { vol: v, floor: bf } = bins[bpStr];
                                     totalVolSum += v;
-                                    if (bp > p && bp <= upperLimit) {
+                                    // 以 binFloor 判斷：該 bucket 起點嚴格在目前股價之上才計入套牢
+                                    if (bf > p && bf <= upperLimit) {
                                         trappedVolSum += v;
                                     }
                                 });
@@ -3845,26 +3909,25 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                 </div>
                                 <div id="vp-container">
                                     ${(() => {
-                                        return sortedBins.slice(0, 30).map((idxBinEnd, idx) => {
-                                            const weight = (bins[idxBinEnd] / maxBinVol * 100);
-                                            const isPOC = idxBinEnd === pocBinKey;
-                                            const isHidden = idx >= 8;
-                                            const binStart = idxBinEnd - step + (step >= 1 ? 1 : 0.01);
-                                            const isCurrent = (p >= binStart && p <= idxBinEnd);
-                                            const label = (step >= 1) ? 
-                                                `${safeFix(binStart, 0)}-${safeFix(idxBinEnd, 0)}` : 
-                                                `${safeFix(binStart, 2)}-${safeFix(idxBinEnd, 2)}`;
+                                        return sortedBins.slice(0, 30).map((binKey, idx) => {
+                                            const { vol: binVol, floor: binFloor, step: binStep } = bins[binKey];
+                                            const weight    = (binVol / maxBinVol * 100);
+                                            const isPOC     = binKey === pocBinKey;
+                                            const isHidden  = idx >= 8;
+                                            const binEnd    = binFloor + binStep;
+                                            const isCurrent = (p >= binFloor && p < binEnd);
+                                            const label     = getVPLabel(binFloor, binStep);
                                             
                                             return `
                                                 <div class="${isHidden ? 'vp-hidden-row' : ''}" style="display:${isHidden ? 'none' : 'flex'}; align-items:center; gap:8px; margin-bottom:4px; position:relative;">
                                                     <div style="width:75px; font-size:10px; color:${isPOC ? '#fbbf24' : (isCurrent ? '#ffffff' : '#94a3b8')}; letter-spacing:-0.5px; font-weight:${isCurrent ? '800' : '400'};">
                                                         ${label}
                                                     </div>
-                                                    <div style="flex:1; height:6px; background:rgba(255,255,255,0.05); border-radius:3px; position:relative; overflow:visible;" title="該區間成交量: ${Math.round(bins[idxBinEnd] / 1000).toLocaleString()} 張">
+                                                    <div style="flex:1; height:6px; background:rgba(255,255,255,0.05); border-radius:3px; position:relative; overflow:visible;" title="該區間成交量: ${Math.round(binVol / 1000).toLocaleString()} 張">
                                                         <div style="position:absolute; left:0; top:0; bottom:0; width:${weight}%; background:${isPOC ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' : 'linear-gradient(90deg, #3b82f6, #2563eb)'}; opacity:${isPOC ? 1 : 0.6}; border-radius:3px;"></div>
                                                         ${isCurrent ? `
-                                                            <div style="position:absolute; left:${Math.max(0, Math.min(100, (p - binStart) / step * 100))}%; top:50%; transform:translate(-50%, -50%); width:6px; height:6px; background:#fff; border-radius:50%; box-shadow:0 0 5px #fff; z-index:10;"></div>
-                                                            <div style="position:absolute; left:${Math.max(0, Math.min(100, (p - binStart) / step * 100))}%; top:-12px; transform:translateX(-50%); font-size:10px; color:#fff; white-space:nowrap; font-weight:900; text-shadow:0 0 3px #000;">${p}</div>
+                                                            <div style="position:absolute; left:${Math.max(0, Math.min(100, (p - binFloor) / binStep * 100))}%; top:50%; transform:translate(-50%, -50%); width:6px; height:6px; background:#fff; border-radius:50%; box-shadow:0 0 5px #fff; z-index:10;"></div>
+                                                            <div style="position:absolute; left:${Math.max(0, Math.min(100, (p - binFloor) / binStep * 100))}%; top:-12px; transform:translateX(-50%); font-size:10px; color:#fff; white-space:nowrap; font-weight:900; text-shadow:0 0 3px #000;">${p}</div>
                                                         ` : ''}
                                                     </div>
                                                 </div>
