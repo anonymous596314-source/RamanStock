@@ -2819,7 +2819,17 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
          '現金週期 (CCC, Q)','存貨週轉率','5年累計自由現金流','FCF 連貫性 (5年)',
          '近四季自由現金流 (FCF)','近四季營業現金流 (OCF)','近四季投資現金流 (ICF)',
          '淨負債 (總負債-現金)','流動比率','速動比率','負債比率','淨負債比率',
-         '利息保障倍數','獲利品質 (OCF/NI)','每股淨值 (BPS)'].forEach(f => _naRows.add(f));
+         '利息保障倍數','獲利品質 (OCF/NI)','每股淨值 (BPS)',
+         // ETF 估值相關欄位（無法計算個股本益比等）
+         '市值營收比 (PS)','自由現金流殖利率','葛拉漢內在價值',
+         '市淨率 (P/B)','企業價值倍數 (EV/EBIT)',
+         '盈餘殖利率 (EY)','股權風險溢酬 (ERP)',
+         'EPS 成長率 (TTM)','PEG 比例','營運槓桿度 (DOL)',
+         // ETF 河圖估值位階（以PE/PB為基礎，ETF不適用）
+         'PE 位階','PS 位階','PB 位階',
+         // ETF 股利分析欄位
+         '盈餘分配率 (Payout Ratio)','自由現金流配息率','近四季 EPS (LTM)'
+        ].forEach(f => _naRows.add(f));
     }
 
     if (isFinancialSec && !isETF) {
@@ -2836,6 +2846,10 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
         _chk('5年累計自由現金流',   finData?.totalFCF5Y);
         _chk('FCF 連貫性 (5年)',    finData?.fcfContinuity);
         _naRows.add('應收帳款狀態');  // 銀行無傳統應收帳款
+        // 金融業額外不適用欄位
+        _naRows.add('存貨管理狀態'); // 銀行無存貨
+        _naRows.add('流動比率');     // 金融業流動比率定義不同，不適用一般標準
+        _naRows.add('速動比率');     // 同上
     }
 
     if (isNoInventory && !isETF && !isFinancialSec) {
@@ -2845,7 +2859,16 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
         _chk('存貨週轉率',       finData?.inventoryTurnover);
     }
 
-    window._naCtx = { naRows: _naRows };
+    // 同業對比格子中需劃除的 metric key 集合
+    const _naPeerKeys = new Set();
+    if (isETF) {
+        ['pe', 'pb'].forEach(k => _naPeerKeys.add(k));
+    }
+    if (isFinancialSec && !isETF) {
+        // 金融業：研發費用、存貨/應收/應付/CCC/流動/速動 均不適用
+        ['rd', 'dio', 'dso', 'dpo', 'ccc', 'cr', 'qr'].forEach(k => _naPeerKeys.add(k));
+    }
+    window._naCtx = { naRows: _naRows, naPeerKeys: _naPeerKeys, isFinancialSec, isETF };
 
     // 大區塊斜線劃除：在整個 card 上覆蓋紅色 X（僅用於整張卡片均不適用的情況）
     const _naCardStyle   = (on) => on ? 'position:relative; overflow:hidden;' : '';
@@ -2951,8 +2974,8 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 p10: getP(0.1), p20: getP(0.2), p50: getP(0.5), p80: getP(0.8), p90: getP(0.9),
                 min: peSamples[0], max: peSamples[peSamples.length - 1] 
             };
-            const rank = peSamples.filter(v => v < currentPE).length;
-            pePercentile = (rank / peSamples.length) * 100;
+            const rank = peSamples.filter(v => v <= currentPE).length;
+            pePercentile = Math.round((rank / peSamples.length) * 100 * 10) / 10;
         }
     }
 
@@ -3441,9 +3464,10 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             <div class="analysis-card">
                 <div class="analysis-card-title">💰 合理價格評估</div>
                 <div style="display:flex; justify-content:space-between; margin-bottom:12px; background:rgba(37, 99, 235, 0.1); padding:8px 12px; border-radius:8px; border:1px solid rgba(37, 99, 235, 0.2);">
-                    <div style="text-align:center; flex:1;">
-                        <div style="font-size:10px; color:#cbd5e1;">當前本益比 (PE)</div>
-                        <div style="font-size:15px; font-weight:700; color:#ffffff;">${currentPE ? safeFix(currentPE, 2) + ' 倍' : 'N/A'}</div>
+                    <div style="text-align:center; flex:1; position:relative; ${isETF ? 'opacity:0.52;' : ''}">
+                        <div style="font-size:10px; color:#cbd5e1; ${isETF ? 'text-decoration:line-through; color:#6b7280;' : ''}">當前本益比 (PE)</div>
+                        <div style="font-size:15px; font-weight:700; color:${isETF ? '#6b7280' : '#ffffff'}; ${isETF ? 'text-decoration:line-through;' : ''}">${currentPE ? safeFix(currentPE, 2) + ' 倍' : 'N/A'}</div>
+                        ${isETF ? `<div style="position:absolute; left:0; right:0; top:50%; height:2px; background:#ef4444; opacity:0.85; pointer-events:none; border-radius:1px;"></div>` : ''}
                     </div>
                     <div style="width:1px; background:rgba(255,255,255,0.1); margin:0 10px;"></div>
                     <div style="text-align:center; flex:1;">
@@ -3462,12 +3486,12 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderValuationRow('合理價', `${safeFix(divReasonable, 1)} / ${safeFix(peReasonable, 1)} 元`)}
                 ${renderValuationRow('昂貴價', `${safeFix(divExpensive, 1)} / ${safeFix(peExpensive, 1)} 元`)}
 
-                <div style="font-size:11px; color:#cbd5e1; margin:12px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px;">📊 歷史估值區間 (5Y River Map)</div>
+                <div style="font-size:11px; color:${isETF ? '#6b7280' : '#cbd5e1'}; margin:12px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px; ${isETF ? 'text-decoration:line-through; opacity:0.6;' : ''}">📊 歷史估值區間 (5Y River Map)</div>
                 ${renderValuationRiverMap('PE 位階', currentPE, pePercentile, valuationBands)}
                 ${psPercentile !== null ? renderValuationRiverMap('PS 位階', currentPS, psPercentile, psBands) : ''}
                 ${renderValuationRiverMap('PB 位階', twseBasic?.pb, twseBasic?.pbPercentile, twseBasic?.pbBands)}
 
-                <div style="font-size:11px; color:#cbd5e1; margin:12px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px;">🏆 價值投資核心指標</div>
+                <div style="font-size:11px; color:${isETF ? '#6b7280' : '#cbd5e1'}; margin:12px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px; ${isETF ? 'text-decoration:line-through; opacity:0.6;' : ''}">🏆 價值投資核心指標</div>
                 ${renderValuationRow('葛拉漢內在價值', grahamValue)}
                 ${(() => {
                     // 重新計算 FCF Yield
@@ -3482,7 +3506,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     return renderStatRow('自由現金流殖利率', (calculatedFcfYield !== null && calculatedFcfYield !== undefined) ? safeFix(calculatedFcfYield, 2) + '%' : 'N/A');
                 })()}
 
-                <div style="font-size:11px; color:#cbd5e1; margin:12px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px;">📊 估值倍數與成長</div>
+                <div style="font-size:11px; color:${isETF ? '#6b7280' : '#cbd5e1'}; margin:12px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); pt:8px; ${isETF ? 'text-decoration:line-through; opacity:0.6;' : ''}">📊 估值倍數與成長</div>
                 ${renderStatRow('市值營收比 (PS)', psRatio !== undefined ? safeFix(psRatio, 2) + ' 倍' : 'N/A')}
                 ${renderStatRow('市淨率 (P/B)', (currentPrice && bps) ? safeFix(currentPrice / bps, 2) + ' 倍' : 'N/A')}
                 ${renderStatRow('企業價值倍數 (EV/EBIT)', finData?.evEbit !== undefined && finData?.evEbit !== null ? safeFix(finData.evEbit, 2) + ' 倍' : 'N/A')}
@@ -3517,7 +3541,8 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             </div>
 
             <!-- 5. 估值河流與位階 (PE River) -->
-            <div class="analysis-card">
+            <div class="analysis-card" style="${_naCardStyle(isETF)}">
+                ${_naCardOverlay(isETF)}
                 <div class="analysis-card-title">💎 估值動態與成長預測 (TTM vs Forward)</div>
                 <div style="background:rgba(255,255,255,0.05); padding:12px; border-radius:10px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.1);">
                     <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:8px;">
@@ -3527,13 +3552,14 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         </div>
                         <div style="text-align:right;">
                             <div style="font-size:10px; color:#cbd5e1; margin-bottom:2px;">歷史百分位數 (5年)</div>
-                            <div style="font-size:16px; font-weight:700; color:${(twseBasic?.pePercentile || pePercentile) > 80 ? '#f87171' : ((twseBasic?.pePercentile || pePercentile) < 30 ? '#4ade80' : '#fbbf24')};">${safeFix(twseBasic?.pePercentile || pePercentile, 0)}%</div>
+                            <div style="font-size:16px; font-weight:700; color:${(pePercentile ?? twseBasic?.pePercentile) > 80 ? '#f87171' : ((pePercentile ?? twseBasic?.pePercentile) < 30 ? '#4ade80' : '#fbbf24')};">${safeFix(pePercentile ?? twseBasic?.pePercentile, 1)}%</div>
+                            <div style="font-size:9px; color:#64748b; margin-top:2px; line-height:1.3;">${(() => { const p = pePercentile ?? twseBasic?.pePercentile; if (p === null || p === undefined) return ''; if (p <= 10) return '📉 5年歷史估值低點'; if (p <= 30) return '💚 估值偏低'; if (p <= 70) return '🟡 估值合理'; if (p <= 90) return '🟠 估值偏高'; return '🔴 5年歷史估值高點'; })()} （0%=歷史最便宜）</div>
                         </div>
                     </div>
                     
                     <div style="position:relative; height:12px; width:100%; background:linear-gradient(to right, #10b981 0%, #4ade80 20%, #facc15 50%, #fb923c 80%, #ef4444 100%); border-radius:6px; margin:20px 0 10px;">
-                        <div style="position:absolute; left:${twseBasic?.pePercentile || pePercentile}%; top:-10px; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:8px solid #fff;"></div>
-                        <div style="position:absolute; left:${twseBasic?.pePercentile || pePercentile}%; bottom:-18px; transform:translateX(-50%); font-size:10px; font-weight:800; color:#ffffff; white-space:nowrap;">目前位置</div>
+                        <div style="position:absolute; left:${pePercentile ?? twseBasic?.pePercentile}%; top:-10px; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:8px solid #fff;"></div>
+                        <div style="position:absolute; left:${pePercentile ?? twseBasic?.pePercentile}%; bottom:-18px; transform:translateX(-50%); font-size:10px; font-weight:800; color:#ffffff; white-space:nowrap;">目前位置</div>
                     </div>
                     
                     <div class="legend-horizontal chart-internal" style="display:flex; justify-content:space-between; font-size:9px; color:#94a3b8; margin-top:14px;">
@@ -3815,10 +3841,10 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
 
                     // --- 成交量能特徵 (Volume Profile / POC) 計算 ---
                     // 每筆資料依【其自身價格】決定級距，確保跨區間52週資料各自正確分組
-                    const getVPStep = (px) => {
+                    const getVPStep = (px) => { px = Math.max(0, px - 0.001);
                         if (px < 10)   return 0.1;
                         if (px < 50)   return 0.5;
-                        if (px < 100)  return 1;
+                        if (px < 100)  return 2.5;
                         if (px < 500)  return 5;
                         if (px < 1000) return 10;
                         return 50;
@@ -3826,22 +3852,22 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     // 浮點安全的 floor-based 分桶 (防止 9.9/0.1 = 98.9999... 造成錯誤)
                     const getVPFloor = (px) => {
                         const st = getVPStep(px);
-                        if (st >= 1) return Math.floor(px / st) * st;
+                        if (st >= 1) return Math.floor(Math.max(0, px - 0.001) / st) * st;
                         const factor = Math.round(1 / st); // 0.1→10, 0.5→2
-                        return Math.floor(Math.round(px * factor * 10000) / 10000) / factor;
+                        const p = Math.max(0, px - 0.001); return Math.floor(Math.round(p * factor * 10000) / 10000) / factor;
                     };
                     // 標籤生成：整數步距含頭含尾 (100-104)；小數步距顯示兩端 (9.9-10.0)；步距=1只顯示底值
                     const getVPLabel = (fl, st) => {
                         if (st === 0.1) {
                             return `${parseFloat((fl + 0.01).toFixed(2))}-${parseFloat((fl + 0.1).toFixed(2))}`;
                         } else if (st === 0.5) {
-                            return `${parseFloat((fl + 0.1).toFixed(1))}-${parseFloat((fl + 0.5).toFixed(1))}`;
-                        } else if (st === 1) {
-                            return `${fl}-${fl + 1}`;
+                            return `${parseFloat((fl + 0.01).toFixed(2))}-${parseFloat((fl + 0.5).toFixed(2))}`;
+                        } else if (st === 2.5) {
+                            return `${parseFloat((fl + 0.01).toFixed(2))}-${parseFloat((fl + 2.5).toFixed(2))}`;
                         } else if (st === 5) {
-                            return `${fl + 1}-${fl + 5}`;
+                            return `${parseFloat((fl + 0.01).toFixed(2))}-${fl + 5}`;
                         } else if (st === 10) {
-                            return `${fl + 1}-${fl + 10}`;
+                            return `${parseFloat((fl + 0.01).toFixed(2))}-${fl + 10}`;
                         } else if (st === 50) {
                             return `${fl + 1}-${fl + 50}`;
                         }
@@ -3984,7 +4010,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                             const isPOC     = binKey === pocBinKey;
                                             const isHidden  = idx >= 8;
                                             const binEnd    = binFloor + binStep;
-                                            const isCurrent = (p >= binFloor && p < binEnd);
+                                            const isCurrent = (p > binFloor && p <= binEnd);
                                             const label     = getVPLabel(binFloor, binStep);
                                             
                                             return `
@@ -4053,7 +4079,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 <!-- 法人買進均價 -->
                 <div style="background:rgba(59, 130, 246, 0.05); padding:12px; border-radius:12px; margin-bottom:15px; border:1px solid rgba(59, 130, 246, 0.1);">
                     <div style="font-size:12px; color:#60a5fa; font-weight:700; margin-bottom:4px;">🏦 法人買進均價 (5/10/20日)</div>
-                    <div style="font-size:9px; color:#64748b; margin-bottom:2px;">以當日收盤價估算（非盤中 VWAP，誤差約 0.3–1%）；不含賣出調整，僅供支撐參考</div>
+                    <div style="font-size:9px; color:#64748b; margin-bottom:2px;">以當日收盤價估算（非盤中 VWAP，誤差約 0.3–1%）；有淨買超時顯示買進均價，純賣超期間改示交易活動均價，僅供參考</div>
                     <div style="font-size:9px; color:#475569; margin-bottom:8px;">⚠ 資料來源為買賣流量（FinMind 免費方案），非實際持倉量，與真實持倉成本存在本質差距</div>
                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                         <!-- 外資部分 -->
@@ -4255,7 +4281,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderStatRow('最近現金股利', (chipsData?.exDivAmt !== null && chipsData?.exDivAmt !== undefined) ? chipsData.exDivAmt + ' 元' : 'N/A')}
                 ${renderStatRow('連續配息年數', (chipsData?.divConsecutiveYears !== undefined) ? chipsData.divConsecutiveYears + ' 年' : 'N/A')}
                 ${renderPercentRow('股利 3年 CAGR', chipsData?.divGrowth3y)}
-                <div style="font-size:11px; color:#cbd5e1; margin:10px 0 6px; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:6px;">📈 獲利分配與永續性</div>
+                <div style="font-size:11px; color:${isETF ? '#6b7280' : '#cbd5e1'}; margin:10px 0 6px; border-bottom:1px dashed rgba(255,255,255,0.05); padding-bottom:6px; ${isETF ? 'text-decoration:line-through; opacity:0.6;' : ''}">📈 獲利分配與永續性</div>
                 ${(() => {
                     const payout = (totalDiv12m && finData?.epsLTM) ? (totalDiv12m / finData.epsLTM * 100) : null;
                     
@@ -4438,7 +4464,8 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             </div>
 
             <!-- 4. 月營收表現 -->
-            <div class="analysis-card">
+            <div class="analysis-card" style="${_naCardStyle(isETF)}">
+                ${_naCardOverlay(isETF)}
                 <div class="analysis-card-title">📊 月營收趨勢</div>
                 <div style="font-size:11px; color:#cbd5e1; margin-bottom:8px;">月份: ${revData?.month || 'N/A'}</div>
                 ${renderStatRow('單月營收', revData?.revenue ? formatCurrency(revData.revenue) : 'N/A')}
@@ -4456,7 +4483,8 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             </div>
 
             <!-- 3. 獲利能力 -->
-            <div class="analysis-card">
+            <div class="analysis-card" style="${_naCardStyle(isETF)}">
+                ${_naCardOverlay(isETF)}
                 <div class="analysis-card-title">💵 財報獲利能力</div>
                 <div style="font-size:11px; color:#cbd5e1; margin-bottom:8px;">季度: ${finData?.quarter || 'N/A'}</div>
                 ${renderPercentRow('毛利率', finData?.grossMargin, false, false)}
@@ -4702,7 +4730,8 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
 
             
             <!-- 10. 現金流量趨勢 (FCF Analysis) -->
-            <div class="analysis-card">
+            <div class="analysis-card" style="${_naCardStyle(isETF)}">
+                ${_naCardOverlay(isETF)}
                 <div class="analysis-card-title">💰 現金產生能力分析 (Cash Flow Analysis)</div>
                 <div style="font-size:13px; font-weight:700; color:#60a5fa; margin-bottom:8px; display:flex; align-items:center; gap:5px;">
                     <span>🌊 自由現金流 (FCF) 8季趨勢</span>
@@ -4812,7 +4841,8 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             </div>
 
             <!-- 11. 獲利品質分析 (Cash Flow Fidelity) -->
-            <div class="analysis-card">
+            <div class="analysis-card" style="${_naCardStyle(isETF)}">
+                ${_naCardOverlay(isETF)}
                 <div class="analysis-card-title">💎 現金流健康度 (Cash Flow Fidelity)</div>
                 
                 <!-- 累積 8 季含金量 -->
@@ -4895,7 +4925,13 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
 
 
                 <!-- 強化：存貨與應收帳款天數 8 季趨勢 (SVG 折線圖) -->
-                <div style="font-size:11px; color:#cbd5e1; margin:15px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); padding-top:8px; display:flex; justify-content:space-between; align-items:center;">
+                ${isFinancialSec ? `<div style="position:relative; overflow:hidden; border-radius:10px;">
+                  <div style="position:absolute;inset:0;background:rgba(0,0,0,0.28);pointer-events:none;z-index:9;border-radius:inherit;"></div>
+                  <svg style="position:absolute;inset:0;width:100%;height:100%;z-index:10;pointer-events:none;overflow:visible;" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+                    <line x1="1%" y1="1%" x2="99%" y2="99%" stroke="#ef4444" stroke-width="2" opacity="0.72" stroke-linecap="round"/>
+                    <line x1="99%" y1="1%" x2="1%" y2="99%" stroke="#ef4444" stroke-width="2" opacity="0.72" stroke-linecap="round"/>
+                  </svg>` : ''}
+                <div style="font-size:11px; color:${isFinancialSec ? '#6b7280' : '#cbd5e1'}; margin:15px 0 8px; border-top:1px dashed rgba(255,255,255,0.05); padding-top:8px; display:flex; justify-content:space-between; align-items:center; ${isFinancialSec ? 'opacity:0.52;' : ''}">
                     <span>📅 營運天數 (Q) 8 季趨勢 (<span class="has-info" onclick="showTermExplainer('DIO (存貨週轉天數)', '${Math.round(finData?.inventoryDays || 0)}天')">DIO</span> / <span class="has-info" onclick="showTermExplainer('DSO (應收帳款天數)', '${Math.round(finData?.receivableDays || 0)}天')">DSO</span>)</span>
                     <span style="font-size:9px; color:#94a3b8;">藍: DIO / 灰: DSO</span>
                 </div>
@@ -4961,6 +4997,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         `;
                     })()}
                 </div>
+                ${isFinancialSec ? '</div>' : ''}
 
                 <!-- 營收 vs 存貨成長背離分析 -->
                 <div style="font-size:11px; color:#cbd5e1; margin:5px 0 8px; display:flex; justify-content:space-between; align-items:center;">
@@ -5080,7 +5117,8 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
 
 
             <!-- 16. 內部人持股變動 -->
-            <div class="analysis-card">
+            <div class="analysis-card" style="${_naCardStyle(isETF)}">
+                ${_naCardOverlay(isETF)}
                 <div class="analysis-card-title">👥 ${insiderActivity?.type === 'fallback_chips' ? '內部人大戶籌碼趨勢' : '內部人申報轉讓紀錄'}</div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:15px;">
                     ${insiderActivity && insiderActivity.history.length > 0 ? insiderActivity.history.map(h => `
@@ -5306,6 +5344,14 @@ function renderMARow(label, maValue, currentPrice) {
 }
 
 function renderValuationRow(label, value) {
+    if (window._naCtx?.naRows?.has(label)) {
+        const cleanTxt = (value === null || value === undefined) ? 'N/A' : (typeof value === 'number' ? `${safeFix(value, 2)} 元` : String(value).replace(/<[^>]*>/g, ''));
+        return `<div class="analysis-stat-row" style="position:relative; opacity:0.52; user-select:none;">
+            <span class="analysis-label" style="text-decoration:line-through; color:#6b7280;">${label}</span>
+            <span class="analysis-val"   style="text-decoration:line-through; color:#6b7280;">${cleanTxt}</span>
+            <div style="position:absolute; left:0; right:0; top:50%; height:2px; background:#ef4444; opacity:0.85; pointer-events:none; border-radius:1px;"></div>
+        </div>`;
+    }
     if (value === null || value === undefined) return `<div class="analysis-stat-row"><span class="analysis-label">${label}</span><span class="analysis-val">N/A</span></div>`;
     
     const hasDef = termDefinitions && termDefinitions[label];
@@ -5326,6 +5372,13 @@ function renderValuationRow(label, value) {
 }
 
 function renderValuationRiverMap(label, current, percentile, bands) {
+    if (window._naCtx?.naRows?.has(label)) {
+        return `<div class="analysis-stat-row" style="position:relative; opacity:0.52; user-select:none;">
+            <span class="analysis-label" style="text-decoration:line-through; color:#6b7280;">${label}</span>
+            <span class="analysis-val"   style="text-decoration:line-through; color:#6b7280;">N/A</span>
+            <div style="position:absolute; left:0; right:0; top:50%; height:2px; background:#ef4444; opacity:0.85; pointer-events:none; border-radius:1px;"></div>
+        </div>`;
+    }
     if (current === null || current === undefined || percentile === null || percentile === undefined) {
         return `
             <div class="river-map-row">
@@ -5469,10 +5522,11 @@ function renderSectorComparison(industry, stats) {
                     const avgPos = hasAvg ? (Math.abs(item.avg) / barMax) * 100 : -10; // 隱藏
                     
                     return `
-                        <div class="chart-internal" onclick="showTermExplainer('${item.label}', '${(item.unit === '次' || item.unit === '倍' ? item.val.toFixed(2) : item.val.toFixed(1))}${item.unit}', ${item.avg})" style="display:flex; flex-direction:column; gap:4px; background:rgba(255,255,255,0.02); padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05); cursor:pointer; transition:all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
+                        <div class="chart-internal" onclick="showTermExplainer('${item.label}', '${(item.unit === '次' || item.unit === '倍' ? item.val.toFixed(2) : item.val.toFixed(1))}${item.unit}', ${item.avg})" style="display:flex; flex-direction:column; gap:4px; background:${(window._naCtx?.naPeerKeys?.has(item.key)) ? 'rgba(239,68,68,0.04)' : 'rgba(255,255,255,0.02)'}; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.05); cursor:pointer; transition:all 0.2s; position:relative; ${(window._naCtx?.naPeerKeys?.has(item.key)) ? 'opacity:0.52; overflow:hidden;' : ''}" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='${(window._naCtx?.naPeerKeys?.has(item.key)) ? 'rgba(239,68,68,0.04)' : 'rgba(255,255,255,0.02)'}'">
+                            ${(window._naCtx?.naPeerKeys?.has(item.key)) ? `<div style="position:absolute;inset:0;pointer-events:none;z-index:2;"><svg style="width:100%;height:100%;" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none"><line x1="1%" y1="1%" x2="99%" y2="99%" stroke="#ef4444" stroke-width="1.5" opacity="0.7" stroke-linecap="round"/><line x1="99%" y1="1%" x2="1%" y2="99%" stroke="#ef4444" stroke-width="1.5" opacity="0.7" stroke-linecap="round"/></svg></div>` : ''}
                             <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
-                                <span style="font-size:11px; font-weight:700; color:#cbd5e1;">${item.label}</span>
-                                <span style="font-size:11px; color:${color}; font-weight:800;">
+                                <span style="font-size:11px; font-weight:700; color:${(window._naCtx?.naPeerKeys?.has(item.key)) ? '#6b7280' : '#cbd5e1'}; ${(window._naCtx?.naPeerKeys?.has(item.key)) ? 'text-decoration:line-through;' : ''}">${item.label}</span>
+                                <span style="font-size:11px; color:${(window._naCtx?.naPeerKeys?.has(item.key)) ? '#6b7280' : color}; font-weight:800; ${(window._naCtx?.naPeerKeys?.has(item.key)) ? 'text-decoration:line-through;' : ''}">
                                     ${(item.unit === '次' || item.unit === '倍' ? item.val.toFixed(2) : item.val.toFixed(1))}${item.unit}
                                 </span>
                             </div>
@@ -7128,17 +7182,21 @@ function calculateInstitutionalCosts(dailyData, prices) {
     
     const calcVWAP = (type, days) => {
         const sub = dailyData.slice(-days);
-        let totalNet = 0;
-        let weightedSum = 0;
+        // 主要：以淨買超張數加權（買進成本估算）
+        let totalBuy = 0, buySum = 0;
+        // 備援：以交易量絕對值加權（適用投信長期賣超或金融股等窗口無淨買超情形）
+        let totalAbs = 0, absSum = 0;
         sub.forEach(d => {
             const p = priceMap.get(d.date);
             const net = d[type] || 0;
-            if (p && net > 0) { // 僅在買進時累積成本基準
-                totalNet += net;
-                weightedSum += net * p;
+            if (p) {
+                if (net > 0)  { totalBuy += net;            buySum += net * p; }
+                if (net !== 0){ totalAbs += Math.abs(net); absSum += Math.abs(net) * p; }
             }
         });
-        return totalNet > 0 ? (weightedSum / totalNet) : 0;
+        if (totalBuy > 0) return buySum / totalBuy;   // 有淨買超：買進加權均價
+        if (totalAbs > 0) return absSum / totalAbs;   // 無淨買超但有交易：活動加權均價（含賣出）
+        return 0;                                      // 該期間完全無交易
     };
 
     return {
