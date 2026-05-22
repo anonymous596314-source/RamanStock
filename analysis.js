@@ -244,49 +244,59 @@ async function fetchStockChart(symbol) {
     let startDate = d.toISOString().split('T')[0];
     let url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${rawSymbol}&start_date=${startDate}&cb=${Date.now()}`;
     
-    // 宣告 json 變數，避免隱式全域變數問題
-    let json;
-    try {
-        json = await analysisFetchProxy(url, true);
-    } catch (e) {
-        log(`FM 5Y failed (${e.message}), trying 1Y...`);
-        const d1y = new Date(); d1y.setDate(d1y.getDate() - 365);
-        const url1y = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${rawSymbol}&start_date=${d1y.toISOString().split('T')[0]}&cb=${Date.now()}`;
+    // ── 股價資料抓取（重構為 flat 結構，例外與空資料均可 fallback）────────────────
+    // 舊版深度巢狀 try/catch 只在 exception 時 fallback；
+    // 若 FinMind 靜默降級回傳 {data:[]} 則永遠到不了 Yahoo。
+    // 新版：helper 同時處理「拋例外」與「回傳空陣列」兩種失敗情境。
+    const _tryFM = async (fmUrl) => {
         try {
-            json = await analysisFetchProxy(url1y, true);
-        } catch (e1y) {
-            log(`FM 1Y failed, trying 90D...`);
-            const d90 = new Date(); d90.setDate(d90.getDate() - 90);
-            const url90 = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${rawSymbol}&start_date=${d90.toISOString().split('T')[0]}&cb=${Date.now()}`;
+            const _r = await analysisFetchProxy(fmUrl, true);
+            return (_r?.data?.length > 0) ? _r : null;
+        } catch (_e) { return null; }
+    };
+
+    const _tryYahoo = async () => {
+        // 4 碼：上市 .TW 優先，上櫃 .TWO 備援（如 2831）；5 碼以上反之
+        const _syms = rawSymbol.length === 4
+            ? [`${rawSymbol}.TW`, `${rawSymbol}.TWO`]
+            : [`${rawSymbol}.TWO`, `${rawSymbol}.TW`];
+        for (const _sym of _syms) {
             try {
-                json = await analysisFetchProxy(url90, true);
-            } catch (e90) {
-                log(`FM all failed, trying Yahoo...`);
-                try {
-                    const yahooSymbol = rawSymbol.length === 4 ? `${rawSymbol}.TW` : `${rawSymbol}.TWO`;
-                    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?range=5y&interval=1d&cb=${Date.now()}`;
-                    const yahooRes = await analysisFetchProxy(yahooUrl, true);
-                    const result = yahooRes?.chart?.result?.[0];
-                    if (result) {
-                        const quotes = result.indicators?.quote?.[0] || {};
-                        const timestamps = result.timestamp || [];
-                        json = {
-                            data: timestamps.map((t, i) => ({
-                                date: new Date(t * 1000).toISOString().split('T')[0],
-                                close: quotes.close ? quotes.close[i] : null,
-                                max: quotes.high ? quotes.high[i] : null,
-                                min: quotes.low ? quotes.low[i] : null,
-                                trading_volume: quotes.volume ? quotes.volume[i] : 0
-                            })).filter(x => x.close != null && x.close > 0)
-                        };
-                        log(`Yahoo success (${json.data.length} records)`);
-                    } else { throw new Error("Yahoo invalid response"); }
-                } catch (e3) {
-                    log(`All paths failed: ${e3.message}`);
-                    throw e3;
+                const _yUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${_sym}?range=5y&interval=1d&cb=${Date.now()}`;
+                const _yRes = await analysisFetchProxy(_yUrl, true);
+                const _r    = _yRes?.chart?.result?.[0];
+                if (_r?.timestamp?.length > 0) {
+                    log(`Yahoo OK: ${_sym} (${_r.timestamp.length} pts)`);
+                    const _q = _r.indicators?.quote?.[0] || {};
+                    const _adjArr = _r.indicators?.adjclose?.[0]?.adjclose; // B方案：還原股價
+                    return {
+                        _yahooSym: _sym,
+                        data: _r.timestamp.map((t, i) => ({
+                            date           : new Date(t * 1000).toISOString().split('T')[0],
+                            close          : _q.close?.[i]  ?? null,
+                            adj_close      : _adjArr?.[i]   ?? null,  // B方案：有值才填入
+                            max            : _q.high?.[i]   ?? null,
+                            min            : _q.low?.[i]    ?? null,
+                            trading_volume : _q.volume?.[i] ?? 0
+                        })).filter(x => x.close != null && x.close > 0)
+                    };
                 }
-            }
+            } catch (_ey) { log(`Yahoo fail ${_sym}: ${_ey.message}`); }
         }
+        return null;
+    };
+
+    // FinMind: 5Y → 1Y → 90D；任一成功即停止
+    const _d1y = new Date(); _d1y.setDate(_d1y.getDate() - 365);
+    const _d90 = new Date(); _d90.setDate(_d90.getDate() - 90);
+    let json =
+        await _tryFM(url) ||
+        (log('FM 5Y null → 1Y'), await _tryFM(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${rawSymbol}&start_date=${_d1y.toISOString().split('T')[0]}&cb=${Date.now()}`)) ||
+        (log('FM 1Y null → 90D'), await _tryFM(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${rawSymbol}&start_date=${_d90.toISOString().split('T')[0]}&cb=${Date.now()}`)) ||
+        (log('FM 90D null → Yahoo'), await _tryYahoo());
+
+    if (!json) {
+        throw new Error(`無法取得股價資料 (${rawSymbol})：FinMind 各時間窗口與 Yahoo Finance (.TW/.TWO) 均失敗。請確認代號正確或稍後重試。`);
     }
 
     try {
@@ -500,10 +510,27 @@ async function openAnalysisModal(symbol, name, avgCost = null, forceRefresh = fa
             allKeys.forEach(k => { if (k.startsWith(ANALYSIS_CACHE_PREFIX)) localStorage.removeItem(k); });
         }
         
-        const cacheKey = `${finalSymbol}_v20`; 
+        const cacheKey = `${finalSymbol}_v21`; 
         let cachedResults = (forceRefresh || partialResults) ? null : getCachedAnalysis(cacheKey);
         
         if (cachedResults && !cachedResults[0]) cachedResults = null;
+
+        // ── 快取過期檢查：若快取中的財報最新日期超過 100 天前，強制重抓 ─────────
+        // 原因：8 小時 TTL 不夠用來強制取得新一季財報（季報更新週期遠超 8 小時）
+        if (cachedResults) {
+            try {
+                const _cachedFin = cachedResults[6]; // index 6 = finDataRaw
+                const _cachedFinDate = _cachedFin?.quarter || _cachedFin?.latestDate || '';
+                if (_cachedFinDate) {
+                    const _daysOld = (Date.now() - new Date(_cachedFinDate).getTime()) / 86400000;
+                    if (_daysOld > 100) {
+                        console.log(`[Cache] finData latestDate=${_cachedFinDate} is ${_daysOld.toFixed(0)}d old → force refresh`);
+                        cachedResults = null; // 強制重抓
+                    }
+                }
+            } catch (_ce) {}
+        }
+        // ─────────────────────────────────────────────────────────────────────────
 
         let results;
         let peerPromise = null; // 宣告在 if/else 外層，快取路徑與一般路徑均可存取
@@ -940,12 +967,94 @@ function calculateRiskMetrics(stockData, marketData, lookback = 252) {
         }
     });
 
-    // 從坑底開始往後計算修復天數
+    // ── 除權息 / 股票分割 保護機制 ────────────────────────────────────────────────
+    // B方案（優先）：若資料含 Yahoo adj_close（還原股價），直接使用，跳過 A方案
+    // A方案（備援）：無還原股價時，偵測單日跌幅 > 10%（超出台股漲跌停上限）的除權息事件，
+    //               將計算起始點截斷到最近一次除權息日之後，避免舊高點永遠回不去的失真
+    const hasAdjClose = pData.some(d => d.adj_close != null && d.adj_close > 0);
+    const getTrapPrice = (d) => {
+        if (hasAdjClose) return (d.adj_close > 0 ? d.adj_close : (d.close || d.Close || 0));
+        return d.close || d.Close || 0;
+    };
+
+    let trapDataStart = 0; // 套牢計算起始 index（A方案才會 > 0）
+    if (!hasAdjClose) {
+        for (let i = 1; i < pData.length; i++) {
+            const prev = getTrapPrice(pData[i - 1]) || 1;
+            const curr = getTrapPrice(pData[i]);
+            if (curr > 0 && (curr - prev) / prev < -0.10) {
+                trapDataStart = i; // 更新為最近一次除權息日（取最後一次）
+            }
+        }
+    }
+
+    // 套牢修復天數 (MAX)：以除權息截斷後的最高收盤價為基準
+    // 找最後一次觸及高點的日期，從當日（含）起算到重新觸及（含），若未修復標示 pending
     let maxRecoveryDays = 0;
-    for (let i = mddTroughIdx; i < pData.length; i++) {
-        const price = pData[i].close || pData[i].Close || 0;
-        if (price >= mddPeak) break;
-        maxRecoveryDays++;
+    let maxRecoveryRange = '';
+    let maxRecoveryPending = false;
+    {
+        // 在 trapDataStart 之後重新找最高收盤價
+        let trapPeak = 0;
+        for (let i = trapDataStart; i < pData.length; i++) {
+            const p = getTrapPrice(pData[i]);
+            if (p > trapPeak) trapPeak = p;
+        }
+        // 找最後一次觸及 trapPeak 的 index
+        let high52LastIdx = trapDataStart;
+        for (let i = trapDataStart; i < pData.length; i++) {
+            if (getTrapPrice(pData[i]) >= trapPeak) high52LastIdx = i;
+        }
+        if (high52LastIdx < pData.length - 1) {
+            const trapStartIdx = high52LastIdx;         // 高點當日 = 第 1 天
+            let recoveryIdx = -1;
+            let days = 0;
+            for (let i = trapStartIdx; i < pData.length; i++) {
+                days++;                                  // 當日先計入（含高點日與修復日）
+                const price = getTrapPrice(pData[i]);
+                if (i > trapStartIdx && price >= trapPeak) { recoveryIdx = i; break; }
+            }
+            maxRecoveryDays = days;
+            maxRecoveryPending = (recoveryIdx === -1);
+            const s = (pData[trapStartIdx].date || '').replace(/-/g, '');
+            const endI = recoveryIdx !== -1 ? recoveryIdx : pData.length - 1;
+            const e = (pData[endI].date || '').replace(/-/g, '');
+            if (s && e) maxRecoveryRange = s + '-' + e;
+        }
+        // else: 最後一日就是高點，無套牢，保留 maxRecoveryDays = 0
+    }
+
+    // 區間峰值套牢天數 (MAX)：掃描除權息截斷後的所有局部收盤高點
+    // 計數規則：從高點當日（含，視為第 1 天）到突破日（含）取最大值
+    let localPeakMaxTrapDays = 0;
+    let localPeakMaxTrapRange = '';
+    const peakWin = 5; // 局部高點判斷窗格：前後各 5 日均不得高於該日
+    const localPeakStart = Math.max(peakWin, trapDataStart); // 不跨越除權息截斷點
+    for (let i = localPeakStart; i < pData.length - peakWin; i++) {
+        const H = getTrapPrice(pData[i]);
+        if (H <= 0) continue;
+        let isPeak = true;
+        for (let k = 1; k <= peakWin; k++) {
+            const lp = getTrapPrice(pData[i - k]);
+            const rp = getTrapPrice(pData[i + k]);
+            if (lp >= H || rp >= H) { isPeak = false; break; }
+        }
+        if (!isPeak) continue;
+        // 從高點當日（i）起算：當日計 1 天，突破日也計入
+        const trapStartIdx = i;
+        let trapEndIdx = pData.length - 1;
+        let trapDays = 0;
+        for (let j = trapStartIdx; j < pData.length; j++) {
+            trapDays++;                                  // 先計入當日
+            const p = getTrapPrice(pData[j]);
+            if (j > trapStartIdx && p >= H) { trapEndIdx = j; break; } // 突破日含入後跳出
+        }
+        if (trapDays > localPeakMaxTrapDays) {
+            localPeakMaxTrapDays = trapDays;
+            const s = (pData[trapStartIdx].date || '').replace(/-/g, '');
+            const e = (pData[trapEndIdx].date || '').replace(/-/g, '');
+            localPeakMaxTrapRange = (s && e) ? s + '-' + e : '';
+        }
     }
 
     const currentPrice = stockData[stockData.length - 1].close || 0;
@@ -977,6 +1086,10 @@ function calculateRiskMetrics(stockData, marketData, lookback = 252) {
         mdd: Math.abs(parseFloat((mdd * 100).toFixed(2))),
         currentDrawdown: Math.abs(parseFloat((currentDrawdown * 100).toFixed(2))),
         maxRecoveryDays,
+        maxRecoveryRange,
+        maxRecoveryPending,
+        localPeakMaxTrapDays,
+        localPeakMaxTrapRange,
         corr20: corr20 !== null ? parseFloat(corr20.toFixed(2)) : null,
         corr60: corr60 !== null ? parseFloat(corr60.toFixed(2)) : null,
         sampleSize: recentReturns.length
@@ -1540,6 +1653,81 @@ async function fetchFinMindRevenue(symbol) {
         json = await analysisFetchProxy(url1y, true).catch(() => null);
     }
 
+    // ── 最終備援：月營收資料不存在（常見於金融控股/銀行/保險股）──────────────
+    // 原因：金融控股公司依法不向 TWSE/MOPS 申報月營收，TaiwanStockMonthRevenue 對其為空。
+    //        解法：改從季報損益表（TaiwanStockFinancialStatements）抓季度營收替代。
+    if (!json || !json.data || json.data.length < 2) {
+        log('Monthly revenue empty → trying quarterly financial statements as fallback...');
+        try {
+            const _dFin = new Date(); _dFin.setFullYear(_dFin.getFullYear() - 3);
+            const _urlFin = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id=${rawSymbol}&start_date=${_dFin.toISOString().split('T')[0]}&supp=1&cb=${Date.now()}`;
+            const _finJson = await analysisFetchProxy(_urlFin, true).catch(() => null);
+
+            if (_finJson?.data?.length > 0) {
+                // ── 優先列表：精確名稱比對 ───────────────────────────────────────
+                const _revTypes = [
+                    // 一般產業
+                    'Revenue', 'OperatingRevenue', 'Operating_Revenue', 'Total_Operating_Revenue',
+                    'Total_revenue', 'Net_revenue', 'TotalRevenue', 'NetRevenue',
+                    // 銀行/金控常用
+                    'InterestIncome', 'NetInterestIncome', 'TotalInterestIncome',
+                    'TotalNonInterestIncome', 'TotalOperatingIncome', 'TotalOperatingRevenue',
+                    'OperatingIncome', 'TotalIncome', 'GrossProfit',
+                    // 保險常用
+                    'PremiumsEarned', 'PremiumIncome', 'NetPremiumIncome', 'TotalPremiumIncome',
+                    // 廣義兜底
+                    'TotalRevenues', 'NetRevenues', 'SalesRevenue', 'ServiceRevenue',
+                    'Revenues', 'Income', 'GrossRevenue'
+                ];
+                const _qDates = [...new Set(_finJson.data.map(x => x.date))].sort();
+                const _qData  = [];
+
+                _qDates.forEach(_date => {
+                    const _items = _finJson.data.filter(x => x.date === _date);
+
+                    // 第一輪：精確名稱比對
+                    let _found = null;
+                    for (const _type of _revTypes) {
+                        const _item = _items.find(x => x.type === _type);
+                        const _val  = Number(_item?.value || 0);
+                        if (_val > 0) { _found = _item; break; }
+                    }
+
+                    // 第二輪：正則模糊比對（兜底金融股等奇特命名）
+                    // 取所有 type 名含 Revenue/Income 且值最大者
+                    if (!_found) {
+                        _found = _items
+                            .filter(x => /revenue|income/i.test(x.type) && Number(x.value || 0) > 0)
+                            .sort((a, b) => Number(b.value) - Number(a.value))[0] || null;
+                    }
+
+                    if (_found) {
+                        _qData.push({
+                            date          : _date,
+                            revenue_year  : parseInt(_date.slice(0, 4)),
+                            revenue_month : parseInt(_date.slice(5, 7)),
+                            revenue       : Number(_found.value),
+                            _srcType      : _found.type,
+                            _isQuarterly  : true
+                        });
+                    }
+                });
+
+                if (_qData.length >= 2) {
+                    json = { data: _qData, _isQuarterly: true };
+                    log(`Quarterly fallback OK: ${_qData.length} quarters, srcType=${_qData[0]._srcType}`);
+                } else {
+                    // 偵錯：印出所有可用 type，幫助未來擴充
+                    const _allTypes = [...new Set(_finJson.data.map(x => x.type))].sort();
+                    log(`Quarterly fallback: no revenue type found. Available types: ${_allTypes.slice(0, 20).join(', ')}`);
+                }
+            }
+        } catch (_eFin) {
+            log(`Quarterly revenue fallback error: ${_eFin.message}`);
+        }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     if (json && json.data && json.data.length >= 2) {
         const data = [...json.data].sort((a, b) => {
             const da = a.date || `${a.revenue_year}-${String(a.revenue_month).padStart(2, '0')}`;
@@ -1601,19 +1789,25 @@ async function fetchFinMindRevenue(symbol) {
             }
         }
 
+        const _isQtrFallback = !!(json?._isQuarterly);
+        const _monthLabel = _isQtrFallback
+            ? `${currentYear}年 Q${Math.ceil(currentMonth / 3)}（季報估算）`
+            : `${currentYear}年${currentMonth}月`;
+
         return {
-            month: `${currentYear}年${currentMonth}月`,
-            revenue: curRev,
+            month        : _monthLabel,
+            revenue      : curRev,
             mom,
             yoy,
-            avgYoY6m: yoyCount6m > 0 ? (yoySum6m / yoyCount6m) : yoy,
+            avgYoY6m     : yoyCount6m > 0 ? (yoySum6m / yoyCount6m) : yoy,
             cum12m,
             ytd,
             ytdMonthCount: ytdMonths.length,
-            cumYoy, // 新增累計年增率
+            cumYoy,
             yoyUpMonths,
-            totalMonths: last12.length || 12,
-            history: data // 新增歷史數據用於繪圖
+            totalMonths  : last12.length || 12,
+            history      : data,
+            _isQuarterly : _isQtrFallback
         };
     }
     return null;
@@ -1664,7 +1858,56 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
         ]);
         
         const results = [jsonS, jsonB, jsonC, jsonInfo];
-        
+
+        // ── 補充最新一季 ──────────────────────────────────────────────────────────
+        // 原因：FinMind 免費 API 有筆數上限。金融股每季欄位多（50+ type），
+        //        5 年資料一次 fetch 容易被截斷，導致最新一季（如 2026-03-31）缺失。
+        //        解法：主 fetch 完後，若最新日期 > 100 天前，再補抓近 6 個月並 merge。
+        try {
+            const _chkDates = jsonS?.data?.length
+                ? [...new Set(jsonS.data.map(x => x.date))].sort() : [];
+            const _latestDate = _chkDates[_chkDates.length - 1] || '';
+            const _daysSince  = _latestDate
+                ? (Date.now() - new Date(_latestDate).getTime()) / 86400000 : 999;
+
+            if (_daysSince > 100) {
+                console.log(`[FinData] Latest date ${_latestDate} is ${_daysSince.toFixed(0)}d ago → supplemental recent fetch`);
+                const _dSupp = new Date(); _dSupp.setDate(_dSupp.getDate() - 200);
+                const _suppStart = _dSupp.toISOString().split('T')[0];
+
+                const _fetchRecent = async (ds) => {
+                    try {
+                        const _url = `https://api.finmindtrade.com/api/v4/data?dataset=${ds}&data_id=${rawSymbol}&start_date=${_suppStart}&supp=1&cb=${Date.now()}`;
+                        const _res = await analysisFetchProxy(_url, true).catch(() => null);
+                        return (_res?.data?.length > 0) ? _res : null;
+                    } catch (_e) { return null; }
+                };
+
+                const [_rS, _rB, _rC] = await Promise.all([
+                    _fetchRecent('TaiwanStockFinancialStatements'),
+                    _fetchRecent('TaiwanStockBalanceSheet'),
+                    _fetchRecent('TaiwanStockCashFlowsStatement')
+                ]);
+
+                const _mergeInto = (base, supp) => {
+                    if (!supp?.data?.length || !base?.data) return;
+                    const keys = new Set(base.data.map(x => `${x.date}||${x.type}`));
+                    let added = 0;
+                    supp.data.forEach(x => {
+                        if (!keys.has(`${x.date}||${x.type}`)) { base.data.push(x); added++; }
+                    });
+                    if (added > 0) console.log(`[FinData] Merged ${added} new records from ${supp.data[0]?.date || '?'}`);
+                };
+
+                _mergeInto(jsonS, _rS);
+                _mergeInto(jsonB, _rB);
+                _mergeInto(jsonC, _rC);
+            }
+        } catch (_suppErr) {
+            console.warn('[FinData] Supplemental fetch failed:', _suppErr.message);
+        }
+        // ─────────────────────────────────────────────────────────────────────────
+
         // 取得產業資訊與發行股數 (關鍵：確保 PB 計算正確)
 
         let industry = '';
@@ -3416,7 +3659,27 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderStatRow('籌碼擁擠度 (融資佔比)', crowdMetrics.marginRatio ? safeFix(crowdMetrics.marginRatio, 2) + '%' : 'N/A')}
                 ${renderStatRow('52週最大回撤 (MDD)', riskMetrics?.mdd !== undefined ? safeFix(riskMetrics.mdd, 2) + '%' : 'N/A')}
                 ${renderStatRow('目前回撤幅度', riskMetrics?.currentDrawdown !== undefined ? safeFix(riskMetrics.currentDrawdown, 2) + '%' : 'N/A')}
-                ${renderStatRow('套牢修復天數 (MAX)', riskMetrics?.maxRecoveryDays !== undefined ? riskMetrics.maxRecoveryDays + ' 天' : 'N/A')}
+                ${(() => {
+                    if (!riskMetrics || riskMetrics.maxRecoveryDays === undefined) return renderStatRow('套牢修復天數 (MAX)', 'N/A');
+                    const days = riskMetrics.maxRecoveryDays;
+                    const pending = riskMetrics.maxRecoveryPending;
+                    const range = riskMetrics.maxRecoveryRange || '';
+                    const fullVal = days + ' 天' + (pending ? '(尚未修復)' : '') + (range ? ' (' + range + ')' : '');
+                    const qualLabel = days === 0 ? '高點續創' : pending ? '尚未修復' : days <= 15 ? '強勢' : days <= 40 ? '正常' : '偏弱';
+                    const cardVal = days === 0 ? '高點續創' : days + ' 天(' + qualLabel + ')';
+                    const safeVal = fullVal.replace(/'/g, "\\'");
+                    return renderStatRow('套牢修復天數 (MAX)', cardVal, null, "showTermExplainer('套牢修復天數 (MAX)', '" + safeVal + "')");
+                })()}
+                ${(() => {
+                    if (!riskMetrics || riskMetrics.localPeakMaxTrapDays === undefined) return renderStatRow('區間峰值套牢天數 (MAX)', 'N/A');
+                    const days = riskMetrics.localPeakMaxTrapDays;
+                    const range = riskMetrics.localPeakMaxTrapRange || '';
+                    const fullVal = days + ' 天' + (range ? ' (' + range + ')' : '');
+                    const qualLabel = days === 0 ? 'N/A' : days <= 15 ? '強勢' : days <= 40 ? '正常' : days <= 80 ? '偏弱' : '⚠️ 警示';
+                    const cardVal = days === 0 ? 'N/A' : days + ' 天(' + qualLabel + ')';
+                    const safeVal = fullVal.replace(/'/g, "\\'");
+                    return renderStatRow('區間峰值套牢天數 (MAX)', cardVal, null, "showTermExplainer('區間峰值套牢天數 (MAX)', '" + safeVal + "')");
+                })()}
                 ${renderStatRow('與大盤相關性 (20日)', riskMetrics?.corr20 !== undefined ? safeFix(riskMetrics.corr20, 2) : 'N/A')}
                 ${renderStatRow('與大盤相關性 (60日)', riskMetrics?.corr60 !== undefined ? safeFix(riskMetrics.corr60, 2) : 'N/A')}
                 ${renderDiagnostic(
@@ -4004,7 +4267,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                 </div>
                                 <div id="vp-container">
                                     ${(() => {
-                                        return sortedBins.slice(0, 30).map((binKey, idx) => {
+                                        return sortedBins.slice(0, 50).map((binKey, idx) => {
                                             const { vol: binVol, floor: binFloor, step: binStep } = bins[binKey];
                                             const weight    = (binVol / maxBinVol * 100);
                                             const isPOC     = binKey === pocBinKey;
@@ -4466,13 +4729,14 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             <!-- 4. 月營收表現 -->
             <div class="analysis-card" style="${_naCardStyle(isETF)}">
                 ${_naCardOverlay(isETF)}
-                <div class="analysis-card-title">📊 月營收趨勢</div>
-                <div style="font-size:11px; color:#cbd5e1; margin-bottom:8px;">月份: ${revData?.month || 'N/A'}</div>
-                ${renderStatRow('單月營收', revData?.revenue ? formatCurrency(revData.revenue) : 'N/A')}
-                ${renderPercentRow('月增率 (MoM)', revData?.mom, true, true, `showRevenueTrendChart('${symbol}', 'MoM')`)}
+                <div class="analysis-card-title">📊 ${revData?._isQuarterly ? '季度營收趨勢（月報缺失）' : '月營收趨勢'}</div>
+                ${revData?._isQuarterly ? `<div style="font-size:10px; color:#f59e0b; margin-bottom:6px; padding:4px 8px; background:rgba(245,158,11,0.1); border-radius:6px; border:1px solid rgba(245,158,11,0.3);">⚠️ 金融控股/銀行/保險股依法無月營收申報，已改以季報損益表估算</div>` : ''}
+                <div style="font-size:11px; color:#cbd5e1; margin-bottom:8px;">${revData?._isQuarterly ? '季度' : '月份'}: ${revData?.month || 'N/A'}</div>
+                ${renderStatRow(revData?._isQuarterly ? '單季營收' : '單月營收', revData?.revenue ? formatCurrency(revData.revenue) : 'N/A')}
+                ${renderPercentRow(revData?._isQuarterly ? '季增率 (QoQ)' : '月增率 (MoM)', revData?.mom, true, true, `showRevenueTrendChart('${symbol}', 'MoM')`)}
                 ${renderPercentRow('年增率 (YoY)', revData?.yoy, true, true, `showRevenueTrendChart('${symbol}', 'YoY')`)}
                 ${renderPercentRow('累計年增率', revData?.cumYoy, true, true, `showRevenueTrendChart('${symbol}', 'CumYoY')`)}
-                ${renderStatRow('近 12 月累計', revData?.cum12m ? formatCurrency(revData.cum12m) : 'N/A')}
+                ${renderStatRow(revData?._isQuarterly ? '近 4 季累計' : '近 12 月累計', revData?.cum12m ? formatCurrency(revData.cum12m) : 'N/A')}
                 ${renderPercentRow('營收年複合成長率 (CAGR)', finData?.revCAGR?.value)}
                 ${finData?.revCAGR?.period ? `<div style="font-size:10px; color:#94a3b8; margin-top:-8px; margin-bottom:8px; text-align:right;">🕒 區間: ${finData.revCAGR.period}</div>` : ''}
                 ${renderStatRow('年增次數 (近 12 月)', revData ? `${revData.yoyUpMonths} / ${revData.totalMonths}` : 'N/A')}
@@ -5177,7 +5441,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
             })()}
 
             <div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(255,255,255,0.1); color:#fbbf24; font-size:10px; word-break:break-all;">
-                [INTEGRITY] Equity:${finData?.equity ? 'YES' : 'NO'}, Shares:${shares ? 'YES' : (sharesFromInfo ? 'YES(B)' : 'NO')}, Holders:${chipsData?.holderTrend?.length || 0}, Norway:${chipsData?.norwayStatus || 'N/A'}
+                [INTEGRITY] Equity:${finData?.equity ? 'YES' : 'NO'}, Shares:${shares ? 'YES' : (finData?.sharesIssued ? 'YES(B)' : 'NO')}, Holders:${chipsData?.holderTrend?.length || 0}, Norway:${chipsData?.norwayStatus || 'N/A'}
             </div>
             <div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(255,255,255,0.1); color:#fbbf24; font-size:10px; word-break:break-all;">
                 [INSIDER SAMPLE] ${insiderActivity ? insiderActivity.sample : `FAIL (DJ:${debugInfo?.dj}, DIR:${debugInfo?.dir}, CHIPS:${debugInfo?.holders || 0})`}
@@ -5712,14 +5976,31 @@ const termDefinitions = {
     },
     '套牢修復天數 (MAX)': {
         type: '風險評估',
-        desc: '指過去 52 週內，股價從「最高收盤價」跌落後，到重新漲回該價位所花費的最長時間（交易日）。',
-        rule: '天數越短，代表股票「V轉」或修復能力越強；天數過長則代表一旦被套牢，可能需要漫長的等待。',
-        advice: '這項指標可以幫您衡量「解套所需的時間成本」。若修復天數過長，代表該股動能恢復緩慢。',
+        desc: '指過去 52 週內，股價從「最高收盤價」跌落後，到重新漲回該價位所花費的時間（含高點當日與修復當日，以交易日計）。若目前股價尚未回到 52 週高點，則標示「尚未修復」並顯示已歷時天數。',
+        rule: '天數越短，代表股票「V轉」或修復能力越強；「尚未修復」代表自最高收盤價跌落後至今仍未回到該位階。',
+        advice: '此指標衡量「從 52 週高點套牢到解套」所需的時間成本，比最大回撤更能反映投資人的心理煎熬。若長期「尚未修復」，需評估是否已進入趨勢反轉。',
+        analyze: (v) => {
+            const valStr = String(v);
+            const val = parseInt(valStr);
+            if (val === 0) return "🔥 目前正處於或接近 52 週最高收盤價，無套牢壓力。";
+            if (valStr.includes('尚未修復')) return '⏳ 自 52 週高點跌落後，目前仍在高點之下，已歷經 ' + val + ' 個交易日尚未修復。可留意量能是否重新聚積，以研判趨勢是否反轉。';
+            if (val > 60) return "⚠️ 一旦套牢，修復時間較長（" + val + " 天）。這通常代表股價處於長期修正或築底期。";
+            if (val > 20) return "修復動能尚屬正常（" + val + " 天），整理後仍能回到前高。";
+            return "🚀 價格修復力極強（" + val + " 天），股價具備「抗跌隨即收復」的強勢特性。";
+        }
+    },
+    '區間峰值套牢天數 (MAX)': {
+        type: '風險評估',
+        desc: '過去 52 週內，掃描所有「局部收盤高點」（前後各 5 個交易日均未超過的價位），統計每個高點從跌落到重新突破所歷經的交易日數，取其最大值。與「套牢修復天數 (MAX)」不同，本指標涵蓋一年內所有曾經出現的局部高點，而非僅針對最大回撤。',
+        rule: '< 15 天：解套極快，趨勢強勁；15–40 天：正常整理，月線內完成突破；40–80 天：局部套牢區偏重，需耐心等待；> 80 天：出現長期套牢高點，個股動能疲弱。',
+        advice: '此指標揭示「一整年內，投資人被套牢最久的那次高點」。天數越短，代表股票不論在哪個高點買進都能快速解套，是強勢股的關鍵特徵；天數越長，代表某個局部高點曾讓投資人望眼欲穿，解套之路漫漫。',
         analyze: (v) => {
             const val = parseInt(v);
-            if (val > 60) return "⚠️ 一旦套牢，修復時間較長。這通常代表股價處於長期修正或築底期。";
-            if (val > 20) return "修復動能尚屬正常。";
-            return "🚀 價格修復力極強，股價具備「抗跌隨即收復」的強勢特性。";
+            if (isNaN(val) || val === 0) return "資料不足，無法辨識有效局部高點。";
+            if (val > 80) return "⚠️ 年內存在長期套牢高點，最壞情況下投資人曾被套逾 " + val + " 個交易日，動能恢復能力偏弱。";
+            if (val > 40) return "年內存在一段偏長的套牢期（" + val + " 天），整理幅度較重，但尚未達到長期積壓警戒線。";
+            if (val > 15) return "局部套牢修復在月線內完成，整體節奏健康，趨勢未見明顯受阻。";
+            return "🚀 年內每個局部高點均在 " + val + " 天以內突破，解套極快，顯示強勢上升趨勢。";
         }
     },
     '目前回撤幅度': {
