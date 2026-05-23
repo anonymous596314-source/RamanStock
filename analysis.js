@@ -2569,6 +2569,22 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     const dsoVal = (qRec > 0 && qRev > 0) ? (qRec / (qRev / 90)) : 0;
                     return { date, dio: dioVal, dso: dsoVal };
                 }),
+                // CCC 完整多季趨勢（含 DSO/DIO/DPO/CCC，供折線圖使用）
+                cccTrend: allDates.map(date => {
+                    const qd = getQData(jsonS.data, date);
+                    const qb = getLatestDataFromDataset(jsonB?.data, date);
+                    const qRev = getVal(qd, ['Revenue', 'OperatingRevenue', 'Total_Operating_Revenue']) || 0;
+                    const qGP  = getVal(qd, ['GrossProfit', 'gross_profit']) || 0;
+                    const qInv = getVal(qb, ['Inventories', 'Inventory', 'Total_Inventories']) || 0;
+                    const qRec = getVal(qb, ['Accounts_Receivable', 'AccountsReceivable', 'Accounts_Receivable_net']) || 0;
+                    const qPay = getVal(qb, ['Accounts_Payable', 'AccountsPayable', 'Notes_Payable', 'NotesPayable', 'Notes_and_accounts_payable', 'Accounts_payable']) || 0;
+                    const cogs = (qRev > 0 && qGP < qRev) ? (qRev - qGP) : 0;
+                    const dio = (qInv > 0 && cogs > 0) ? (qInv / (cogs / 90)) : 0;
+                    const dso = (qRec > 0 && qRev > 0) ? (qRec / (qRev / 90)) : 0;
+                    const dpo = (qPay > 0 && cogs > 0) ? (qPay / (cogs / 90)) : 0;
+                    const ccc = (dio > 0 || dso > 0) ? (dio + dso - dpo) : null;
+                    return { date, dio, dso, dpo, ccc };
+                }).filter(x => x.dio > 0 || x.dso > 0),
                 totalFCF5Y: (() => {
                     // 精確計算近 20 季 (5 年) 的離散值總和
                     const last20 = allDates.slice(-20);
@@ -5327,7 +5343,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderStatRow('存貨週轉天數 (Q)', finData?.inventoryDays !== undefined ? safeFix(finData.inventoryDays, 1) + ' 天' : 'N/A')}
                 ${renderStatRow('應收帳款天數 (Q)', finData?.receivableDays !== undefined ? safeFix(finData.receivableDays, 1) + ' 天' : 'N/A')}
                 ${renderStatRow('應付帳款天數 (Q)', finData?.payableDays !== undefined ? safeFix(finData.payableDays, 1) + ' 天' : 'N/A')}
-                ${renderStatRow('現金週期 (CCC, Q)', finData?.ccc !== undefined ? safeFix(finData.ccc, 1) + ' 天' : 'N/A')}
+                ${renderStatRow('現金週期 (CCC, Q)', finData?.ccc !== undefined ? safeFix(finData.ccc, 1) + ' 天 📊' : 'N/A', null, 'showCCCTrendChart()')}
                 <div style="font-size:9px; color:#64748b; margin-top:4px; margin-left:2px;">* 以上指標均以「單季 (90天)」為計算基準</div>
 
 
@@ -6297,6 +6313,21 @@ const termDefinitions = {
             if (v > 40) return "高毛利代表產品具備強大競爭力，可能是技術領先者。";
             if (v > 15) return "獲利能力尚屬正常，屬一般製造或服務業水準。";
             return "毛利偏低（保五保六），屬勞力密集或代工行業，抗風險能力較弱。";
+        }
+    },
+    '現金週期 (CCC, Q)': {
+        type: '營運效率',
+        desc: '現金轉換週期（Cash Conversion Cycle）= DSO（應收帳款天數）+ DIO（存貨週轉天數）− DPO（應付帳款天數）。衡量企業從「支付原料採購款」到「收回銷售貨款」所需天數，反映資金卡在供應鏈的時間。點擊可查看多季折線圖趨勢。',
+        rule: '< 30天：極佳；30–60天：良好；60–100天：正常；> 100天：偏長。趨勢比單一數值更重要，連續拉長是財務壓力早期訊號。',
+        advice: 'DSO 拉長 → 收款惡化；DIO 拉長 → 庫存積壓；DPO 縮短 → 議價能力下降。三者同步惡化需高度警覺。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (isNaN(val)) return '資料不足，無法計算 CCC。';
+            if (val < 0)   return `CCC 為負值（${val.toFixed(1)} 天），供應商在收到貨款前就已墊付，資金運用效率頂尖。`;
+            if (val < 30)  return `✅ CCC 極短（${val.toFixed(1)} 天），現金回流速度快，資金幾乎不被供應鏈占用。`;
+            if (val < 60)  return `CCC 良好（${val.toFixed(1)} 天），資金效率健康，建議追蹤各分項趨勢變化。`;
+            if (val < 100) return `CCC 正常（${val.toFixed(1)} 天），需持續觀察是否有連續拉長的趨勢。`;
+            return `⚠️ CCC 偏長（${val.toFixed(1)} 天），資金滯留供應鏈，可能影響自由現金流與派息能力。`;
         }
     },
     '現金週期 (CCC)': {
@@ -7948,6 +7979,191 @@ function showHoldingTrendChart(symbol, type) {
 
     overlay.querySelector('.term-explainer-close').onclick = () => overlay.classList.remove('active');
     setTimeout(() => overlay.classList.add('active'), 10);
+}
+
+/**
+ * 現金週期 (CCC) 多季趨勢折線圖 + 百科說明 + AI 診斷
+ * 四條線：DSO(藍) / DIO(橘) / DPO(灰虛線) / CCC(紫)
+ */
+function showCCCTrendChart() {
+    const fin = window._lastFinData;
+    const name = window._lastChipsData?.stockName || '';
+    if (!fin) return;
+    const rawTrend = (fin.cccTrend || []).filter(d => d.dio > 0 || d.dso > 0);
+    if (rawTrend.length < 2) { alert('CCC 趨勢數據不足'); return; }
+
+    const latest = rawTrend[rawTrend.length - 1];
+    const prev   = rawTrend.length >= 5 ? rawTrend[rawTrend.length - 5] : rawTrend[0];
+    const cccCur = latest.ccc ?? 0, cccPrev = prev.ccc ?? 0;
+    const cccDelta = cccCur - cccPrev;
+
+    const width = 360, height = 210;
+    const padL = 38, padR = 12, padT = 15, padB = 34;
+    const W = width - padL - padR, H = height - padT - padB;
+
+    const allVals = rawTrend.flatMap(d => [d.dio, d.dso, d.dpo, d.ccc ?? 0]).filter(v => v > 0);
+    const maxV = Math.max(...allVals, 10) * 1.12;
+    const minV = Math.min(...allVals.filter(v => v >= 0), 0);
+    const range = (maxV - minV) || 1;
+    const gx = (i) => padL + (i / Math.max(rawTrend.length - 1, 1)) * W;
+    const gy = (v) => (height - padB) - ((v - minV) / range) * H;
+
+    const mkPts = (key) => rawTrend.map((d, i) => `${gx(i)},${gy(d[key] ?? 0)}`).join(' ');
+    const dsoP = mkPts('dso'), dioP = mkPts('dio'), dpoP = mkPts('dpo'), cccP = mkPts('ccc');
+
+    const nTicks = 4;
+    const step = range / nTicks;
+    const yTicks = Array.from({ length: nTicks + 1 }, (_, i) => minV + step * i);
+    const xIdxs = rawTrend.reduce((acc, _, i) => {
+        if (i % Math.ceil(rawTrend.length / 5) === 0 || i === rawTrend.length - 1) acc.push(i);
+        return acc;
+    }, []);
+
+    // AI 診斷文字
+    const diagParts = [];
+    const dsoChg = latest.dso - prev.dso, dioChg = latest.dio - prev.dio, dpoChg = latest.dpo - prev.dpo;
+    if (Math.abs(cccDelta) < 3) {
+        diagParts.push(`近 ${rawTrend.length >= 5 ? 4 : rawTrend.length - 1} 季 CCC 維持穩定（${cccCur.toFixed(1)} 天），現金轉換效率無明顯惡化。`);
+    } else if (cccDelta > 0) {
+        diagParts.push(`⚠️ CCC 近期拉長 +${cccDelta.toFixed(1)} 天，資金占用加重。`);
+        if (dsoChg > 3)  diagParts.push(`應收帳款天數 (DSO) 增加 +${dsoChg.toFixed(1)} 天，收款效率下滑。`);
+        if (dioChg > 3)  diagParts.push(`存貨週轉天數 (DIO) 增加 +${dioChg.toFixed(1)} 天，庫存積壓風險上升。`);
+        if (dpoChg < -3) diagParts.push(`應付帳款天數 (DPO) 縮短 ${dpoChg.toFixed(1)} 天，對供應商議價能力減弱。`);
+    } else {
+        diagParts.push(`✅ CCC 改善 ${cccDelta.toFixed(1)} 天，現金轉換效率提升。`);
+        if (dsoChg < -3)  diagParts.push(`應收帳款天數縮短 ${dsoChg.toFixed(1)} 天，收款加速。`);
+        if (dioChg < -3)  diagParts.push(`存貨週轉天數縮短 ${dioChg.toFixed(1)} 天，庫存去化良好。`);
+        if (dpoChg > 3)   diagParts.push(`應付帳款天數拉長 +${dpoChg.toFixed(1)} 天，供應商付款談判能力增強。`);
+    }
+    const diagText = diagParts.join(' ');
+
+    let badgeColor = '#a855f7';
+    if (cccCur < 30)       badgeColor = '#10b981';
+    else if (cccCur < 60)  badgeColor = '#3b82f6';
+    else if (cccCur < 100) badgeColor = '#fbbf24';
+    else                   badgeColor = '#ef4444';
+
+    let overlay = document.getElementById('termExplainerOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'termExplainerOverlay';
+        overlay.className = 'term-explainer-overlay';
+        (document.getElementById('analysisModal') || document.body).appendChild(overlay);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('active'); });
+    }
+
+    overlay.innerHTML = `
+        <div class="term-explainer-content" style="max-width:430px; padding:22px 20px;">
+            <div class="term-explainer-close">&times;</div>
+            <div class="term-explainer-badge" style="background:rgba(168,85,247,0.15); color:#c084fc;">營運效率</div>
+            <div class="term-explainer-title" style="font-size:17px; margin-bottom:2px;">${name} 現金轉換週期 (CCC) 多季趨勢</div>
+            <div style="font-size:11px; color:#64748b; margin-bottom:12px;">共 ${rawTrend.length} 季資料 · 單位：天</div>
+
+            <!-- 最新四指標 -->
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:7px; margin-bottom:12px;">
+                ${[['DSO','dso','#3b82f6','應收天數'],['DIO','dio','#f97316','存貨天數'],['DPO','dpo','#94a3b8','應付天數'],['CCC','ccc','#c084fc','現金週期']].map(([label,key,color,sub]) => `
+                <div style="background:rgba(255,255,255,0.04); border:1px solid ${color}33; border-radius:8px; padding:6px 8px; text-align:center;">
+                    <div style="font-size:9px; color:#94a3b8; margin-bottom:1px;">${sub}</div>
+                    <div style="font-size:15px; font-weight:800; color:${color};">${(latest[key] ?? 0).toFixed(1)}</div>
+                    <div style="font-size:9px; color:#64748b;">${label}</div>
+                </div>`).join('')}
+            </div>
+
+            <!-- 折線圖 -->
+            <div style="background:rgba(255,255,255,0.02); border-radius:10px; padding:8px; border:1px solid rgba(255,255,255,0.06); margin-bottom:10px;">
+                <svg id="cccSvg" width="100%" height="${height}" viewBox="0 0 ${width} ${height}" style="display:block; overflow:visible; cursor:crosshair;">
+                    ${yTicks.map(v => {
+                        const y = gy(v);
+                        return `<line x1="${padL}" y1="${y}" x2="${width-padR}" y2="${y}" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="${v===yTicks[0]?'0':'2,3'}"/>
+                                <text x="${padL-3}" y="${y+3.5}" font-size="8" fill="#64748b" text-anchor="end">${Math.round(v)}</text>`;
+                    }).join('')}
+                    <line x1="${padL}" y1="${height-padB}" x2="${width-padR}" y2="${height-padB}" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+                    <polyline points="${dpoP}" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,3" opacity="0.6"/>
+                    <polyline points="${dsoP}" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
+                    <polyline points="${dioP}" fill="none" stroke="#f97316" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
+                    <polyline points="${cccP}" fill="none" stroke="#a855f7" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <g id="cccFG" style="visibility:hidden;">
+                        <line id="cccFL" x1="0" y1="${padT}" x2="0" y2="${height-padB}" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+                        <circle id="cccDso" r="3.5" fill="#3b82f6" stroke="#fff" stroke-width="1.2"/>
+                        <circle id="cccDio" r="3.5" fill="#f97316" stroke="#fff" stroke-width="1.2"/>
+                        <circle id="cccDpo" r="3"   fill="#94a3b8" stroke="#fff" stroke-width="1.2"/>
+                        <circle id="cccCcc" r="4"   fill="#a855f7" stroke="#fff" stroke-width="1.5"/>
+                        <rect id="cccTBg" x="0" y="0" width="118" height="66" rx="5" fill="rgba(15,23,42,0.93)" stroke="#334155" stroke-width="1"/>
+                        <text id="cccTDate" x="0" y="0" font-size="9"  fill="#94a3b8" font-weight="bold"/>
+                        <text id="cccTDso"  x="0" y="0" font-size="9.5" fill="#93c5fd"/>
+                        <text id="cccTDio"  x="0" y="0" font-size="9.5" fill="#fb923c"/>
+                        <text id="cccTDpo"  x="0" y="0" font-size="9.5" fill="#94a3b8"/>
+                        <text id="cccTCcc"  x="0" y="0" font-size="10" fill="#d8b4fe" font-weight="800"/>
+                    </g>
+                    ${xIdxs.map(i => {
+                        const lbl = rawTrend[i].date?.replace(/^\d{2}(\d{2})[-/](\d{1,2}).*/, '$1/$2Q') || rawTrend[i].date?.slice(-5) || '';
+                        return `<text x="${gx(i)}" y="${height-padB+13}" font-size="9" fill="#64748b" text-anchor="middle">${lbl}</text>`;
+                    }).join('')}
+                </svg>
+            </div>
+            <!-- 圖例 -->
+            <div style="display:flex; flex-wrap:wrap; gap:10px 16px; font-size:10px; color:#94a3b8; margin-bottom:12px; padding:0 4px;">
+                <span><span style="color:#3b82f6;">─</span> DSO 應收</span>
+                <span><span style="color:#f97316;">─</span> DIO 存貨</span>
+                <span><span style="color:#94a3b8; opacity:.7;">╌</span> DPO 應付</span>
+                <span><span style="color:#a855f7; font-weight:700;">─</span> CCC 現金週期</span>
+            </div>
+
+            <!-- 百科說明 -->
+            <div style="background:rgba(168,85,247,0.06); border:1px solid rgba(168,85,247,0.2); border-radius:10px; padding:12px; margin-bottom:10px;">
+                <div style="font-size:11px; font-weight:700; color:#c084fc; margin-bottom:6px;">📖 什麼是 CCC？</div>
+                <div style="font-size:11.5px; color:#cbd5e1; line-height:1.55;">
+                    現金轉換週期（Cash Conversion Cycle）= DSO + DIO − DPO。
+                    衡量公司從「付錢買原料」到「收回貨款」所需的天數。
+                    天數越短代表資金周轉越快；若持續拉長，往往是財務壓力的早期訊號。
+                </div>
+                <div style="font-size:10px; color:#64748b; margin-top:6px;">判斷基準：&lt;30天 極佳 · 30–60天 良好 · 60–100天 正常 · >100天 偏長</div>
+            </div>
+
+            <!-- AI 診斷 -->
+            <div style="background:${badgeColor}18; border:1px solid ${badgeColor}40; border-radius:10px; padding:12px;">
+                <div style="font-size:11px; font-weight:700; color:${badgeColor}; margin-bottom:6px;">🔍 AI 智能診斷</div>
+                <div style="font-size:11px; color:#94a3b8; margin-bottom:4px;">個股當前值：<span style="font-size:16px; font-weight:800; color:${badgeColor};">${cccCur.toFixed(1)} 天</span></div>
+                <div style="font-size:12px; line-height:1.55; color:#e2e8f0;">${diagText}</div>
+            </div>
+        </div>
+    `;
+
+    overlay.classList.add('active');
+    document.querySelector('.term-explainer-close').addEventListener('click', () => overlay.classList.remove('active'));
+
+    // Tooltip 互動
+    const svg = document.getElementById('cccSvg');
+    const fg  = document.getElementById('cccFG');
+    svg.addEventListener('mousemove', (e) => {
+        const rect = svg.getBoundingClientRect();
+        const mx = (e.clientX - rect.left) * (width / rect.width);
+        let ni = 0, md = Infinity;
+        rawTrend.forEach((_, i) => { const dx = Math.abs(gx(i) - mx); if (dx < md) { md = dx; ni = i; } });
+        const pt = rawTrend[ni];
+        const x = gx(ni);
+        fg.style.visibility = 'visible';
+        document.getElementById('cccFL').setAttribute('x1', x); document.getElementById('cccFL').setAttribute('x2', x);
+        [['cccDso','dso'],['cccDio','dio'],['cccDpo','dpo'],['cccCcc','ccc']].forEach(([id,k]) => {
+            const el = document.getElementById(id);
+            el.setAttribute('cx', x); el.setAttribute('cy', gy(pt[k] ?? 0));
+        });
+        const tx = (x + 8 > width - 126) ? x - 126 : x + 8;
+        const ty = Math.max(padT, gy(Math.max(pt.dso, pt.dio, pt.ccc ?? 0)) - 8);
+        const bg = document.getElementById('cccTBg');
+        bg.setAttribute('x', tx); bg.setAttribute('y', ty);
+        [['cccTDate', 0, pt.date?.slice(-5) || '', '#94a3b8'],
+         ['cccTDso',  1, `DSO: ${(pt.dso).toFixed(1)} 天`, '#93c5fd'],
+         ['cccTDio',  2, `DIO: ${(pt.dio).toFixed(1)} 天`, '#fb923c'],
+         ['cccTDpo',  3, `DPO: ${(pt.dpo).toFixed(1)} 天`, '#94a3b8'],
+         ['cccTCcc',  4, `CCC: ${(pt.ccc ?? 0).toFixed(1)} 天`, '#d8b4fe']
+        ].forEach(([id, row, txt]) => {
+            const el = document.getElementById(id);
+            el.setAttribute('x', tx + 5); el.setAttribute('y', ty + 13 + row * 13);
+            el.textContent = txt;
+        });
+    });
+    svg.addEventListener('mouseleave', () => { fg.style.visibility = 'hidden'; });
 }
 
 /**
