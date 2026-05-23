@@ -1296,6 +1296,9 @@ select option {
                         <button id="refreshPricesBtn" class="header-action-btn" title="從外部網路抓取最新底價" style="background:rgba(14, 165, 233, 0.15); color:#7dd3fc; border-color:rgba(14, 165, 233, 0.3);">↻ 更新股價</button>
                         <button id="openAccountingBtn" class="header-action-btn" style="background:rgba(16, 185, 129, 0.15); color:#6ee7b7; border-color:rgba(16, 185, 129, 0.3);">📒 日常記帳</button>
                         <button id="openHistoryStatsBtn" class="header-action-btn" style="background:rgba(217, 70, 239, 0.15); color:#f0abfc; border-color:rgba(217, 70, 239, 0.3);">📊 歷史統計</button>
+                        <button id="exportSaveBtn" class="header-action-btn" style="background:rgba(20, 184, 166, 0.15); color:#5eead4; border-color:rgba(20, 184, 166, 0.3);">💾 匯出存檔</button>
+                        <button id="importSaveBtn" class="header-action-btn" style="background:rgba(148, 163, 184, 0.15); color:#cbd5e1; border-color:rgba(148, 163, 184, 0.3);">📂 匯入存檔</button>
+                        <input type="file" id="importSaveFile" accept=".json,application/json" style="display:none;">
                     </div>
                 </div>
             </header>
@@ -1838,6 +1841,8 @@ select option {
             <button class="header-action-btn" onclick="document.getElementById('refreshPricesBtn').click(); hideMobileMore();" style="background:rgba(14,165,233,0.15); color:#7dd3fc; border-color:rgba(14,165,233,0.3); width:100%; font-size:14px; padding:12px;">↻ 更新股價</button>
             <button class="header-action-btn" onclick="document.getElementById('openAccountingBtn').click(); hideMobileMore();" style="background:rgba(16,185,129,0.15); color:#6ee7b7; border-color:rgba(16,185,129,0.3); width:100%; font-size:14px; padding:12px;">📒 日常記帳</button>
             <button class="header-action-btn" onclick="document.getElementById('openHistoryStatsBtn').click(); hideMobileMore();" style="background:rgba(217,70,239,0.15); color:#f0abfc; border-color:rgba(217,70,239,0.3); width:100%; font-size:14px; padding:12px;">📊 歷史統計</button>
+            <button class="header-action-btn" onclick="document.getElementById('exportSaveBtn').click(); hideMobileMore();" style="background:rgba(20,184,166,0.15); color:#5eead4; border-color:rgba(20,184,166,0.3); width:100%; font-size:14px; padding:12px;">💾 匯出存檔</button>
+            <button class="header-action-btn" onclick="document.getElementById('importSaveBtn').click(); hideMobileMore();" style="background:rgba(148,163,184,0.15); color:#cbd5e1; border-color:rgba(148,163,184,0.3); width:100%; font-size:14px; padding:12px;">📂 匯入存檔</button>
         </div>
         <button onclick="hideMobileMore()" style="width:100%; margin-top:12px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:var(--text-secondary); border-radius:10px; padding:10px; font-size:14px; font-family:inherit; cursor:pointer;">關閉</button>
     </div>
@@ -1914,6 +1919,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const shortTermView = document.getElementById('shortTermView');
     const dashboardTitleEl = document.querySelector('.inventory-header h2');
     const refreshPricesBtn = document.getElementById('refreshPricesBtn');
+    const exportSaveBtn = document.getElementById('exportSaveBtn');
+    const importSaveBtn = document.getElementById('importSaveBtn');
+    const importSaveFileInput = document.getElementById('importSaveFile');
     const inventoryListEl = document.getElementById('inventoryList');
     const emptyMsgEl = document.getElementById('emptyInventoryMsg');
     const dashboardTotalValueEl = document.getElementById('totalMarketValue');
@@ -2029,6 +2037,91 @@ document.addEventListener('DOMContentLoaded', () => {
         
         renderInventory();
         renderShortTermInventory();
+    }
+
+    const SAVE_STORAGE_PREFIX = 'twStock';
+    const SAVE_FILE_SCHEMA = 'tw-stock-app-save';
+
+    function collectSaveStorage() {
+        if (document.activeElement && typeof document.activeElement.blur === 'function') {
+            document.activeElement.blur();
+        }
+
+        const storage = {};
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith(SAVE_STORAGE_PREFIX)) {
+                storage[key] = localStorage.getItem(key);
+            }
+        }
+        return Object.keys(storage).sort().reduce((sorted, key) => {
+            sorted[key] = storage[key];
+            return sorted;
+        }, {});
+    }
+
+    function exportSaveFile() {
+        const storage = collectSaveStorage();
+        const payload = {
+            schema: SAVE_FILE_SCHEMA,
+            version: 1,
+            exportedAt: new Date().toISOString(),
+            storage
+        };
+        const json = JSON.stringify(payload, null, 2);
+        const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+        link.href = url;
+        link.download = `tw-stock-save-${stamp}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function extractSaveStorage(payload) {
+        const source = payload && typeof payload === 'object' && !Array.isArray(payload)
+            ? (payload.storage && typeof payload.storage === 'object' ? payload.storage : payload)
+            : null;
+        if (!source) return {};
+
+        return Object.entries(source).reduce((storage, [key, value]) => {
+            if (!key.startsWith(SAVE_STORAGE_PREFIX)) return storage;
+            storage[key] = typeof value === 'string' ? value : JSON.stringify(value);
+            return storage;
+        }, {});
+    }
+
+    async function importSaveFile(file) {
+        try {
+            const payload = JSON.parse(await file.text());
+            const storage = extractSaveStorage(payload);
+            const importKeys = Object.keys(storage);
+
+            if (importKeys.length === 0) {
+                alert('這個檔案不是有效的存檔，沒有找到可匯入的資料。');
+                return;
+            }
+
+            const ok = confirm(`這會覆蓋目前瀏覽器內的投資、記帳、血壓與歷史統計資料，並匯入 ${importKeys.length} 筆資料。是否繼續？`);
+            if (!ok) return;
+
+            const existingKeys = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith(SAVE_STORAGE_PREFIX)) existingKeys.push(key);
+            }
+            existingKeys.forEach(key => localStorage.removeItem(key));
+            importKeys.forEach(key => localStorage.setItem(key, storage[key]));
+
+            alert('匯入完成，頁面將重新整理。');
+            window.location.reload();
+        } catch (err) {
+            console.error('Import save failed:', err);
+            alert('匯入失敗，請確認檔案是 JSON 存檔。');
+        }
     }
 
     function triggerUndo() {
@@ -3114,6 +3207,17 @@ document.addEventListener('DOMContentLoaded', () => {
     addInventoryBtn.addEventListener('click', addToInventory);
     addShortTermBtn.addEventListener('click', addToShortTermInventory);
     refreshPricesBtn.addEventListener('click', refreshPrices);
+    if (exportSaveBtn) {
+        exportSaveBtn.addEventListener('click', exportSaveFile);
+    }
+    if (importSaveBtn && importSaveFileInput) {
+        importSaveBtn.addEventListener('click', () => importSaveFileInput.click());
+        importSaveFileInput.addEventListener('change', (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (file) importSaveFile(file);
+            e.target.value = '';
+        });
+    }
     
     let isShortTermView = false;
     toggleViewBtn.addEventListener('click', () => {

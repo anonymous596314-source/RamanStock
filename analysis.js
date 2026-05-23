@@ -1028,6 +1028,7 @@ function calculateRiskMetrics(stockData, marketData, lookback = 252) {
     // 計數規則：從高點當日（含，視為第 1 天）到突破日（含）取最大值
     let localPeakMaxTrapDays = 0;
     let localPeakMaxTrapRange = '';
+    let localPeakMaxTrapPending = false;
     const peakWin = 5; // 局部高點判斷窗格：前後各 5 日均不得高於該日
     const localPeakStart = Math.max(peakWin, trapDataStart); // 不跨越除權息截斷點
     for (let i = localPeakStart; i < pData.length - peakWin; i++) {
@@ -1044,13 +1045,15 @@ function calculateRiskMetrics(stockData, marketData, lookback = 252) {
         const trapStartIdx = i;
         let trapEndIdx = pData.length - 1;
         let trapDays = 0;
+        let recovered = false;
         for (let j = trapStartIdx; j < pData.length; j++) {
             trapDays++;                                  // 先計入當日
             const p = getTrapPrice(pData[j]);
-            if (j > trapStartIdx && p >= H) { trapEndIdx = j; break; } // 突破日含入後跳出
+            if (j > trapStartIdx && p >= H) { trapEndIdx = j; recovered = true; break; } // 突破日含入後跳出
         }
         if (trapDays > localPeakMaxTrapDays) {
             localPeakMaxTrapDays = trapDays;
+            localPeakMaxTrapPending = !recovered;
             const s = (pData[trapStartIdx].date || '').replace(/-/g, '');
             const e = (pData[trapEndIdx].date || '').replace(/-/g, '');
             localPeakMaxTrapRange = (s && e) ? s + '-' + e : '';
@@ -1090,6 +1093,7 @@ function calculateRiskMetrics(stockData, marketData, lookback = 252) {
         maxRecoveryPending,
         localPeakMaxTrapDays,
         localPeakMaxTrapRange,
+        localPeakMaxTrapPending,
         corr20: corr20 !== null ? parseFloat(corr20.toFixed(2)) : null,
         corr60: corr60 !== null ? parseFloat(corr60.toFixed(2)) : null,
         sampleSize: recentReturns.length
@@ -1515,7 +1519,9 @@ async function fetchStockChips(symbol) {
                 return (lvl >= 1 && lvl <= 8) || (lvl > 17 && lvl <= 50); // Level 1-8 涵蓋 50張以下，或張數 50 以下
             }).reduce((s, x) => s + getPct(x), 0);
             return { date: d, large: l, retail: r };
-        }).filter(x => x && (x.large > 0 || x.retail > 0));
+        // 百分比合理性校驗：大戶與散戶均不得超過100%，且總和不得超過100%
+        // 舊版資料格式的 HoldingSharesLevel 可能儲存實際股數而非等級，造成天文數字
+        }).filter(x => x && x.large > 0 && x.large <= 100 && x.retail >= 0 && x.retail <= 100 && (x.large + x.retail) <= 100);
     }
 
     // --- 備援：神秘金字塔 (Norway) ---
@@ -2077,6 +2083,11 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             const ttmInvestingCF = sumCashFlowTTM(investingCFSyns);
             const ttmCapEx = sumCashFlowTTM(capexSyns, true);
             const ttmFCF = ttmOCF + ttmCapEx;
+
+            // 淨負債/EBITDA：以有息負債（finDebt 在後方計算，此處用同義方式先算 D&A TTM）
+            // D&A TTM = 過去四季折舊攤銷加總（現金流量表中的非現金費用加回項）
+            const daSyns = ['Depreciation', 'Depreciation_and_amortization_expense', 'depreciation', 'Depreciation_And_Amortization'];
+            const ttmDA = sumCashFlowTTM(daSyns);
             const avgEquityTTM = getAverageBalanceTTM(eqSyns) || avgEquity;
             const avgAssetsTTM = getAverageBalanceTTM(assetSyns) || avgAssets;
             const cfoForAnnualMetrics = ttmOCF || cfo || 0;
@@ -2159,6 +2170,12 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             const investingCF = ttmInvestingCF;
             const capex = ttmCapEx;
             const earningsQuality = (cfoForAnnualMetrics && ttmNetIncome > 0) ? (cfoForAnnualMetrics / ttmNetIncome * 100) : null;
+
+            // 斯隆比例 (Sloan Ratio) = (淨利 - 營運現金流) / 平均總資產
+            // 偵測「帳面盈餘 vs 實際現金」的落差，> 10% 代表盈餘品質存疑
+            const sloanRatio = (avgAssetsTTM > 0 && ttmNetIncome !== null && cfoForAnnualMetrics !== null)
+                ? ((ttmNetIncome - cfoForAnnualMetrics) / avgAssetsTTM) * 100
+                : null;
 
             // Altman Z-Score Calculation (approximate)
             const zA = assets > 0 ? (curAssets - curLiab) / assets : 0;
@@ -2365,6 +2382,7 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 ccc: (dio > 0 || dso > 0 || dpo > 0) ? (dio + dso - dpo) : null,
                 interestCoverage: ttmInterestExp > 0 ? (ttmPreTaxIncome + ttmInterestExp) / ttmInterestExp : (ttmPreTaxIncome > 0 ? 999 : null),
                 earningsQuality: earningsQuality,
+                sloanRatio: sloanRatio,
                 fcfTrend:    allDates.slice(-8).map(date => {
                     const ocfVal = getDiscreteVal(jsonC?.data, date, ocfSyns);
                     const capexVal = normalizeCapexOutflow(getDiscreteVal(jsonC?.data, date, capexSyns));
@@ -2443,6 +2461,18 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                 }),
                 netDebt: liabilities - cash,
                 netDebtRatio: equity > 0 ? ((liabilities - cash) / equity * 100) : null,
+                netDebtEBITDA: (() => {
+                    // 有息淨負債 / TTM EBITDA
+                    // finDebt 已在下方 EV 計算段算出，此處採同邏輯內聯計算
+                    const fd = debtExactTypes.reduce((s, t) => {
+                        const item = latestB.find(x => x.type === t);
+                        return s + (item && item.value !== undefined ? Math.abs(item.value) : 0);
+                    }, 0) || getVal(latestB, ['Borrowings', 'LoansAndBorrowings']) || (liabilities * 0.4);
+                    const nd = fd - (cash || 0);                // 有息淨負債
+                    const ebitda = ttmOpIncome + (ttmDA || 0);  // TTM EBITDA = EBIT + D&A
+                    if (ebitda <= 0) return null;               // EBITDA 為負無意義
+                    return nd / ebitda;                          // 單位：倍
+                })(),
                 revCAGR: (() => {
                     const revSyns = ['Revenue', 'revenue', 'OperatingRevenue', 'Total_Operating_Revenue', 'Operating_Revenue'];
                     if (!allDates || allDates.length < 5) return null;
@@ -3175,6 +3205,35 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
         }
     }
 
+    // --- ETF / 無持股基準日：trust、dealer 從法人日資料全期累積估算 ---
+    // TaiwanStockShareholding 只含外資欄位，ETF 通常也無此資料，
+    // 投信與自營商持股比須從法人買賣日資料累積轉換
+    if (chipsData && !chipsData.holdingDate && institutionalData && institutionalData.daily && institutionalData.daily.length > 0
+        && chipsData.trust === null && chipsData.dealer === null) {
+        const shares = chipsData.sharesIssued || 1;
+        let netT = 0, netD = 0, netF = 0, hasActivity = false;
+        for (const d of institutionalData.daily) {
+            netT += d.trust   || 0;
+            netD += d.dealer  || 0;
+            netF += d.foreign || 0;
+            if (d.trust || d.dealer) hasActivity = true;
+        }
+        if (hasActivity) {
+            // trust/dealer：累積淨買張數轉換為佔發行股比（以 0 為基準，代表法人近期淨倉位）
+            chipsData.trust  = parseFloat(((netT * 1000 / shares) * 100).toFixed(3));
+            chipsData.dealer = parseFloat(((netD * 1000 / shares) * 100).toFixed(3));
+            // 外資：若 MoneyDJ 已給絕對值則保留，否則也以累積估算補上
+            if (chipsData.foreign === null) {
+                chipsData.foreign = parseFloat(((netF * 1000 / shares) * 100).toFixed(3));
+            }
+            chipsData.institutionalTotal = (chipsData.foreign || 0) + chipsData.trust + chipsData.dealer;
+            // 以法人資料最新日期補上 holdingDate
+            chipsData.holdingDate = institutionalData.daily[institutionalData.daily.length - 1]?.date || null;
+            chipsData.isEstimated = true;
+            chipsData.isETFEstimated = true; // ETF 專用旗標，用於區分一般股補丁估算
+        }
+    }
+
     // 每股淨值 (BPS)
     const shares = chipsData?.sharesIssued || finData?.sharesIssued;
     const bps = (finData?.equity && shares) ? (finData.equity / shares) : null;
@@ -3664,20 +3723,22 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     const days = riskMetrics.maxRecoveryDays;
                     const pending = riskMetrics.maxRecoveryPending;
                     const range = riskMetrics.maxRecoveryRange || '';
-                    const fullVal = days + ' 天' + (pending ? '(尚未修復)' : '') + (range ? ' (' + range + ')' : '');
+                    // pending 用負數編碼傳入 showTermExplainer，analyze 以 v < 0 判斷
+                    const encVal = (pending ? -days : days) + (range ? ' (' + range + ')' : '');
                     const qualLabel = days === 0 ? '高點續創' : pending ? '尚未修復' : days <= 15 ? '強勢' : days <= 40 ? '正常' : '偏弱';
                     const cardVal = days === 0 ? '高點續創' : days + ' 天(' + qualLabel + ')';
-                    const safeVal = fullVal.replace(/'/g, "\\'");
+                    const safeVal = String(encVal).replace(/'/g, "\\'");
                     return renderStatRow('套牢修復天數 (MAX)', cardVal, null, "showTermExplainer('套牢修復天數 (MAX)', '" + safeVal + "')");
                 })()}
                 ${(() => {
                     if (!riskMetrics || riskMetrics.localPeakMaxTrapDays === undefined) return renderStatRow('區間峰值套牢天數 (MAX)', 'N/A');
                     const days = riskMetrics.localPeakMaxTrapDays;
+                    const pending = riskMetrics.localPeakMaxTrapPending;
                     const range = riskMetrics.localPeakMaxTrapRange || '';
-                    const fullVal = days + ' 天' + (range ? ' (' + range + ')' : '');
-                    const qualLabel = days === 0 ? 'N/A' : days <= 15 ? '強勢' : days <= 40 ? '正常' : days <= 80 ? '偏弱' : '⚠️ 警示';
+                    const encVal = (pending ? -days : days) + (range ? ' (' + range + ')' : '');
+                    const qualLabel = days === 0 ? 'N/A' : pending ? '尚未修復' : days <= 15 ? '強勢' : days <= 40 ? '正常' : days <= 80 ? '偏弱' : '⚠️ 警示';
                     const cardVal = days === 0 ? 'N/A' : days + ' 天(' + qualLabel + ')';
-                    const safeVal = fullVal.replace(/'/g, "\\'");
+                    const safeVal = String(encVal).replace(/'/g, "\\'");
                     return renderStatRow('區間峰值套牢天數 (MAX)', cardVal, null, "showTermExplainer('區間峰值套牢天數 (MAX)', '" + safeVal + "')");
                 })()}
                 ${renderStatRow('與大盤相關性 (20日)', riskMetrics?.corr20 !== undefined ? safeFix(riskMetrics.corr20, 2) : 'N/A')}
@@ -4331,12 +4392,12 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                     <span class="analysis-val">${chipsData?.foreign ? safeFix(chipsData.foreign, 2) + '%' : 'N/A'}</span>
                 </div>
                 <div class="analysis-stat-row" onclick="showHoldingTrendChart('${symbol}', '投信')" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px dashed rgba(255,255,255,0.05);">
-                    <span style="font-size:12.5px; color:#60a5fa; font-weight:700;">投信持股比 📈</span>
-                    <span class="analysis-val">${chipsData?.trust ? safeFix(chipsData.trust, 3) + '%' : 'N/A'}</span>
+                    <span style="font-size:12.5px; color:#60a5fa; font-weight:700;">投信持股比 📈${chipsData?.isETFEstimated && chipsData?.trust !== null ? '<span style="font-size:9px; color:#94a3b8; font-weight:normal;"> (累積淨倉估算)</span>' : ''}</span>
+                    <span class="analysis-val">${chipsData?.trust !== null && chipsData?.trust !== undefined ? safeFix(chipsData.trust, 3) + '%' : 'N/A'}</span>
                 </div>
                 <div class="analysis-stat-row" onclick="showHoldingTrendChart('${symbol}', '自營商')" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px dashed rgba(255,255,255,0.05);">
-                    <span style="font-size:12.5px; color:#60a5fa; font-weight:700;">自營商持股比 📈</span>
-                    <span class="analysis-val">${chipsData?.dealer ? safeFix(chipsData.dealer, 3) + '%' : 'N/A'}</span>
+                    <span style="font-size:12.5px; color:#60a5fa; font-weight:700;">自營商持股比 📈${chipsData?.isETFEstimated && chipsData?.dealer !== null ? '<span style="font-size:9px; color:#94a3b8; font-weight:normal;"> (累積淨倉估算)</span>' : ''}</span>
+                    <span class="analysis-val">${chipsData?.dealer !== null && chipsData?.dealer !== undefined ? safeFix(chipsData.dealer, 3) + '%' : 'N/A'}</span>
                 </div>
                 
                 <!-- 法人買進均價 -->
@@ -4452,7 +4513,9 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 <!-- 大戶/散戶持股比例 -->
                 <div style="margin-bottom:20px; border-top:1px dashed rgba(255,255,255,0.05); padding-top:12px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                        <span style="font-size:12px; color:#cbd5e1;">集保大戶 vs 散戶持股比例</span>
+                        <span onclick="showHolderTrendChart()" style="font-size:12px; color:#60a5fa; cursor:pointer; display:flex; align-items:center; gap:4px;" title="點擊查看完整趨勢圖">
+                            📊 集保大戶 vs 散戶持股比例
+                        </span>
                         <div style="display:flex; align-items:center; gap:12px;">
                             ${(() => {
                                 const trend = chipsData?.holderTrend || [];
@@ -4493,6 +4556,42 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         }).join('')}
                     </div>
                 </div>
+
+                <!-- 籌碼集中程度指數 -->
+                ${(() => {
+                    const trend = chipsData?.holderTrend || [];
+                    if (trend.length === 0) return '';
+                    const latest = trend[trend.length - 1];
+                    const ci = latest.large - latest.retail;
+                    const prev = trend.length >= 5 ? trend[trend.length - 5] : trend[0];
+                    const prevCi = prev.large - prev.retail;
+                    const delta = ci - prevCi;
+                    const nWeeks = trend.length >= 5 ? 4 : trend.length - 1;
+
+                    let ciColor, ciLabel;
+                    if (ci > 30)        { ciColor = '#ef4444'; ciLabel = '高度集中'; }
+                    else if (ci > 10)   { ciColor = '#f97316'; ciLabel = '偏向集中'; }
+                    else if (ci >= -10) { ciColor = '#fbbf24'; ciLabel = '籌碼平衡'; }
+                    else                { ciColor = '#10b981'; ciLabel = '散戶主導'; }
+
+                    const trendArrow = delta > 0.3 ? '▲ 集中中' : delta < -0.3 ? '▼ 鬆動中' : '─ 持平';
+                    const trendColor = delta > 0.3 ? '#ef4444' : delta < -0.3 ? '#10b981' : '#94a3b8';
+                    const ciStr = (ci >= 0 ? '' : '') + ci.toFixed(2);
+                    const safeVal = ciStr.replace(/'/g, "\\'");
+
+                    return `
+                <div style="background:rgba(255,255,255,0.04); padding:10px 12px; border-radius:8px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.08);">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span class="analysis-label has-info" style="font-size:12px; color:#cbd5e1; cursor:pointer;"
+                              onclick="showTermExplainer('籌碼集中程度指數', '${safeVal}')">籌碼集中程度指數</span>
+                        <span style="font-size:18px; font-weight:800; color:${ciColor};">${ciStr}%</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+                        <span style="font-size:10px; color:${trendColor};">${trendArrow}（近${nWeeks}週 ${delta >= 0 ? '+' : ''}${delta.toFixed(2)}%）</span>
+                        <span style="font-size:11px; font-weight:700; color:${ciColor};">${ciLabel}</span>
+                    </div>
+                </div>`;
+                })()}
 
                 ${renderDiagnostic(
                     (() => {
@@ -4948,6 +5047,28 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         <span style="font-size:11px; font-weight:700; color:${zColor};">${zRiskLevel}</span>
                     </div>
                 </div>
+                <!-- 斯隆比例 (Sloan Ratio) 盈餘品質診斷 -->
+                ${(() => {
+                    const sr = finData?.sloanRatio;
+                    let srColor = '#94a3b8', srLabel = 'N/A';
+                    if (sr !== null && sr !== undefined) {
+                        if (sr > 10)       { srColor = '#ef4444'; srLabel = '⚠️ 高度警示'; }
+                        else if (sr > 2)   { srColor = '#fbbf24'; srLabel = '留意'; }
+                        else if (sr >= -2) { srColor = '#10b981'; srLabel = '正常'; }
+                        else               { srColor = '#06b6d4'; srLabel = '優質現金盈餘'; }
+                    }
+                    return `
+                <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.1);">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span class="analysis-label has-info" style="font-size:12px; color:#cbd5e1;" onclick="showTermExplainer('斯隆比例 (Sloan Ratio)', '${sr !== null && sr !== undefined ? safeFix(sr, 2) : 'N/A'}')">斯隆比例 (Sloan Ratio)</span>
+                        <span style="font-size:18px; font-weight:800; color:${srColor};">${sr !== null && sr !== undefined ? safeFix(sr, 2) + '%' : 'N/A'}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+                        <span style="font-size:10px; color:#94a3b8;">盈餘品質</span>
+                        <span style="font-size:11px; font-weight:700; color:${srColor};">${srLabel}</span>
+                    </div>
+                </div>`;
+                })()}
                 <!-- Beneish M-Score 舞弊診斷 -->
                 <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.1);">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -4963,6 +5084,29 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderStatRow('速動比率', finData?.quickRatio !== undefined ? safeFix(finData?.quickRatio, 1) + '%' : 'N/A')}
                 ${renderPercentRow('負債比率', finData?.debtRatio, false, false)}
                 ${renderStatRow('淨負債比率', finData?.netDebtRatio !== undefined ? safeFix(finData?.netDebtRatio, 1) + '%' : 'N/A')}
+                ${(() => {
+                    const nd = finData?.netDebtEBITDA;
+                    let ndColor = '#94a3b8', ndLabel = 'N/A';
+                    if (nd !== null && nd !== undefined) {
+                        if (nd < 0)      { ndColor = '#06b6d4'; ndLabel = '淨現金'; }
+                        else if (nd < 2) { ndColor = '#10b981'; ndLabel = '健康'; }
+                        else if (nd < 3) { ndColor = '#fbbf24'; ndLabel = '留意'; }
+                        else if (nd < 4) { ndColor = '#f97316'; ndLabel = '偏高'; }
+                        else             { ndColor = '#ef4444'; ndLabel = '⚠️ 危險'; }
+                    }
+                    const displayVal = nd !== null && nd !== undefined ? safeFix(nd, 1) + ' 倍' : 'N/A';
+                    return `
+                <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.1);">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span class="analysis-label has-info" style="font-size:12px; color:#cbd5e1;" onclick="showTermExplainer('淨負債/EBITDA', '${displayVal}')">淨負債/EBITDA</span>
+                        <span style="font-size:18px; font-weight:800; color:${ndColor};">${displayVal}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+                        <span style="font-size:10px; color:#94a3b8;">財務槓桿強度</span>
+                        <span style="font-size:11px; font-weight:700; color:${ndColor};">${ndLabel}</span>
+                    </div>
+                </div>`;
+                })()}
                 ${renderStatRow('利息保障倍數', finData?.interestCoverage !== undefined ? (finData?.interestCoverage >= 999 ? '無負債/極高' : safeFix(finData?.interestCoverage, 1) + ' 倍') : 'N/A')}
                 ${renderStatRow('獲利品質 (OCF/NI)', finData?.earningsQuality !== undefined ? safeFix(finData?.earningsQuality, 1) + '%' : 'N/A')}
                 
@@ -5980,10 +6124,10 @@ const termDefinitions = {
         rule: '天數越短，代表股票「V轉」或修復能力越強；「尚未修復」代表自最高收盤價跌落後至今仍未回到該位階。',
         advice: '此指標衡量「從 52 週高點套牢到解套」所需的時間成本，比最大回撤更能反映投資人的心理煎熬。若長期「尚未修復」，需評估是否已進入趨勢反轉。',
         analyze: (v) => {
-            const valStr = String(v);
-            const val = parseInt(valStr);
+            const pending = Number(v) < 0;
+            const val = Math.abs(parseInt(v));
             if (val === 0) return "🔥 目前正處於或接近 52 週最高收盤價，無套牢壓力。";
-            if (valStr.includes('尚未修復')) return '⏳ 自 52 週高點跌落後，目前仍在高點之下，已歷經 ' + val + ' 個交易日尚未修復。可留意量能是否重新聚積，以研判趨勢是否反轉。';
+            if (pending) return '⏳ 自 52 週高點跌落後，目前仍在高點之下，已歷經 ' + val + ' 個交易日尚未修復。可留意量能是否重新聚積，以研判趨勢是否反轉。';
             if (val > 60) return "⚠️ 一旦套牢，修復時間較長（" + val + " 天）。這通常代表股價處於長期修正或築底期。";
             if (val > 20) return "修復動能尚屬正常（" + val + " 天），整理後仍能回到前高。";
             return "🚀 價格修復力極強（" + val + " 天），股價具備「抗跌隨即收復」的強勢特性。";
@@ -5995,8 +6139,10 @@ const termDefinitions = {
         rule: '< 15 天：解套極快，趨勢強勁；15–40 天：正常整理，月線內完成突破；40–80 天：局部套牢區偏重，需耐心等待；> 80 天：出現長期套牢高點，個股動能疲弱。',
         advice: '此指標揭示「一整年內，投資人被套牢最久的那次高點」。天數越短，代表股票不論在哪個高點買進都能快速解套，是強勢股的關鍵特徵；天數越長，代表某個局部高點曾讓投資人望眼欲穿，解套之路漫漫。',
         analyze: (v) => {
-            const val = parseInt(v);
+            const pending = Number(v) < 0;
+            const val = Math.abs(parseInt(v));
             if (isNaN(val) || val === 0) return "資料不足，無法辨識有效局部高點。";
+            if (pending) return '⏳ 年內最長套牢高點目前仍未突破，已歷經 ' + val + ' 個交易日尚未修復。該高點持續形成壓力，需留意量能能否有效回補。';
             if (val > 80) return "⚠️ 年內存在長期套牢高點，最壞情況下投資人曾被套逾 " + val + " 個交易日，動能恢復能力偏弱。";
             if (val > 40) return "年內存在一段偏長的套牢期（" + val + " 天），整理幅度較重，但尚未達到長期積壓警戒線。";
             if (val > 15) return "局部套牢修復在月線內完成，整體節奏健康，趨勢未見明顯受阻。";
@@ -6202,6 +6348,20 @@ const termDefinitions = {
         desc: '持有 50 張（或以下）小額股份的股東比例。',
         rule: '與大戶持股成反比。散戶比例過高通常代表籌碼凌亂，股價易跌難漲。',
         advice: '若股價上漲但散戶持股增加，需提防主力正在「拉高出貨」。',
+    },
+    '籌碼集中程度指數': {
+        type: '籌碼',
+        desc: '計算公式為「大戶持股比（>400張）- 散戶持股比（<50張）」，以百分比表示。數值越高代表大額股東相對散戶的持股優勢越大，籌碼越集中在大戶手中；數值越低甚至為負，代表散戶持股比例接近或超越大戶，籌碼相對凌亂。近期趨勢（4週變化）代表籌碼集中或分散的方向動能。',
+        rule: '> 30%：高度集中，大戶主導，趨勢性行情潛力大；10%~30%：偏向集中，籌碼結構良好；-10%~10%：籌碼平衡，大戶散戶勢均力敵；< -10%：散戶主導，籌碼凌亂，股價易受情緒波動。',
+        advice: '籌碼集中程度指數需搭配「趨勢方向」判讀。即使目前集中度偏低，若呈現連續上升（大戶持續加碼），往往是提前佈局的訊號；反之若集中度高但快速下滑（大戶出脫），需警覺主力出貨風險。建議與法人買賣超、外資持股比交叉驗證。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (isNaN(val)) return '資料不足，無法計算籌碼集中程度指數。';
+            if (val > 30) return `🔴 籌碼高度集中（指數 ${val.toFixed(2)}%）！大戶持股比散戶多出超過 30 個百分點，市場主導權牢牢握在大額股東手中，若搭配大戶持股趨勢向上，波段行情潛力強。`;
+            if (val > 10) return `🟠 籌碼偏向集中（指數 ${val.toFixed(2)}%），大戶仍占優勢，籌碼結構良好，但需持續觀察是否有大戶進一步加碼或獲利了結的跡象。`;
+            if (val >= -10) return `🟡 籌碼平衡（指數 ${val.toFixed(2)}%），大戶與散戶持股旗鼓相當，股價方向取決於外部催化劑（法人動向、財報、市場情緒）。`;
+            return `🟢 散戶主導（指數 ${val.toFixed(2)}%），散戶持股比例接近或超越大戶，籌碼相對凌亂，股價波動易受市場情緒放大，建議等待大戶重新建倉訊號後再行操作。`;
+        }
     },
     '營業利益率': {
         type: '獲利能力',
@@ -6581,6 +6741,21 @@ const termDefinitions = {
             return "財務結構健全。";
         }
     },
+    '淨負債/EBITDA': {
+        type: '償債能力',
+        desc: '有息淨負債（短期借款 + 長期借款 + 公司債 - 現金）除以 TTM EBITDA（稅息折舊攤銷前獲利）。衡量公司「用多少年的 EBITDA 才能還清所有有息負債」，是 PE/M&A 機構最常用的槓桿強度指標，也是銀行放貸審核的核心條件之一。',
+        rule: '< 0 倍：淨現金，財務最強；0–2 倍：健康，有充裕還款空間；2–3 倍：留意，槓桿略高但尚可接受；3–4 倍：偏高，財務彈性受限；> 4 倍：危險，接近多數銀行貸款契約的違約觸發門檻（debt covenant）。',
+        advice: '相較於「負債比率」，淨負債/EBITDA 排除了應付帳款等無息負債干擾，也排除折舊等非現金費用，更能反映公司「真實還款能力」。景氣衰退時，EBITDA 下滑會使倍數快速惡化，需搭配自由現金流一同觀察。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (isNaN(val)) return "EBITDA 為負或資料不足，無法計算此指標（通常代表公司目前處於虧損狀態）。";
+            if (val < 0)   return `🔵 淨現金位置（${val.toFixed(1)} 倍）！公司手中持有的現金超過所有有息負債，財務體質頂尖，無槓桿壓力。`;
+            if (val < 2)   return `✅ 財務槓桿健康（${val.toFixed(1)} 倍），以目前的獲利能力，${val.toFixed(1)} 年內即可清償全部有息負債，還款空間充裕。`;
+            if (val < 3)   return `⚠️ 槓桿略偏高（${val.toFixed(1)} 倍），仍在多數銀行授信接受範圍，但若 EBITDA 因景氣下滑而萎縮，財務彈性將明顯受限。`;
+            if (val < 4)   return `🟠 槓桿偏高（${val.toFixed(1)} 倍），建議密切追蹤自由現金流與利息保障倍數，評估公司是否有降槓桿計畫。`;
+            return `🔴 高度警示（${val.toFixed(1)} 倍）！已超過 4 倍危險門檻，接近多數銀行貸款契約的違約觸發條件（debt covenant），一旦景氣反轉，面臨融資困難或被迫賤賣資產的風險極高。`;
+        }
+    },
     '利息保障倍數': {
         type: '償債能力',
         desc: '營業利益除以利息支出。反映公司賺來的錢足不足夠支付貸款利息。',
@@ -6767,6 +6942,20 @@ const termDefinitions = {
             if (v > 2.99) return "目前處於「安全區」，財務體質極其穩健，短期內無倒閉或違約風險。";
             if (v >= 1.8) return "目前處於「灰色區」，財務壓力尚可，但需留意現金流與負債比率的變動。";
             return "警訊！目前進入「危險區」，財務體質脆弱，需嚴防債務危機或營運週轉困難。";
+        }
+    },
+    '斯隆比例 (Sloan Ratio)': {
+        type: '盈餘品質',
+        desc: '由美國學者 Richard Sloan 於 1996 年提出，公式為「(淨利 - 營運現金流) / 平均總資產」。衡量帳面盈餘與實際現金收入之間的落差。若差距越大，代表盈餘中有更多是「應收帳款、存貨」等非現金項目，盈餘品質越差。',
+        rule: '< -2%：優質，現金盈餘遠超帳面獲利；-2% ~ 2%：正常，盈餘品質健康；2% ~ 10%：留意，應收/存貨有膨脹跡象；> 10%：高度警示，帳面盈餘品質存疑，未來股價通常跑輸大盤。',
+        advice: '斯隆比例是 M-Score 的先行指標，適合與獲利品質（OCF/NI）交叉比對。若斯隆比例偏高但 M-Score 正常，可能只是暫時性的應收帳款增加；若兩者同時異常，則需高度警覺是否存在盈餘操縱。',
+        analyze: (v) => {
+            const val = parseFloat(v);
+            if (isNaN(val)) return "資料不足，無法計算斯隆比例。";
+            if (val > 10)  return `⚠️ 高度警示！斯隆比例達 ${val.toFixed(2)}%，遠超 10% 警戒線。帳面獲利中有大量非現金成分（應收帳款或存貨膨脹），盈餘品質存疑，歷史數據顯示此類公司未來一年股價通常跑輸大盤。`;
+            if (val > 2)   return `留意！斯隆比例為 ${val.toFixed(2)}%，介於 2%~10% 觀察區。盈餘品質尚可，但應追蹤應收帳款與存貨是否持續增加，若連續多季走高需提高警覺。`;
+            if (val >= -2) return `盈餘品質正常，斯隆比例為 ${val.toFixed(2)}%，帳面獲利與現金流較為一致，無明顯虛報盈餘跡象。`;
+            return `優質現金盈餘！斯隆比例為 ${val.toFixed(2)}%，實際現金獲利遠超帳面淨利，代表公司創造現金的能力超強，盈餘品質極佳。`;
         }
     },
     '分點集中度': {
@@ -7400,7 +7589,7 @@ function showTermExplainer(term, currentVal = null, avgVal = null, hideDiagnosis
                     <div class="term-explainer-section" style="background: ${badgeColor}10; border: 1px solid ${badgeColor}30; border-radius: 12px; padding: 15px; margin-top: 15px;">
                         <div class="term-explainer-subtitle" style="color:${badgeColor}; margin-bottom:8px;">🔍 AI 智能診斷</div>
                         <div style="font-size:14px; font-weight:700; color:#ffffff; margin-bottom:4px;">
-                            個股當前值: <span style="font-size:18px; color:${badgeColor};">${currentVal}</span>
+                            個股當前值: <span style="font-size:18px; color:${badgeColor};">${/^-\d+(?=\s|$)/.test(String(currentVal)) ? String(currentVal).replace(/^-(\d+)/, '$1天(尚未修復)') : currentVal}</span>
                         </div>
                         <div class="term-explainer-body" style="font-size:13px; line-height:1.5; color:#e2e8f0; opacity:1;">
                             ${diagnosis}
@@ -7413,7 +7602,7 @@ function showTermExplainer(term, currentVal = null, avgVal = null, hideDiagnosis
                     <div class="term-explainer-section" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 15px; margin-top: 15px;">
                         <div class="term-explainer-subtitle" style="color:#94a3b8; margin-bottom:8px;">📊 同業對比</div>
                         <div style="font-size:14px; font-weight:700; color:#ffffff; margin-bottom:4px;">
-                            個股當前值: <span style="font-size:18px; color:${badgeColor};">${currentVal}</span>
+                            個股當前值: <span style="font-size:18px; color:${badgeColor};">${/^-\d+(?=\s|$)/.test(String(currentVal)) ? String(currentVal).replace(/^-(\d+)/, '$1天(尚未修復)') : currentVal}</span>
                         </div>
                         ${comparisonWidget}
                     </div>
@@ -7759,6 +7948,144 @@ function showHoldingTrendChart(symbol, type) {
 
     overlay.querySelector('.term-explainer-close').onclick = () => overlay.classList.remove('active');
     setTimeout(() => overlay.classList.add('active'), 10);
+}
+
+/**
+ * 顯示集保大戶 vs 散戶持股比例雙線趨勢圖
+ * 大戶(>400張)紅色，散戶(<50張)綠色，全期資料
+ */
+function showHolderTrendChart() {
+    const chips = window._lastChipsData;
+    if (!chips) return;
+    const trend = (chips.holderTrend || []).filter(d =>
+        d.large > 0 && d.large <= 100 && d.retail >= 0 && d.retail <= 100 && (d.large + d.retail) <= 100
+    );
+    if (trend.length === 0) { alert('暫無集保持股趨勢數據'); return; }
+
+    const name = chips.stockName || '';
+    const width = 360, height = 220;
+    const padL = 38, padR = 12, padT = 18, padB = 32;
+    const W = width - padL - padR, H = height - padT - padB;
+
+    const sampling = trend.length > 80 ? Math.ceil(trend.length / 65) : 1;
+    const sampled = trend.filter((_, i) => i % sampling === 0);
+    if (sampled[sampled.length - 1].date !== trend[trend.length - 1].date) sampled.push(trend[trend.length - 1]);
+
+    const allVals = sampled.flatMap(d => [d.large, d.retail]);
+    const maxV = Math.max(...allVals, 0.1);
+    const minV = Math.min(...allVals, 0);
+    const range = (maxV - minV) || 1;
+
+    const gx = (i) => padL + (i / Math.max(sampled.length - 1, 1)) * W;
+    const gy = (v) => (height - padB) - ((v - minV) / range) * H;
+
+    const lPts = sampled.map((d, i) => `${gx(i)},${gy(d.large)}`).join(' ');
+    const rPts = sampled.map((d, i) => `${gx(i)},${gy(d.retail)}`).join(' ');
+
+    const nTicks = 4;
+    const yTicks = Array.from({ length: nTicks + 1 }, (_, i) => minV + (range / nTicks) * i);
+    const xIdxs = sampled.reduce((acc, _, i) => {
+        if (i % Math.ceil(sampled.length / 5) === 0 || i === sampled.length - 1) acc.push(i);
+        return acc;
+    }, []);
+
+    const latest = trend[trend.length - 1];
+    const prev4 = trend.length >= 5 ? trend[trend.length - 5] : trend[0];
+    const ldiff = latest.large - prev4.large;
+    const rdiff = latest.retail - prev4.retail;
+
+    let overlay = document.getElementById('termExplainerOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'termExplainerOverlay';
+        overlay.className = 'term-explainer-overlay';
+        (document.getElementById('analysisModal') || document.body).appendChild(overlay);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('active'); });
+    }
+
+    overlay.innerHTML = `
+        <div class="term-explainer-content" style="max-width:420px; padding:22px 20px;">
+            <div class="term-explainer-close">&times;</div>
+            <div class="term-explainer-badge" style="background:rgba(239,68,68,0.15); color:#f87171;">籌碼趨勢</div>
+            <div class="term-explainer-title" style="font-size:17px; margin-bottom:3px;">${name} 大戶 vs 散戶持股趨勢</div>
+            <div style="font-size:11px; color:#64748b; margin-bottom:12px;">集保週報 · 共 ${trend.length} 期資料</div>
+
+            <div style="display:flex; gap:10px; margin-bottom:12px;">
+                <div style="flex:1; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:8px; padding:8px 10px;">
+                    <div style="font-size:10px; color:#94a3b8; margin-bottom:2px;">大戶 (&gt;400張)</div>
+                    <div style="font-size:20px; font-weight:800; color:#f87171;">${latest.large.toFixed(2)}%</div>
+                    <div style="font-size:10px; color:${ldiff >= 0 ? '#f87171' : '#4ade80'};">4週 ${ldiff >= 0 ? '+' : ''}${ldiff.toFixed(2)}%</div>
+                </div>
+                <div style="flex:1; background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:8px; padding:8px 10px;">
+                    <div style="font-size:10px; color:#94a3b8; margin-bottom:2px;">散戶 (&lt;50張)</div>
+                    <div style="font-size:20px; font-weight:800; color:#4ade80;">${latest.retail.toFixed(2)}%</div>
+                    <div style="font-size:10px; color:${rdiff >= 0 ? '#f87171' : '#4ade80'};">4週 ${rdiff >= 0 ? '+' : ''}${rdiff.toFixed(2)}%</div>
+                </div>
+            </div>
+
+            <div style="position:relative; background:rgba(255,255,255,0.03); border-radius:12px; padding:8px; border:1px solid rgba(255,255,255,0.06); margin-bottom:10px;">
+                <svg id="holderSvg" width="100%" height="${height}" viewBox="0 0 ${width} ${height}" style="overflow:visible; cursor:crosshair; display:block;">
+                    ${yTicks.map(v => {
+                        const y = gy(v);
+                        return `<line x1="${padL}" y1="${y}" x2="${width - padR}" y2="${y}" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="${v === yTicks[0] ? '0' : '2,3'}"/>
+                                <text x="${padL - 3}" y="${y + 3.5}" font-size="8" fill="#64748b" text-anchor="end">${v.toFixed(1)}</text>`;
+                    }).join('')}
+                    <line x1="${padL}" y1="${height - padB}" x2="${width - padR}" y2="${height - padB}" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+                    <polyline points="${rPts}" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.8"/>
+                    <polyline points="${lPts}" fill="none" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <g id="hFG" style="visibility:hidden;">
+                        <line id="hFL" x1="0" y1="${padT}" x2="0" y2="${height - padB}" stroke="rgba(255,255,255,0.18)" stroke-width="1" stroke-dasharray="3,3"/>
+                        <circle id="hD1" r="4.5" fill="#ef4444" stroke="#fff" stroke-width="1.5"/>
+                        <circle id="hD2" r="4.5" fill="#10b981" stroke="#fff" stroke-width="1.5"/>
+                        <rect id="hTBg" x="0" y="0" width="110" height="52" rx="5" fill="rgba(15,23,42,0.93)" stroke="#334155" stroke-width="1"/>
+                        <text id="hTDate" x="0" y="0" font-size="9" fill="#94a3b8" font-weight="bold"/>
+                        <text id="hTL"    x="0" y="0" font-size="10" fill="#f87171" font-weight="800"/>
+                        <text id="hTR"    x="0" y="0" font-size="10" fill="#4ade80" font-weight="800"/>
+                    </g>
+                    ${xIdxs.map(i => `<text x="${gx(i)}" y="${height - padB + 13}" font-size="9" fill="#64748b" text-anchor="middle">${sampled[i].date.substring(2, 7).replace('-', '/')}</text>`).join('')}
+                </svg>
+            </div>
+
+            <div style="display:flex; justify-content:center; gap:20px; font-size:11px; color:#94a3b8;">
+                <span><span style="color:#ef4444; font-weight:700;">─</span> 大戶 (&gt;400張)</span>
+                <span><span style="color:#10b981; font-weight:700;">─</span> 散戶 (&lt;50張)</span>
+            </div>
+        </div>
+    `;
+
+    overlay.classList.add('active');
+    document.querySelector('.term-explainer-close').addEventListener('click', () => overlay.classList.remove('active'));
+
+    // 互動 tooltip
+    const svg    = document.getElementById('holderSvg');
+    const fg     = document.getElementById('hFG');
+    const fl     = document.getElementById('hFL');
+    const d1     = document.getElementById('hD1');
+    const d2     = document.getElementById('hD2');
+    const tbg    = document.getElementById('hTBg');
+    const tdate  = document.getElementById('hTDate');
+    const tl     = document.getElementById('hTL');
+    const tr_el  = document.getElementById('hTR');
+
+    svg.addEventListener('mousemove', (e) => {
+        const rect = svg.getBoundingClientRect();
+        const mx = (e.clientX - rect.left) * (width / rect.width);
+        let ni = 0, md = Infinity;
+        sampled.forEach((_, i) => { const dx = Math.abs(gx(i) - mx); if (dx < md) { md = dx; ni = i; } });
+        const pt = sampled[ni];
+        const x = gx(ni), y1 = gy(pt.large), y2 = gy(pt.retail);
+        fg.style.visibility = 'visible';
+        fl.setAttribute('x1', x); fl.setAttribute('x2', x);
+        d1.setAttribute('cx', x); d1.setAttribute('cy', y1);
+        d2.setAttribute('cx', x); d2.setAttribute('cy', y2);
+        const tx = (x + 8 > width - 118) ? x - 118 : x + 8;
+        const ty = Math.max(padT, Math.min(y1, y2) - 8);
+        tbg.setAttribute('x', tx); tbg.setAttribute('y', ty);
+        tdate.setAttribute('x', tx + 5); tdate.setAttribute('y', ty + 13); tdate.textContent = pt.date.substring(5);
+        tl.setAttribute('x', tx + 5);   tl.setAttribute('y', ty + 28);   tl.textContent = `大戶: ${pt.large.toFixed(2)}%`;
+        tr_el.setAttribute('x', tx + 5); tr_el.setAttribute('y', ty + 43); tr_el.textContent = `散戶: ${pt.retail.toFixed(2)}%`;
+    });
+    svg.addEventListener('mouseleave', () => { fg.style.visibility = 'hidden'; });
 }
 
 /**
