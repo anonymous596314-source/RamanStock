@@ -681,6 +681,115 @@ select option {
     color: #ffffff;
 }
 
+.macro-summary-grid {
+    display: grid;
+    grid-template-columns: 1.1fr repeat(3, minmax(130px, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.macro-section-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin: 20px 0 10px;
+}
+
+.macro-section-title h3 {
+    font-size: 16px;
+    color: var(--text-primary);
+}
+
+.macro-section-title span {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.macro-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.macro-card {
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 14px;
+    min-height: 126px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.macro-card .macro-label {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.macro-card .macro-value {
+    color: var(--text-primary);
+    font-size: 24px;
+    font-weight: 900;
+}
+
+.macro-card .macro-meta,
+.macro-card .macro-note {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.macro-pill {
+    align-self: flex-start;
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 800;
+    border: 1px solid rgba(255,255,255,0.12);
+}
+
+.macro-sparkline {
+    width: 100%;
+    height: 42px;
+    display: block;
+}
+
+.macro-source-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.macro-source-list a {
+    color: #93c5fd;
+    font-size: 12px;
+    text-decoration: none;
+    border-bottom: 1px dashed rgba(147,197,253,0.45);
+}
+
+@media (max-width: 768px) {
+    .macro-summary-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (max-width: 520px) {
+    .macro-summary-grid {
+        grid-template-columns: 1fr;
+    }
+    .macro-grid {
+        grid-template-columns: 1fr;
+    }
+    .mobile-nav-btn {
+        min-width: 48px;
+        padding: 6px 4px;
+    }
+}
+
 /* ==========================================================================
    Mobile Responsive Adjustments
    ========================================================================== */
@@ -1289,6 +1398,7 @@ select option {
                     <button id="toggleViewBtn" class="btn secondary-btn" style="background:rgba(139, 92, 246, 0.2); border-color:rgba(139, 92, 246, 0.5); color:#c4b5fd;">⇄ 切換至短期操作</button>
                     <div style="display:flex; flex-direction:column; gap:6px;">
                         <button id="openBPBtn" class="header-action-btn" style="background:rgba(239, 68, 68, 0.15); color:#fca5a5; border-color:rgba(239, 68, 68, 0.3);">🩸 血壓記錄</button>
+                        <button id="openMacroBtn" class="header-action-btn" style="background:rgba(34, 197, 94, 0.15); color:#86efac; border-color:rgba(34, 197, 94, 0.3);">🌐 總經專區</button>
                         <button id="openAnalysisBtn" class="header-action-btn" style="background:rgba(59, 130, 246, 0.15); color:#93c5fd; border-color:rgba(59, 130, 246, 0.3);">🔍 股票分析</button>
                     </div>
                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
@@ -1685,6 +1795,31 @@ select option {
             </div>
         </div>
     </div>
+
+    <!-- Macro Dashboard Modal -->
+    <div class="modal-overlay" id="macroModal">
+        <div class="modal-content" style="max-width: 1100px; width: 95vw; height: 88vh; display:flex; flex-direction:column;">
+            <div class="modal-header" style="gap:12px; flex-wrap:wrap;">
+                <div style="flex:1; min-width:220px;">
+                    <h2 style="margin-bottom:4px;">🌐 總經專區</h2>
+                    <p style="color:var(--text-secondary); font-size:13px;">每日情緒與資金流向、月/季趨勢一次看</p>
+                </div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button id="macroRefreshBtn" class="btn secondary-btn" style="padding:7px 12px; font-size:13px; background:rgba(34,197,94,0.14); border-color:rgba(34,197,94,0.35); color:#86efac;">↻ 更新</button>
+                    <button class="close-btn" id="closeMacroBtn">&times;</button>
+                </div>
+            </div>
+            <div class="modal-body" style="flex:1; overflow-y:auto; padding-right:6px;">
+                <div id="macroStatus" style="font-size:12px; color:#94a3b8; margin-bottom:12px;">尚未更新</div>
+                <div id="macroBody">
+                    <div style="text-align:center; padding:40px; color:#94a3b8;">
+                        <div class="spinner" style="width:30px; height:30px; border:3px solid rgba(255,255,255,0.1); border-top-color:#22c55e; border-radius:50%; animation:spin 1s linear infinite; margin:0 auto 16px;"></div>
+                        正在整理總經資料...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
     
     <!-- 🩸 血壓記錄 Modal -->
     <div class="modal-overlay" id="bpModal">
@@ -1823,6 +1958,10 @@ select option {
                 <span class="nav-icon">🩸</span>
                 <span>血壓</span>
             </button>
+            <button class="mobile-nav-btn" id="navMacro" onclick="document.getElementById('openMacroBtn').click()">
+                <span class="nav-icon">🌐</span>
+                <span>總經</span>
+            </button>
             <button class="mobile-nav-btn" id="navAnalysis" onclick="document.getElementById('openAnalysisBtn').click()">
                 <span class="nav-icon">🔍</span>
                 <span>分析</span>
@@ -1942,6 +2081,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const openHistoryStatsBtn = document.getElementById('openHistoryStatsBtn');
     const closeHistoryModalBtn = document.getElementById('closeHistoryModalBtn');
     const historyTableBody = document.getElementById('historyTableBody');
+    const macroModal = document.getElementById('macroModal');
+    const openMacroBtn = document.getElementById('openMacroBtn');
+    const closeMacroBtn = document.getElementById('closeMacroBtn');
+    const macroRefreshBtn = document.getElementById('macroRefreshBtn');
+    const macroStatusEl = document.getElementById('macroStatus');
+    const macroBodyEl = document.getElementById('macroBody');
     let dailyStats = [];
     try {
         const savedStats = localStorage.getItem('twStockDailyStats');
@@ -2541,6 +2686,636 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         throw new Error('All CORS proxies failed for: ' + targetUrl);
+    }
+
+    // --- Macro Dashboard ---
+    const MACRO_CACHE_KEY = 'twStockMacroDashboardCacheV2';
+    const MACRO_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+    const DAILY_MACRO_SYMBOLS = [
+        { id: 'sp500', name: '標普 500', symbol: '^GSPC', stooq: '^spx', historyUrl: 'https://historyofmarket.com/api/sp500/price.json', kind: 'index', note: '美股大型股風險胃納' },
+        { id: 'nasdaq', name: '那斯達克', symbol: '^IXIC', stooq: '^ndq', historyUrl: 'https://historyofmarket.com/api/nasdaq/composite.json', kind: 'index', note: '科技股情緒' },
+        { id: 'dow', name: '道瓊', symbol: '^DJI', stooq: '^dji', historyUrl: 'https://historyofmarket.com/api/dow/century.json', kind: 'index', note: '景氣循環股情緒' },
+        { id: 'sox', name: '費城半導體', symbol: '^SOX', stooq: '^sox', historyUrl: 'https://historyofmarket.com/api/semi/price.json', kind: 'index', note: '台股電子權值連動最高' },
+        { id: 'tnx', name: '美債 10Y 殖利率', symbol: '^TNX', fredSeries: 'DGS10', stooq: '10usy.b', kind: 'rate', note: '殖利率升高通常壓抑成長股估值' },
+        { id: 'dxy', name: '美元指數', symbol: 'DX-Y.NYB', fredSeries: 'DTWEXBGS', stooq: 'dxy', kind: 'index', note: '美元轉強時需留意外資匯出壓力' },
+        { id: 'vix', name: 'VIX 恐慌指數', symbol: '^VIX', stooq: '^vix', historyUrl: 'https://historyofmarket.com/api/sp500/vix.json', kind: 'vol', note: '短線避險情緒溫度計' }
+    ];
+    const TREND_MACRO_SERIES = [
+        { id: 'cpi', name: '美國 CPI YoY', series: 'CPIAUCSL', unit: '%', mode: 'yoy', note: '通膨降溫有利降息預期' },
+        { id: 'coreCpi', name: '美國 Core CPI YoY', series: 'CPILFESL', unit: '%', mode: 'yoy', note: '排除食物能源，較貼近 Fed 觀察核心' },
+        { id: 'ism', name: 'ISM 製造業 PMI', series: 'NAPM', unit: '', mode: 'level', fallbackSeries: 'IPMAN', fallbackName: '美國製造業產出', fallbackNote: 'ISM PMI 暫取不到時，改用 FRED 製造業產出作為趨勢替代。' }
+    ];
+
+    function macroFmt(value, digits = 2) {
+        if (value === null || value === undefined || !isFinite(value)) return '--';
+        return Number(value).toLocaleString('zh-TW', {
+            minimumFractionDigits: digits,
+            maximumFractionDigits: digits
+        });
+    }
+
+    function macroSigned(value, digits = 2, suffix = '') {
+        if (value === null || value === undefined || !isFinite(value)) return '--';
+        const sign = value > 0 ? '+' : '';
+        return `${sign}${macroFmt(value, digits)}${suffix}`;
+    }
+
+    function macroColor(value, inverse = false) {
+        if (value === null || value === undefined || !isFinite(value)) return '#cbd5e1';
+        const good = inverse ? value < 0 : value > 0;
+        const bad = inverse ? value > 0 : value < 0;
+        if (good) return '#f87171';
+        if (bad) return '#34d399';
+        return '#cbd5e1';
+    }
+
+    function macroSparkline(points, color = '#60a5fa') {
+        const clean = (points || []).filter(p => p && isFinite(p.value)).slice(-36);
+        if (clean.length < 2) return '';
+        const width = 180;
+        const height = 42;
+        const pad = 4;
+        const vals = clean.map(p => p.value);
+        const min = Math.min(...vals);
+        const max = Math.max(...vals);
+        const range = (max - min) || 1;
+        const d = clean.map((p, i) => {
+            const x = pad + (i / (clean.length - 1)) * (width - pad * 2);
+            const y = height - pad - ((p.value - min) / range) * (height - pad * 2);
+            return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(' ');
+        const last = clean[clean.length - 1];
+        const prev = clean[clean.length - 2];
+        const lastColor = last.value >= prev.value ? '#f87171' : '#34d399';
+        return `
+            <svg class="macro-sparkline" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
+                <path d="${d}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                <circle cx="${(width - pad).toFixed(1)}" cy="${(height - pad - ((last.value - min) / range) * (height - pad * 2)).toFixed(1)}" r="3" fill="${lastColor}"></circle>
+            </svg>
+        `;
+    }
+
+    function parseMacroCsv(text, valueKey) {
+        return String(text || '')
+            .trim()
+            .split(/\r?\n/)
+            .slice(1)
+            .map(line => {
+                const parts = line.split(',');
+                const date = parts[0];
+                const value = parseFloat(parts[1]);
+                if (!date || isNaN(value)) return null;
+                return { date, value };
+            })
+            .filter(Boolean);
+    }
+
+    async function fetchMacroUrl(targetUrl, isJson = false, timeout = 8000) {
+        const candidates = [
+            { url: targetUrl },
+            { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}` },
+            { url: `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`, allorigins: true },
+            { url: `https://corsproxy.io/?${encodeURIComponent(targetUrl)}` },
+            { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}` }
+        ];
+
+        const attempts = candidates.map(async (candidate) => {
+            const controller = new AbortController();
+            const tid = setTimeout(() => controller.abort(), timeout);
+            try {
+                const res = await fetch(candidate.url, { signal: controller.signal, cache: 'no-store' });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                let text = await res.text();
+                if (candidate.allorigins) {
+                    const wrapped = JSON.parse(text);
+                    text = wrapped?.contents || '';
+                }
+                if (!text || text.length < 5 || text.startsWith('Edge:') || text.startsWith('Error')) {
+                    throw new Error('Empty response');
+                }
+                return isJson ? JSON.parse(text) : text;
+            } finally {
+                clearTimeout(tid);
+            }
+        });
+
+        try {
+            return await Promise.any(attempts);
+        } catch (err) {
+            throw new Error('macro source unavailable');
+        }
+    }
+
+    function extractMacroJsonSeries(payload) {
+        const arrays = [];
+        const seen = new Set();
+
+        function walk(node, depth = 0) {
+            if (!node || depth > 6 || seen.has(node)) return;
+            if (typeof node === 'object') seen.add(node);
+            if (Array.isArray(node)) {
+                arrays.push(node);
+                node.slice(0, 8).forEach(child => walk(child, depth + 1));
+                return;
+            }
+            if (typeof node === 'object') {
+                Object.values(node).forEach(child => walk(child, depth + 1));
+            }
+        }
+        walk(payload);
+
+        const dateKeys = ['date', 'Date', 'time', 'timestamp', 'month', 'day', 'x'];
+        const valueKeys = ['close', 'Close', 'value', 'Value', 'price', 'Price', 'level', 'index', 'rate', 'yield', 'y', 'c', 'adj_close', 'adjClose'];
+
+        function parseDate(raw) {
+            if (raw === null || raw === undefined) return null;
+            if (typeof raw === 'number') {
+                const ms = raw > 10000000000 ? raw : raw * 1000;
+                return new Date(ms).toISOString().slice(0, 10);
+            }
+            const text = String(raw).trim();
+            if (!text) return null;
+            const parsed = new Date(text);
+            if (isNaN(parsed.getTime())) return null;
+            return parsed.toISOString().slice(0, 10);
+        }
+
+        function parseNumber(raw) {
+            if (raw === null || raw === undefined || raw === '') return null;
+            const value = typeof raw === 'number' ? raw : Number(String(raw).replace(/,/g, ''));
+            return isFinite(value) ? value : null;
+        }
+
+        function normalizeArray(arr) {
+            return arr.map(row => {
+                if (Array.isArray(row)) {
+                    const date = parseDate(row[0]);
+                    const value = parseNumber(row[1] ?? row[row.length - 1]);
+                    return date && value !== null ? { date, value } : null;
+                }
+                if (!row || typeof row !== 'object') return null;
+                const dateKey = dateKeys.find(k => row[k] !== undefined);
+                if (!dateKey) return null;
+                const valueKey = valueKeys.find(k => parseNumber(row[k]) !== null);
+                if (!valueKey) return null;
+                const date = parseDate(row[dateKey]);
+                const value = parseNumber(row[valueKey]);
+                return date && value !== null ? { date, value } : null;
+            }).filter(Boolean);
+        }
+
+        return arrays
+            .map(normalizeArray)
+            .filter(series => series.length >= 2)
+            .sort((a, b) => b.length - a.length)[0] || [];
+    }
+
+    function makeDailyMacroFromSeries(def, rawSeries, source) {
+        const series = (rawSeries || [])
+            .filter(p => p && p.date && isFinite(p.value) && p.value > 0)
+            .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+            .map(p => ({ date: p.date, raw: p.raw ?? p.value, value: def.kind === 'rate' && p.value > 20 ? p.value / 10 : p.value }));
+
+        if (series.length < 2) throw new Error(`${source || 'source'} has not enough data`);
+
+        const latest = series[series.length - 1];
+        const prev = series[series.length - 2];
+        const week = series[Math.max(0, series.length - 6)];
+        const month = series[Math.max(0, series.length - 21)];
+        const pctFrom = (base) => base && isFinite(base.raw) && base.raw !== 0
+            ? ((latest.raw - base.raw) / base.raw) * 100
+            : null;
+
+        return {
+            ...def,
+            date: latest.date,
+            value: latest.value,
+            rawValue: latest.raw,
+            changePct: pctFrom(prev),
+            weekPct: pctFrom(week),
+            monthPct: pctFrom(month),
+            changeBps: def.kind === 'rate' ? (latest.value - prev.value) * 100 : null,
+            weekBps: def.kind === 'rate' ? (latest.value - week.value) * 100 : null,
+            monthBps: def.kind === 'rate' ? (latest.value - month.value) * 100 : null,
+            source,
+            series
+        };
+    }
+
+    async function fetchYahooMacro(def) {
+        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(def.symbol)}?range=6mo&interval=1d&includePrePost=false`;
+        const json = await fetchMacroUrl(url, true);
+        const result = json?.chart?.result?.[0];
+        if (!result || json?.chart?.error) throw new Error(json?.chart?.error?.description || 'Yahoo chart empty');
+        const timestamps = result.timestamp || [];
+        const closes = result.indicators?.quote?.[0]?.close || [];
+        const series = timestamps.map((t, i) => {
+            const raw = closes[i];
+            if (!isFinite(raw)) return null;
+            const value = def.kind === 'rate' && raw > 20 ? raw / 10 : raw;
+            return {
+                date: new Date(t * 1000).toISOString().slice(0, 10),
+                raw,
+                value
+            };
+        }).filter(Boolean);
+        return makeDailyMacroFromSeries(def, series, 'Yahoo Finance');
+    }
+
+    async function fetchHistoryMacro(def) {
+        if (!def.historyUrl) throw new Error('no history endpoint');
+        const json = await fetchMacroUrl(def.historyUrl, true, 9000);
+        const series = extractMacroJsonSeries(json);
+        return makeDailyMacroFromSeries(def, series, 'History of Market');
+    }
+
+    async function fetchFredDailyMacro(def) {
+        if (!def.fredSeries) throw new Error('no fred endpoint');
+        const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(def.fredSeries)}`;
+        const csv = await fetchMacroUrl(url, false, 9000);
+        const series = parseMacroCsv(csv, def.fredSeries);
+        const result = makeDailyMacroFromSeries(def, series, 'FRED');
+        if (def.id === 'dxy') {
+            result.note = 'Yahoo DXY 若失敗，改用 FRED Broad Dollar Index 觀察美元方向。';
+        }
+        return result;
+    }
+
+    async function fetchStooqMacro(def) {
+        if (!def.stooq) throw new Error('no stooq endpoint');
+        const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(def.stooq)}&i=d`;
+        const csv = await fetchMacroUrl(url, false, 9000);
+        const lines = String(csv || '').trim().split(/\r?\n/).slice(1);
+        const series = lines.map(line => {
+            const parts = line.split(',');
+            const close = Number(parts[4]);
+            return parts[0] && isFinite(close) ? { date: parts[0], value: close } : null;
+        }).filter(Boolean);
+        return makeDailyMacroFromSeries(def, series, 'Stooq');
+    }
+
+    async function fetchDailyMacro(def) {
+        const attempts = [
+            () => fetchYahooMacro(def),
+            () => fetchHistoryMacro(def),
+            () => fetchFredDailyMacro(def),
+            () => fetchStooqMacro(def)
+        ];
+        let lastError = null;
+        for (const attempt of attempts) {
+            try {
+                return await attempt();
+            } catch (err) {
+                lastError = err;
+            }
+        }
+        throw lastError || new Error('macro source unavailable');
+    }
+
+    async function fetchFredMacro(def) {
+        const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(def.series)}`;
+        const csv = await fetchMacroUrl(url, false);
+        const rows = parseMacroCsv(csv, def.series);
+        if (rows.length < 14) throw new Error(`FRED ${def.series} has not enough data`);
+        if (def.mode === 'yoy') {
+            const yoy = [];
+            for (let i = 12; i < rows.length; i++) {
+                if (rows[i - 12].value !== 0) {
+                    yoy.push({
+                        date: rows[i].date,
+                        value: ((rows[i].value / rows[i - 12].value) - 1) * 100
+                    });
+                }
+            }
+            const latest = yoy[yoy.length - 1];
+            const prev = yoy[yoy.length - 2];
+            const rawLatest = rows[rows.length - 1];
+            const rawPrev = rows[rows.length - 2];
+            return {
+                ...def,
+                date: latest.date,
+                value: latest.value,
+                change: latest.value - prev.value,
+                mom: ((rawLatest.value / rawPrev.value) - 1) * 100,
+                series: yoy
+            };
+        }
+        const latest = rows[rows.length - 1];
+        const prev = rows[rows.length - 2];
+        return {
+            ...def,
+            date: latest.date,
+            value: latest.value,
+            change: latest.value - prev.value,
+            series: rows
+        };
+    }
+
+    async function fetchTrendMacro(def) {
+        try {
+            return await fetchFredMacro(def);
+        } catch (err) {
+            if (!def.fallbackSeries) throw err;
+            const fallbackDef = {
+                ...def,
+                series: def.fallbackSeries,
+                name: def.fallbackName || def.name,
+                note: def.fallbackNote || def.note,
+                isFallback: true
+            };
+            return fetchFredMacro(fallbackDef);
+        }
+    }
+
+    async function fetchNdcMacroInfo() {
+        const url = 'https://data.gov.tw/dataset/6099';
+        try {
+            await fetchMacroUrl(url, false, 5000);
+            return {
+                id: 'ndc',
+                name: '台灣景氣對策信號',
+                date: '每月發布',
+                value: '官方月資料',
+                status: 'source-ok',
+                sourceUrl: url,
+                note: '國發會開放資料為 ZIP/ODS，建議後端排程下載後解析成 JSON。'
+            };
+        } catch (err) {
+            return {
+                id: 'ndc',
+                name: '台灣景氣對策信號',
+                date: '每月發布',
+                value: '來源待重試',
+                status: 'source-failed',
+                sourceUrl: url,
+                note: '暫時無法連線到國發會資料頁，可稍後按更新重試。'
+            };
+        }
+    }
+
+    function evaluateMacroTone(daily) {
+        const byId = Object.fromEntries(daily.filter(x => !x.error).map(x => [x.id, x]));
+        let score = 50;
+        const notes = [];
+
+        const addPctSignal = (id, up, down, weight, label) => {
+            const item = byId[id];
+            if (!item) return;
+            if (item.changePct >= up) {
+                score += weight;
+                notes.push(`${label}走強`);
+            } else if (item.changePct <= down) {
+                score -= weight;
+                notes.push(`${label}轉弱`);
+            }
+        };
+
+        addPctSignal('sox', 1, -1, 10, '半導體');
+        addPctSignal('nasdaq', 0.8, -0.8, 8, '科技股');
+        addPctSignal('sp500', 0.5, -0.5, 6, '美股大盤');
+
+        if (byId.vix) {
+            if (byId.vix.value >= 25) {
+                score -= 10;
+                notes.push('VIX 偏高');
+            } else if (byId.vix.value <= 15) {
+                score += 5;
+                notes.push('VIX 低檔');
+            }
+            if (byId.vix.changePct >= 5) score -= 6;
+            if (byId.vix.changePct <= -5) score += 4;
+        }
+        if (byId.tnx) {
+            if (byId.tnx.changeBps >= 8) {
+                score -= 6;
+                notes.push('美債殖利率上行');
+            } else if (byId.tnx.changeBps <= -8) {
+                score += 4;
+                notes.push('美債殖利率回落');
+            }
+            if (byId.tnx.value >= 4.8) score -= 4;
+        }
+        if (byId.dxy) {
+            if (byId.dxy.changePct >= 0.35) {
+                score -= 5;
+                notes.push('美元轉強');
+            } else if (byId.dxy.changePct <= -0.35) {
+                score += 4;
+                notes.push('美元轉弱');
+            }
+        }
+
+        score = Math.max(0, Math.min(100, Math.round(score)));
+        if (score >= 68) return { score, label: '偏多風險開啟', color: '#f87171', notes };
+        if (score >= 52) return { score, label: '中性偏多', color: '#fbbf24', notes };
+        if (score >= 38) return { score, label: '中性偏保守', color: '#93c5fd', notes };
+        return { score, label: '避險升溫', color: '#34d399', notes };
+    }
+
+    function renderMacroErrorCard(name, message) {
+        return `
+            <div class="macro-card">
+                <span class="macro-label">${name}</span>
+                <span class="macro-value" style="font-size:18px; color:#fca5a5;">抓取失敗</span>
+                <span class="macro-note">${message || '稍後可按更新重試'}</span>
+            </div>
+        `;
+    }
+
+    function renderDailyMacroCard(item) {
+        if (item.error) return renderMacroErrorCard(item.name, item.error);
+        const isInverse = item.kind === 'vol' || item.id === 'dxy' || item.id === 'tnx';
+        const changeText = item.kind === 'rate'
+            ? macroSigned(item.changeBps, 1, ' bp')
+            : macroSigned(item.changePct, 2, '%');
+        const periodText = item.kind === 'rate'
+            ? `週 ${macroSigned(item.weekBps, 1, ' bp')} / 月 ${macroSigned(item.monthBps, 1, ' bp')}`
+            : `週 ${macroSigned(item.weekPct, 1, '%')} / 月 ${macroSigned(item.monthPct, 1, '%')}`;
+        const valueText = item.kind === 'rate'
+            ? `${macroFmt(item.value, 2)}%`
+            : macroFmt(item.value, item.value >= 1000 ? 0 : 2);
+        const badge = item.kind === 'rate' ? '殖利率' : (item.kind === 'vol' ? '風險' : '指數');
+        return `
+            <div class="macro-card">
+                <span class="macro-label">${item.name}</span>
+                <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
+                    <span class="macro-value">${valueText}</span>
+                    <span class="macro-pill" style="color:${macroColor(item.changePct, isInverse)}; background:rgba(255,255,255,0.04);">${changeText}</span>
+                </div>
+                ${macroSparkline(item.series, item.kind === 'vol' ? '#fb7185' : '#60a5fa')}
+                <span class="macro-meta">${badge} · ${item.source || '資料源'} · ${item.date} · ${periodText}</span>
+                <span class="macro-note">${item.note}</span>
+            </div>
+        `;
+    }
+
+    function renderTrendMacroCard(item) {
+        if (item.error) return renderMacroErrorCard(item.name, item.error);
+        const isPMI = item.id === 'ism' && !item.isFallback;
+        const valueText = isPMI ? macroFmt(item.value, 1) : `${macroFmt(item.value, 2)}%`;
+        const changeText = isPMI
+            ? macroSigned(item.change, 1, ' 點')
+            : `${macroSigned(item.change, 2, ' ppt')} / MoM ${macroSigned(item.mom, 2, '%')}`;
+        const valueDisplay = item.isFallback ? macroFmt(item.value, 2) : valueText;
+        const fallbackChangeText = item.isFallback ? macroSigned(item.change, 2, ' 點') : changeText;
+        const goodColor = isPMI ? (item.value >= 50 ? '#f87171' : '#34d399') : (item.change <= 0 ? '#34d399' : '#f87171');
+        const sparkColor = isPMI ? '#f59e0b' : '#a78bfa';
+        return `
+            <div class="macro-card">
+                <span class="macro-label">${item.name}</span>
+                <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
+                    <span class="macro-value" style="color:${goodColor};">${valueDisplay}</span>
+                    <span class="macro-pill" style="color:${macroColor(item.change, !isPMI)}; background:rgba(255,255,255,0.04);">${fallbackChangeText}</span>
+                </div>
+                ${macroSparkline(item.series, sparkColor)}
+                <span class="macro-meta">最新月份 ${item.date}</span>
+                <span class="macro-note">${item.note}</span>
+            </div>
+        `;
+    }
+
+    function renderNdcMacroCard(item) {
+        const color = item.status === 'source-ok' ? '#86efac' : '#fca5a5';
+        return `
+            <div class="macro-card">
+                <span class="macro-label">${item.name}</span>
+                <span class="macro-value" style="font-size:20px; color:${color};">${item.value}</span>
+                <span class="macro-meta">${item.date}</span>
+                <span class="macro-note">${item.note}</span>
+                <a href="${item.sourceUrl}" target="_blank" rel="noopener" style="color:#93c5fd; font-size:12px; text-decoration:none;">開啟國發會資料頁</a>
+            </div>
+        `;
+    }
+
+    function renderMacroDashboard(data, fromCache = false) {
+        if (!macroBodyEl) return;
+        const tone = evaluateMacroTone(data.daily || []);
+        const successfulDaily = (data.daily || []).filter(x => !x.error).length;
+        const sourceText = fromCache ? '使用快取' : '即時抓取';
+        if (macroStatusEl) {
+            macroStatusEl.textContent = `${sourceText} · 更新時間 ${new Date(data.fetchedAt).toLocaleString('zh-TW')} · 每日 ${successfulDaily}/${DAILY_MACRO_SYMBOLS.length} 項成功`;
+        }
+
+        const toneNotes = tone.notes.length ? tone.notes.slice(0, 4).join('、') : '目前沒有明顯單一方向訊號';
+        const vix = (data.daily || []).find(x => x.id === 'vix' && !x.error);
+        const sox = (data.daily || []).find(x => x.id === 'sox' && !x.error);
+        const tnx = (data.daily || []).find(x => x.id === 'tnx' && !x.error);
+
+        macroBodyEl.innerHTML = `
+            <div class="macro-summary-grid">
+                <div class="dashboard-card highlight-card" style="min-height:120px;">
+                    <span class="label">隔日台股風險溫度</span>
+                    <span class="value" style="color:${tone.color};">${tone.score}</span>
+                    <span style="font-size:14px; font-weight:800; color:${tone.color};">${tone.label}</span>
+                    <span style="font-size:12px; color:var(--text-secondary); line-height:1.45; margin-top:4px;">${toneNotes}</span>
+                </div>
+                <div class="dashboard-card">
+                    <span class="label">半導體連動</span>
+                    <span class="value" style="font-size:28px; color:${sox ? macroColor(sox.changePct) : '#cbd5e1'};">${sox ? macroSigned(sox.changePct, 2, '%') : '--'}</span>
+                    <span style="font-size:12px; color:var(--text-secondary);">費半日變動</span>
+                </div>
+                <div class="dashboard-card">
+                    <span class="label">恐慌溫度</span>
+                    <span class="value" style="font-size:28px; color:${vix ? (vix.value >= 25 ? '#34d399' : '#f8fafc') : '#cbd5e1'};">${vix ? macroFmt(vix.value, 2) : '--'}</span>
+                    <span style="font-size:12px; color:var(--text-secondary);">VIX 25 以上需提高風險控管</span>
+                </div>
+                <div class="dashboard-card">
+                    <span class="label">利率壓力</span>
+                    <span class="value" style="font-size:28px; color:${tnx ? macroColor(tnx.changeBps, true) : '#cbd5e1'};">${tnx ? macroSigned(tnx.changeBps, 1, ' bp') : '--'}</span>
+                    <span style="font-size:12px; color:var(--text-secondary);">10Y 殖利率日變動</span>
+                </div>
+            </div>
+
+            <div class="macro-section-title">
+                <h3>每日變動：情緒與資金</h3>
+                <span>建議排程：美股收盤後更新一次，前端快取 12 小時</span>
+            </div>
+            <div class="macro-grid">
+                ${(data.daily || []).map(renderDailyMacroCard).join('')}
+            </div>
+
+            <div class="macro-section-title">
+                <h3>每月/季更新：趨勢與景氣</h3>
+                <span>建議排程：月初 PMI、月中 CPI、月底台灣景氣燈號</span>
+            </div>
+            <div class="macro-grid">
+                ${(data.trends || []).map(renderTrendMacroCard).join('')}
+                ${renderNdcMacroCard(data.ndc)}
+            </div>
+
+            <div class="macro-source-list">
+                <a href="https://query1.finance.yahoo.com/" target="_blank" rel="noopener">Yahoo Finance chart API</a>
+                <a href="https://historyofmarket.com/api/_manifest.json" target="_blank" rel="noopener">History of Market JSON</a>
+                <a href="https://stooq.com/" target="_blank" rel="noopener">Stooq CSV</a>
+                <a href="https://fred.stlouisfed.org/" target="_blank" rel="noopener">FRED CSV</a>
+                <a href="https://data.gov.tw/dataset/6099" target="_blank" rel="noopener">國發會景氣指標及燈號</a>
+            </div>
+        `;
+    }
+
+    function renderMacroLoading() {
+        if (!macroBodyEl) return;
+        macroBodyEl.innerHTML = `
+            <div style="text-align:center; padding:40px; color:#94a3b8;">
+                <div class="spinner" style="width:30px; height:30px; border:3px solid rgba(255,255,255,0.1); border-top-color:#22c55e; border-radius:50%; animation:spin 1s linear infinite; margin:0 auto 16px;"></div>
+                正在抓取總經資料...
+            </div>
+        `;
+    }
+
+    async function fetchMacroDashboardData() {
+        const [dailyResults, trendResults, ndc] = await Promise.all([
+            Promise.all(DAILY_MACRO_SYMBOLS.map(def => fetchDailyMacro(def).catch(err => ({ ...def, error: err.message || String(err) })))),
+            Promise.all(TREND_MACRO_SERIES.map(def => fetchTrendMacro(def).catch(err => ({ ...def, error: err.message || String(err) })))),
+            fetchNdcMacroInfo()
+        ]);
+        return {
+            fetchedAt: new Date().toISOString(),
+            daily: dailyResults,
+            trends: trendResults,
+            ndc
+        };
+    }
+
+    async function loadMacroDashboard(force = false) {
+        if (!macroBodyEl) return;
+        const cachedRaw = localStorage.getItem(MACRO_CACHE_KEY);
+        if (!force && cachedRaw) {
+            try {
+                const cached = JSON.parse(cachedRaw);
+                if (cached?.fetchedAt && Date.now() - new Date(cached.fetchedAt).getTime() < MACRO_CACHE_TTL_MS) {
+                    renderMacroDashboard(cached, true);
+                    return;
+                }
+            } catch(e) {}
+        }
+
+        renderMacroLoading();
+        if (macroRefreshBtn) {
+            macroRefreshBtn.disabled = true;
+            macroRefreshBtn.textContent = '更新中...';
+        }
+        try {
+            const data = await fetchMacroDashboardData();
+            localStorage.setItem(MACRO_CACHE_KEY, JSON.stringify(data));
+            renderMacroDashboard(data, false);
+        } catch (err) {
+            console.error('Macro dashboard failed:', err);
+            if (cachedRaw) {
+                try {
+                    const cached = JSON.parse(cachedRaw);
+                    renderMacroDashboard(cached, true);
+                    if (macroStatusEl) macroStatusEl.textContent += ' · 即時更新失敗，已顯示舊快取';
+                    return;
+                } catch(e) {}
+            }
+            macroBodyEl.innerHTML = `<div style="padding:28px; color:#fca5a5; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:12px;">總經資料暫時抓取失敗，請稍後再試。</div>`;
+        } finally {
+            if (macroRefreshBtn) {
+                macroRefreshBtn.disabled = false;
+                macroRefreshBtn.textContent = '↻ 更新';
+            }
+        }
     }
 
     // --- Real-time Stock Price via Reliable Fallbacks ---
@@ -3207,6 +3982,20 @@ document.addEventListener('DOMContentLoaded', () => {
     addInventoryBtn.addEventListener('click', addToInventory);
     addShortTermBtn.addEventListener('click', addToShortTermInventory);
     refreshPricesBtn.addEventListener('click', refreshPrices);
+    if (openMacroBtn && macroModal) {
+        openMacroBtn.addEventListener('click', () => {
+            macroModal.classList.add('active');
+            loadMacroDashboard(false);
+        });
+    }
+    if (closeMacroBtn && macroModal) {
+        closeMacroBtn.addEventListener('click', () => {
+            macroModal.classList.remove('active');
+        });
+    }
+    if (macroRefreshBtn) {
+        macroRefreshBtn.addEventListener('click', () => loadMacroDashboard(true));
+    }
     if (exportSaveBtn) {
         exportSaveBtn.addEventListener('click', exportSaveFile);
     }
