@@ -4,14 +4,14 @@
  * 公開介面：window.loadMacroDashboard(force = false)
  */
 
-// ─── 常數 ────────────────────────────────────────────────────────────────────
+//  常數 
 
 const MACRO_CACHE_KEY    = 'twStockMacroDashboardCacheV3';
 const MACRO_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
 // section 用於 UI 分區
 const DAILY_MACRO_SYMBOLS = [
-    // ── 美股指數 ──────────────────────────────────────────────────────────────
+    //  美股指數 
     { id: 'sp500',   section: '美股指數', name: 'S&P 500',         symbol: '^GSPC',      stooq: '^spx',   historyUrl: 'https://historyofmarket.com/api/sp500/price.json',     kind: 'index', note: '全球風險胃納溫度計，台股外資行為與其相關性超過 0.7' },
     { id: 'nasdaq',  section: '美股指數', name: '那斯達克',         symbol: '^IXIC',      stooq: '^ndq',   historyUrl: 'https://historyofmarket.com/api/nasdaq/composite.json', kind: 'index', note: '科技股情緒領先指標，台積電 ADR 漲跌與此高度連動' },
     { id: 'dow',     section: '美股指數', name: '道瓊工業',         symbol: '^DJI',       stooq: '^dji',   historyUrl: 'https://historyofmarket.com/api/dow/century.json',      kind: 'index', note: '景氣循環股代表，道瓊強勁代表傳產需求健康' },
@@ -19,13 +19,13 @@ const DAILY_MACRO_SYMBOLS = [
     { id: 'rut',     section: '美股指數', name: '羅素 2000',        symbol: '^RUT',       stooq: 'rut.us',                                                                       kind: 'index', note: '美國中小型股代表，反映內需景氣；羅素轉強代表風險偏好擴散至全市場' },
     { id: 'smh',     section: '美股指數', name: '半導體 ETF (SMH)', symbol: 'SMH',        stooq: 'smh.us',                                                                     kind: 'index', note: '追蹤台積電、輝達、英特爾等半導體龍頭，是費半的 ETF 代理版本' },
 
-    // ── 亞太股市 ──────────────────────────────────────────────────────────────
+    //  亞太股市 
     { id: 'nikkei',  section: '亞太股市', name: '日經 225',         symbol: '^N225',      stooq: 'n225.jp',                                                                       kind: 'index', note: '日圓升貶直接影響日經；日股強勢時外資往往連帶增持台股' },
     { id: 'hsi',     section: '亞太股市', name: '恒生指數',         symbol: '^HSI',       stooq: 'hsi.hk',                                                                       kind: 'index', note: '中港資金動向風向球；港股重挫通常伴隨外資流出亞洲新興市場' },
     { id: 'kospi',   section: '亞太股市', name: 'KOSPI',            symbol: '^KS11',      stooq: 'ks11.kr',                                                                      kind: 'index', note: '韓股與台股半導體同業競爭，韓圜匯率走弱時三星出口競爭力上升' },
     { id: 'sse',     section: '亞太股市', name: '上海綜合',         symbol: '000001.SS',  stooq: '000001.cn',                                                                       kind: 'index', note: '中國景氣與政策力道指標；對台灣零組件出口中國的供應鏈影響大' },
 
-    // ── 利率與殖利率曲線 ─────────────────────────────────────────────────────
+    //  利率與殖利率曲線 
     { id: 'tnx',     section: '利率曲線', name: '美債 10Y',         symbol: '^TNX',       fredSeries: 'DGS10',         stooq: '10usy.b', kind: 'rate',   note: '最重要的折現率基準，10Y 每上升 25 bp，成長股本益比通常收縮 5–8%' },
     { id: 'twoY',    section: '利率曲線', name: '美債 2Y',          fredSeries: 'DGS2',                                stooq: '2usy.b',  kind: 'rate',   note: '最貼近 Fed 利率預期，2Y 走高代表市場認為降息遙遙無期' },
     { id: 'thirtyY', section: '利率曲線', name: '美債 30Y',         symbol: '^TYX',       fredSeries: 'DGS30',         stooq: '30usy.b', kind: 'rate',   note: '長期通膨預期的體現；30Y 持續走高代表市場不相信通膨已受控' },
@@ -33,22 +33,22 @@ const DAILY_MACRO_SYMBOLS = [
     { id: 'hySpr',   section: '利率曲線', name: '高收益債利差',     fredSeries: 'BAMLH0A0HYM2',                                          kind: 'spread', bpsUnit: true, colorInverse: true, note: '高收益利差 > 500 bps 代表市場顯著定價衰退風險；利差快速走闊為警訊' },
     { id: 'igSpr',   section: '利率曲線', name: '投資等級債利差',   fredSeries: 'BAMLC0A0CM',                                            kind: 'spread', bpsUnit: true, colorInverse: true, note: '投資等級利差反映高質量企業信用壓力；走闊代表市場對景氣轉弱的憂慮升溫' },
 
-    // ── 外匯市場 ──────────────────────────────────────────────────────────────
+    //  外匯市場 
     { id: 'dxy',     section: '外匯',     name: '美元指數 (DXY)',   symbol: 'DX-Y.NYB',  fredSeries: 'DTWEXBGS',      stooq: 'dxy',     kind: 'index',  colorInverse: true, note: '美元走強通常壓抑新興市場；外資賣台股匯出時加速台幣貶值' },
-    { id: 'usdjpy',  section: '外匯',     name: 'USD/JPY',          symbol: 'USDJPY=X',  fredSeries: 'DEXJPUS',                         stooq: 'usdjpy',  kind: 'fx',     colorInverse: true, note: '日圓貶值代表日本貨幣寬鬆、資金充沛；但過度貶值會引發亞幣競貶壓力' },
-    { id: 'eurusd',  section: '外匯',     name: 'EUR/USD',          symbol: 'EURUSD=X',  fredSeries: 'DEXUSEU',                         stooq: 'eurusd',  kind: 'fx',     colorInverse: false, note: '歐元升值代表美元整體偏弱，有利新興市場資金流入' },
-    { id: 'usdcnh',  section: '外匯',     name: 'USD/CNH',          symbol: 'USDCNH=X',  fredSeries: 'DEXCHUS',                         stooq: 'usdcny',  kind: 'fx',     colorInverse: true, note: '人民幣貶值通常壓抑港股與對中出口比重高的台灣產業' },
-    { id: 'usdkrw',  section: '外匯',     name: 'USD/KRW',          symbol: 'USDKRW=X',  fredSeries: 'DEXKOUS',                         stooq: 'usdkrw',  kind: 'fx',     colorInverse: true, note: '韓圜貶值提升三星、SK 出口競爭力，對台灣記憶體與顯示器業形成壓力' },
+    { id: 'usdjpy',  section: '外匯',     name: 'USD/JPY',          symbol: 'USDJPY=X',  fredSeries: 'DEXJPUS',  frankBase: 'USD', frankSymbol: 'JPY',                   stooq: 'usdjpy',  kind: 'fx',     colorInverse: true, note: '日圓貶值代表日本貨幣寬鬆、資金充沛；但過度貶值會引發亞幣競貶壓力' },
+    { id: 'eurusd',  section: '外匯',     name: 'EUR/USD',          symbol: 'EURUSD=X',  fredSeries: 'DEXUSEU',  frankBase: 'EUR', frankSymbol: 'USD',                   stooq: 'eurusd',  kind: 'fx',     colorInverse: false, note: '歐元升值代表美元整體偏弱，有利新興市場資金流入' },
+    { id: 'usdcnh',  section: '外匯',     name: 'USD/CNH',          symbol: 'USDCNH=X',  fredSeries: 'DEXCHUS',  frankBase: 'USD', frankSymbol: 'CNY',                   stooq: 'usdcny',  kind: 'fx',     colorInverse: true, note: '人民幣貶值通常壓抑港股與對中出口比重高的台灣產業' },
+    { id: 'usdkrw',  section: '外匯',     name: 'USD/KRW',          symbol: 'USDKRW=X',  fredSeries: 'DEXKOUS',  frankBase: 'USD', frankSymbol: 'KRW',                   stooq: 'usdkrw',  kind: 'fx',     colorInverse: true, note: '韓圜貶值提升三星、SK 出口競爭力，對台灣記憶體與顯示器業形成壓力' },
     { id: 'usdtwd',  section: '外匯',     name: 'USD/TWD',          symbol: 'TWD=X',     fredSeries: 'DEXTAUS',                         stooq: 'usdtwd',  kind: 'fx',     colorInverse: true, note: '台幣升值不利出口但吸引外資；台幣走強往往是外資淨流入的領先訊號' },
 
-    // ── 大宗商品 ──────────────────────────────────────────────────────────────
+    //  大宗商品 
     { id: 'wti',     section: '大宗商品', name: 'WTI 原油',         symbol: 'CL=F',      fredSeries: 'DCOILWTICO',                       stooq: 'cl.f',    kind: 'commodity', colorInverse: true, note: '台灣能源 98% 仰賴進口；WTI 與 Brent 相關性 > 0.98，以 WTI 代表全球油價走勢' },
 
     { id: 'gold',    section: '大宗商品', name: '黃金',             symbol: 'GC=F',      fredSeries: 'GOLDAMGBD228NLBM',                 stooq: 'xauusd',  kind: 'commodity', colorInverse: false, note: '避險情緒指標；金價飆升代表市場不確定性升高，通常與股市呈反向' },
     { id: 'copper',  section: '大宗商品', name: '銅 (Dr. Copper)',  symbol: 'HG=F',                                    stooq: 'hg.f',    kind: 'commodity', colorInverse: false, note: '「銅博士」是景氣最準確的實物指標，銅價上漲代表製造業需求健康' },
     { id: 'natgas',  section: '大宗商品', name: '天然氣',           symbol: 'NG=F',      fredSeries: 'DHHNGSP',                          stooq: 'ng.f',    kind: 'commodity', colorInverse: true, note: '台灣電廠與工業用氣主要來源，天然氣走高直接推升電費與生產成本' },
 
-    // ── 風險情緒 ──────────────────────────────────────────────────────────────
+    //  風險情緒 
     { id: 'vix',     section: '風險情緒', name: 'VIX 恐慌指數',    symbol: '^VIX',       stooq: '^vix',   historyUrl: 'https://historyofmarket.com/api/sp500/vix.json',        kind: 'vol',   colorInverse: true, note: '< 15 市場自滿、> 25 恐慌升溫、> 40 極度恐慌（歷史買點）' },
 
 ];
@@ -77,26 +77,26 @@ const TREND_MACRO_SERIES = [
     { id: 'mortRate',  section: '房市與信用',        name: '30Y 房貸利率',        series: 'MORTGAGE30US', mode: 'level', note: '高房貸利率壓抑換屋需求，房市降溫會拉低整體消費財富效應' },
 ];
 
-// ─── section 定義（每日 + 月更）────────────────────────────────────────────
+//  section 定義（每日 + 月更）
 
 const DAILY_SECTIONS = [
-    { key: '美股指數',   title: '🇺🇸 美股主要指數',        note: '台股電子股與那斯達克、費半相關性最高；費半領漲通常帶動台積電次日走強' },
-    { key: '亞太股市',   title: '🌏 亞太股市',              note: '外資在亞洲市場往往同步進出；日韓港股同步下跌為台股短線壓力的警訊' },
-    { key: '利率曲線',   title: '📈 利率與殖利率曲線',      note: '10Y–2Y 殖利率倒掛是歷史最可靠衰退領先指標；高收益利差走闊代表信用壓力升溫' },
-    { key: '外匯',       title: '💱 外匯市場',              note: '美元指數、日圓、韓圜、人民幣走勢直接影響台股外資動向與出口競爭格局' },
-    { key: '大宗商品',   title: '🛢️ 大宗商品',             note: '銅價是景氣實物溫度計；油價影響台灣製造成本；黃金飆升代表避險情緒升溫' },
-    { key: '風險情緒',   title: '⚡ 風險情緒指標',          note: 'VIX 與 MOVE 同時飆升代表股債市雙重不安全，通常是最危險的市場環境' },
+    { key: '美股指數',   title: ' 美股主要指數',        note: '台股電子股與那斯達克、費半相關性最高；費半領漲通常帶動台積電次日走強' },
+    { key: '亞太股市',   title: ' 亞太股市',              note: '外資在亞洲市場往往同步進出；日韓港股同步下跌為台股短線壓力的警訊' },
+    { key: '利率曲線',   title: ' 利率與殖利率曲線',      note: '10Y–2Y 殖利率倒掛是歷史最可靠衰退領先指標；高收益利差走闊代表信用壓力升溫' },
+    { key: '外匯',       title: ' 外匯市場',              note: '美元指數、日圓、韓圜、人民幣走勢直接影響台股外資動向與出口競爭格局' },
+    { key: '大宗商品',   title: ' 大宗商品',             note: '銅價是景氣實物溫度計；油價影響台灣製造成本；黃金飆升代表避險情緒升溫' },
+    { key: '風險情緒',   title: ' 風險情緒指標',          note: 'VIX 與 MOVE 同時飆升代表股債市雙重不安全，通常是最危險的市場環境' },
 ];
 
 const TREND_SECTIONS = [
-    { key: '通膨與貨幣政策', title: '🔥 通膨與貨幣政策', note: 'CPI、Core PCE 是 Fed 升降息的核心依據；PCE 高於 2.5% 時降息預期降溫' },
-    { key: '就業市場',       title: '💼 就業市場',       note: '非農與 JOLTS 是 Fed 雙重使命的另一半；就業過熱時 Fed 不敢快速降息' },
-    { key: '景氣循環',       title: '📊 景氣循環指標',   note: 'ISM 製造業 PMI 是台灣出口訂單的最佳領先指標，提前 1–2 個月反映需求變化' },
-    { key: '消費與信心',     title: '🛍️ 消費者信心',    note: '消費信心連續下滑超過 3 個月，往往預示企業收入成長放緩' },
-    { key: '房市與信用',     title: '🏠 房市與信用',     note: '房市冷熱反映利率政策效果；高房貸利率持續越久，消費財富效應侵蝕越深' },
+    { key: '通膨與貨幣政策', title: ' 通膨與貨幣政策', note: 'CPI、Core PCE 是 Fed 升降息的核心依據；PCE 高於 2.5% 時降息預期降溫' },
+    { key: '就業市場',       title: ' 就業市場',       note: '非農與 JOLTS 是 Fed 雙重使命的另一半；就業過熱時 Fed 不敢快速降息' },
+    { key: '景氣循環',       title: ' 景氣循環指標',   note: 'ISM 製造業 PMI 是台灣出口訂單的最佳領先指標，提前 1–2 個月反映需求變化' },
+    { key: '消費與信心',     title: ' 消費者信心',    note: '消費信心連續下滑超過 3 個月，往往預示企業收入成長放緩' },
+    { key: '房市與信用',     title: ' 房市與信用',     note: '房市冷熱反映利率政策效果；高房貸利率持續越久，消費財富效應侵蝕越深' },
 ];
 
-// ─── 格式化工具 ───────────────────────────────────────────────────────────────
+//  格式化工具 
 
 function macroFmt(value, digits = 2) {
     if (value === null || value === undefined || !isFinite(value)) return '--';
@@ -112,7 +112,7 @@ function macroSigned(value, digits = 2, suffix = '') {
     return `${sign}${macroFmt(value, digits)}${suffix}`;
 }
 
-// colorInverse: true → 上漲為壞事（油、VIX、利差等）
+// colorInverse: true -> 上漲為壞事（油、VIX、利差等）
 function macroColor(value, isInverse = false) {
     if (value === null || value === undefined || !isFinite(value)) return '#cbd5e1';
     const positive = value > 0;
@@ -157,7 +157,7 @@ function parseMacroCsv(text) {
     }).filter(Boolean);
 }
 
-// ─── Fetch 通用工具 ───────────────────────────────────────────────────────────
+//  Fetch 通用工具 
 
 async function fetchMacroUrl(targetUrl, isJson = false, timeout = 4000) {
     async function tryOne(proxyUrl, allorigins = false) {
@@ -258,7 +258,7 @@ function makeDailyMacroFromSeries(def, rawSeries, source) {
     };
 }
 
-// ─── 各資料來源 fetch ─────────────────────────────────────────────────────────
+//  各資料來源 fetch 
 
 async function fetchYahooMacro(def) {
     if (!def.symbol) throw new Error('no symbol');
@@ -301,10 +301,31 @@ async function fetchStooqMacro(def) {
     return makeDailyMacroFromSeries(def, series, 'Stooq');
 }
 
+// Frankfurter.app (ECB official rates) — 免 proxy，直接有 ACAO: *，file:// 也能用
+async function fetchFrankfurterFX(def) {
+    if (!def.frankBase || !def.frankSymbol) throw new Error('no frankfurter config');
+    const from = new Date();
+    from.setMonth(from.getMonth() - 6);
+    const fromStr = from.toISOString().split('T')[0];
+    const url = `https://api.frankfurter.app/${fromStr}..?base=${def.frankBase}&symbols=${def.frankSymbol}`;
+    const json = await fetchMacroUrl(url, true, 6000);
+    if (!json || !json.rates) throw new Error('frankfurter: no rates');
+    const series = Object.entries(json.rates)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, rates]) => {
+            let value = rates[def.frankSymbol];
+            if (!isFinite(value)) return null;
+            if (def.frankInvert) value = 1 / value; // EUR/USD: invert if needed
+            return { date, value };
+        }).filter(Boolean);
+    return makeDailyMacroFromSeries(def, series, 'Frankfurter/ECB');
+}
+
 async function fetchDailyMacro(def) {
-    // 優先順序：FRED（最穩定）→ historyUrl → Yahoo → Stooq
+    // 優先順序：Frankfurter(FX) -> FRED -> historyUrl -> Yahoo -> Stooq
     // 依序嘗試，成功即回傳，避免同時爆發大量並發請求
     const sources = [];
+    if (def.frankBase)  sources.push(() => fetchFrankfurterFX(def));
     if (def.fredSeries) sources.push(() => fetchFredDailyMacro(def));
     if (def.historyUrl) sources.push(() => fetchHistoryMacro(def));
     if (def.symbol)     sources.push(() => fetchYahooMacro(def));
@@ -318,7 +339,7 @@ async function fetchDailyMacro(def) {
     throw lastErr || new Error(`all sources failed for ${def.id}`);
 }
 
-// ─── 月頻 FRED 趨勢指標 fetch ─────────────────────────────────────────────────
+//  月頻 FRED 趨勢指標 fetch 
 
 async function fetchFredMacro(def) {
     const url  = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(def.series)}`;
@@ -382,15 +403,15 @@ async function fetchTrendMacro(def) {
     }
 }
 
-// ─── 景氣燈號解析工具 ─────────────────────────────────────────────────────────
+//  景氣燈號解析工具 
 
 function ndcScoreToSignal(score) {
     if (!isFinite(score)) return null;
-    if (score >= 38) return { label: '紅燈',   emoji: '🔴', code: 'red',        desc: '景氣過熱',  color: '#ef4444' };
-    if (score >= 32) return { label: '黃紅燈', emoji: '🟠', code: 'yellow-red', desc: '景氣活絡',  color: '#f97316' };
-    if (score >= 23) return { label: '綠燈',   emoji: '🟢', code: 'green',      desc: '景氣穩定',  color: '#22c55e' };
-    if (score >= 17) return { label: '黃藍燈', emoji: '🟡', code: 'yellow-blue',desc: '景氣低迷',  color: '#eab308' };
-    return              { label: '藍燈',   emoji: '🔵', code: 'blue',       desc: '景氣衰退',  color: '#3b82f6' };
+    if (score >= 38) return { label: '紅燈',   emoji: '[RED]', code: 'red',        desc: '景氣過熱',  color: '#ef4444' };
+    if (score >= 32) return { label: '黃紅燈', emoji: '[YR]', code: 'yellow-red', desc: '景氣活絡',  color: '#f97316' };
+    if (score >= 23) return { label: '綠燈',   emoji: '[GRN]', code: 'green',      desc: '景氣穩定',  color: '#22c55e' };
+    if (score >= 17) return { label: '黃藍燈', emoji: '[YB]', code: 'yellow-blue',desc: '景氣低迷',  color: '#eab308' };
+    return              { label: '藍燈',   emoji: '[BLU]', code: 'blue',       desc: '景氣衰退',  color: '#3b82f6' };
 }
 
 function ndcLabelToSignal(text) {
@@ -481,7 +502,7 @@ async function fetchNdcMacroInfo() {
     };
 }
 
-// ─── 風險溫度評分 ─────────────────────────────────────────────────────────────
+//  風險溫度評分 
 
 function evaluateMacroTone(daily, trends) {
     const byId  = Object.fromEntries((daily || []).filter(x => !x.error).map(x => [x.id, x]));
@@ -573,7 +594,7 @@ function evaluateMacroTone(daily, trends) {
     return              { score, label: '避險升溫',           color: '#34d399', notes };
 }
 
-// ─── Render：單一卡片 ─────────────────────────────────────────────────────────
+//  Render：單一卡片 
 
 function renderMacroErrorCard(name, message) {
     return `
@@ -705,11 +726,11 @@ function renderNdcCard(item) {
         </div>` : `<div style="font-size:13px;color:#94a3b8;padding:6px 0;">燈號資料暫時無法取得</div>`;
 
     const lampSegments = [
-        ['#ef4444','🔴 紅燈','38–45'],
-        ['#f97316','🟠 黃紅','32–37'],
-        ['#22c55e','🟢 綠燈','23–31'],
-        ['#eab308','🟡 黃藍','17–22'],
-        ['#3b82f6','🔵 藍燈','9–16']
+        ['#ef4444','[RED] 紅燈','38–45'],
+        ['#f97316','[YR] 黃紅','32–37'],
+        ['#22c55e','[GRN] 綠燈','23–31'],
+        ['#eab308','[YB] 黃藍','17–22'],
+        ['#3b82f6','[BLU] 藍燈','9–16']
     ].map(([c, l, r]) => {
         const active = sig && sig.color === c;
         return `<div style="flex:1;padding:3px 1px;background:${active ? c : c + '22'};color:${active ? '#fff' : c};font-weight:${active ? 700 : 400};border:1px solid ${c}44;text-align:center;font-size:9px;">
@@ -719,13 +740,13 @@ function renderNdcCard(item) {
 
     const proxyWarning = item.isProxy ? `
         <div style="font-size:10px;color:#f59e0b;margin-top:6px;padding:4px 6px;background:rgba(245,158,11,0.08);border-radius:4px;">
-            ⚠️ 以 OECD 領先指標推估（非官方燈號）
+            [!] 以 OECD 領先指標推估（非官方燈號）
             ${item.cli ? `· CLI = ${item.cli.value}（月差 ${item.cli.diff}）` : ''}
         </div>` : '';
 
     return `
         <div class="macro-card" style="min-width:240px;">
-            <span class="macro-label">🇹🇼 台灣景氣對策信號</span>
+            <span class="macro-label"> 台灣景氣對策信號</span>
             ${signalHtml}
             <div style="display:flex;gap:2px;margin:8px 0 4px;border-radius:4px;overflow:hidden;">${lampSegments}</div>
             ${proxyWarning}
@@ -733,13 +754,14 @@ function renderNdcCard(item) {
             <span class="macro-note">${item.note || ''}</span>
             <div style="display:flex;gap:8px;margin-top:6px;">
                 <a href="https://index.ndc.gov.tw/n/zh_tw" target="_blank" rel="noopener"
-                   style="color:#93c5fd;font-size:11px;text-decoration:none;">國發會景氣指標 →</a>
+                   style="color:#93c5fd;font-size:11px;text-decoration:none;">國發會景氣指標 -></a>
                 <a href="https://data.gov.tw/dataset/6099" target="_blank" rel="noopener"
-                   style="color:#93c5fd;font-size:11px;text-decoration:none;">開放資料 →</a>
+                   style="color:#93c5fd;font-size:11px;text-decoration:none;">開放資料 -></a>
             </div>
-        </div>`;\n}
+        </div>`;
+}
 
-// ─── Render：主體 ─────────────────────────────────────────────────────────────
+//  Render：主體 
 
 function renderSectionGrid(title, note, cards) {
     return `
@@ -765,7 +787,7 @@ function renderMacroDashboard(data, fromCache = false) {
             `${src} · ${new Date(data.fetchedAt).toLocaleString('zh-TW')} · 每日指標 ${okCount}/${DAILY_MACRO_SYMBOLS.length} 項成功`;
     }
 
-    // ── 頂部摘要卡 ────────────────────────────────────────────────────────────
+    //  頂部摘要卡 
     const sox     = byId.sox;
     const vix     = byId.vix;
     const spread  = byId.spread;
@@ -828,7 +850,7 @@ function renderMacroDashboard(data, fromCache = false) {
         }).join('')}
 
         <div class="macro-section-title">
-            <h3>🇹🇼 台灣景氣指標</h3>
+            <h3> 台灣景氣指標</h3>
             <span>國發會每月發布，含燈號、領先/同步指標、製造業 PMI</span>
         </div>
         <div class="macro-grid">${renderNdcCard(data.ndc)}</div>
@@ -854,7 +876,7 @@ function renderMacroLoading() {
         </div>`;
 }
 
-// ─── 資料並聯抓取 ─────────────────────────────────────────────────────────────
+//  資料並聯抓取 
 
 // 限制並發：分批執行，每批最多 batchSize 個，避免瀏覽器 connection pool 爆炸
 // guardedFetch: 用 done-flag + new Promise 構造，100% 保證在 ms 毫秒內 resolve
@@ -911,7 +933,7 @@ async function fetchMacroDashboardData() {
     return { fetchedAt: new Date().toISOString(), daily: dailyResults, trends: trendResults, ndc };
 }
 
-// ─── 公開介面 ─────────────────────────────────────────────────────────────────
+//  公開介面 
 
 window.loadMacroDashboard = async function loadMacroDashboard(force = false) {
     const macroBodyEl     = document.getElementById('macroBody');
@@ -935,20 +957,20 @@ window.loadMacroDashboard = async function loadMacroDashboard(force = false) {
 
     console.log('[Macro] loadMacroDashboard 開始，', new Date().toLocaleTimeString());
 
-    // ── 逃生門：18 秒後強制結束 loading，無論 async 是否完成 ────────────────
+    //  逃生門：18 秒後強制結束 loading，無論 async 是否完成 
     const escapeTimer = setTimeout(() => {
-        console.warn('[Macro] ⏰ 逃生門觸發（18s）');
+        console.warn('[Macro] [T] 逃生門觸發（18s）');
         const el = document.getElementById('macroBody');
         if (el && el.id && (el.querySelector('#macroProg') || el.querySelector('.spinner'))) {
             el.innerHTML = `<div style="padding:24px;color:#fca5a5;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:12px;line-height:1.7;">
-                ⏰ 載入逾時（18 秒）<br>
+                [T] 載入逾時（18 秒）<br>
                 <span style="font-size:12px;color:#94a3b8;">
-                    請開啟瀏覽器 DevTools → Console，尋找 <code>[Macro]</code> 開頭的訊息，
-                    確認卡在哪個步驟。網路若正常，按「↻ 更新」重試。
+                    請開啟瀏覽器 DevTools -> Console，尋找 <code>[Macro]</code> 開頭的訊息，
+                    確認卡在哪個步驟。網路若正常，按「 更新」重試。
                 </span>
             </div>`;
         }
-        if (macroRefreshBtn) { macroRefreshBtn.disabled = false; macroRefreshBtn.textContent = '↻ 更新'; }
+        if (macroRefreshBtn) { macroRefreshBtn.disabled = false; macroRefreshBtn.textContent = ' 更新'; }
     }, 18000);
 
     try {
@@ -992,6 +1014,6 @@ window.loadMacroDashboard = async function loadMacroDashboard(force = false) {
         const el = document.getElementById('macroBody');
         if (el) el.innerHTML = `<div style="padding:28px;color:#fca5a5;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:12px;">總經資料暫時抓取失敗，請稍後再試。</div>`;
     } finally {
-        if (macroRefreshBtn) { macroRefreshBtn.disabled = false; macroRefreshBtn.textContent = '↻ 更新'; }
+        if (macroRefreshBtn) { macroRefreshBtn.disabled = false; macroRefreshBtn.textContent = ' 更新'; }
     }
 };
