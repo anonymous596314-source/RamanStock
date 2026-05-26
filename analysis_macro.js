@@ -29,9 +29,9 @@ const DAILY_MACRO_SYMBOLS = [
     { id: 'tnx',     section: '利率曲線', name: '美債 10Y',         symbol: '^TNX',       fredSeries: 'DGS10',         stooq: '10usy.b', kind: 'rate',   note: '最重要的折現率基準，10Y 每上升 25 bp，成長股本益比通常收縮 5–8%' },
     { id: 'twoY',    section: '利率曲線', name: '美債 2Y',          fredSeries: 'DGS2',                                stooq: '2usy.b',  kind: 'rate',   note: '最貼近 Fed 利率預期，2Y 走高代表市場認為降息遙遙無期' },
     { id: 'thirtyY', section: '利率曲線', name: '美債 30Y',         symbol: '^TYX',       fredSeries: 'DGS30',         stooq: '30usy.b', kind: 'rate',   note: '長期通膨預期的體現；30Y 持續走高代表市場不相信通膨已受控' },
-    { id: 'spread',  section: '利率曲線', name: '10Y–2Y 利差',      fredSeries: 'T10Y2Y',                                                kind: 'spread', colorInverse: false, note: '殖利率曲線倒掛（<0）是歷史上最可靠的衰退領先指標，平均領先 12–18 個月' },
-    { id: 'hySpr',   section: '利率曲線', name: '高收益債利差',     fredSeries: 'BAMLH0A0HYM2',                                          kind: 'spread', bpsUnit: true, colorInverse: true, note: '高收益利差 > 500 bps 代表市場顯著定價衰退風險；利差快速走闊為警訊' },
-    { id: 'igSpr',   section: '利率曲線', name: '投資等級債利差',   fredSeries: 'BAMLC0A0CM',                                            kind: 'spread', bpsUnit: true, colorInverse: true, note: '投資等級利差反映高質量企業信用壓力；走闊代表市場對景氣轉弱的憂慮升溫' },
+
+
+
 
     //  外匯市場 
     { id: 'dxy',     section: '外匯',     name: '美元指數 (DXY)',   symbol: 'DX-Y.NYB',  fredSeries: 'DTWEXBGS',      stooq: 'dxy',     kind: 'index',  colorInverse: true, note: '美元走強通常壓抑新興市場；外資賣台股匯出時加速台幣貶值' },
@@ -159,7 +159,7 @@ function parseMacroCsv(text) {
 
 //  Fetch 通用工具 
 
-async function fetchMacroUrl(targetUrl, isJson = false, timeout = 4000) {
+async function fetchMacroUrl(targetUrl, isJson = false, timeout = 5000) {
     async function tryOne(proxyUrl, allorigins = false) {
         const ctrl = new AbortController();
         const tid  = setTimeout(() => ctrl.abort(), timeout);
@@ -173,19 +173,21 @@ async function fetchMacroUrl(targetUrl, isJson = false, timeout = 4000) {
         } finally { clearTimeout(tid); }
     }
 
-    // Stage 1: direct + allorigins raw (最快，2 個並發)
+    // Stage 1: 3 個 proxy 並聯 (最快者優先)
     try {
         return await Promise.any([
             tryOne(targetUrl),
-            tryOne(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`)
+            tryOne(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`),
+            tryOne(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`)
         ]);
     } catch {}
 
-    // Stage 2: 備援 proxy (僅在第一階段全失敗才啟動)
+    // Stage 2: 備援 proxy
     try {
         return await Promise.any([
-            tryOne(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`),
-            tryOne(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`, true)
+            tryOne(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`),
+            tryOne(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`, true),
+            tryOne(`https://thingproxy.freeboard.io/fetch/${targetUrl}`)
         ]);
     } catch {}
 
@@ -543,24 +545,13 @@ function evaluateMacroTone(daily, trends) {
         else if (byId.move.value >= 90) score -= 3;
     }
 
-    // 殖利率曲線
-    if (byId.spread) {
-        const s = byId.spread.value;
-        if (s < -0.3)      { score -= 8; notes.push('殖利率曲線嚴重倒掛'); }
-        else if (s < 0)    { score -= 4; notes.push('殖利率曲線倒掛'); }
-        else if (s > 0.5)  { score += 3; notes.push('殖利率曲線正斜率'); }
-    }
+    // 殖利率曲線指標已移除（FRED CORS 限制）
     // 10Y 利率方向
     if (byId.tnx) {
         if (byId.tnx.changeBps >= 8)  { score -= 5; notes.push('10Y 殖利率上行'); }
         if (byId.tnx.value >= 5.0)    { score -= 4; notes.push('10Y 殖利率破 5%'); }
     }
-    // 高收益利差
-    if (byId.hySpr) {
-        if (byId.hySpr.value >= 500)  { score -= 8; notes.push('高收益利差 > 500 bps'); }
-        else if (byId.hySpr.value >= 400) { score -= 4; notes.push('高收益利差走闊'); }
-        if (byId.hySpr.changeBps >= 20) score -= 3;
-    }
+
 
     // 美元
     if (byId.dxy) {
@@ -790,17 +781,13 @@ function renderMacroDashboard(data, fromCache = false) {
     //  頂部摘要卡 
     const sox     = byId.sox;
     const vix     = byId.vix;
-    const spread  = byId.spread;
+    const spread  = null; // removed
     const copper  = byId.copper;
     const toneNotes = tone.notes.length ? tone.notes.slice(0, 5).join('、') : '目前無明顯單一方向訊號';
 
-    const spreadVal   = spread  ? spread.value : null;
-    const spreadColor = spreadVal !== null
-        ? (spreadVal < -0.3 ? '#f87171' : spreadVal < 0 ? '#fbbf24' : '#34d399')
-        : '#cbd5e1';
-    const spreadText  = spreadVal !== null
-        ? `${macroSigned(spreadVal, 2)} ppt${spreadVal < 0 ? ' (倒掛)' : ''}`
-        : '--';
+    const spreadVal = null;   // spread indicator removed (FRED CORS)
+    const spreadColor = '#cbd5e1';
+    const spreadText  = '--';
 
     macroBodyEl.innerHTML = `
         <div class="macro-summary-grid">
@@ -821,9 +808,9 @@ function renderMacroDashboard(data, fromCache = false) {
                 <span style="font-size:12px;color:var(--text-secondary);">< 15 自滿 ｜ 25–30 恐慌 ｜ > 40 歷史買點</span>
             </div>
             <div class="dashboard-card">
-                <span class="label">10Y–2Y 殖利率利差</span>
-                <span class="value" style="font-size:26px;color:${spreadColor};">${spreadText}</span>
-                <span style="font-size:12px;color:var(--text-secondary);">倒掛 = 歷史最可靠衰退領先指標</span>
+                <span class="label">銅博士日變動</span>
+                <span class="value" style="font-size:26px;color:${copper ? macroColor(copper.changePct) : '#cbd5e1'};">${copper ? macroSigned(copper.changePct, 2, '%') : '--'}</span>
+                <span style="font-size:12px;color:var(--text-secondary);">景氣實物溫度計</span>
             </div>
             <div class="dashboard-card">
                 <span class="label">銅價日變動</span>
@@ -831,9 +818,9 @@ function renderMacroDashboard(data, fromCache = false) {
                 <span style="font-size:12px;color:var(--text-secondary);">銅博士 · 景氣實物溫度計</span>
             </div>
             <div class="dashboard-card">
-                <span class="label">高收益利差</span>
-                <span class="value" style="font-size:24px;color:${byId.hySpr ? (byId.hySpr.value >= 500 ? '#f87171' : byId.hySpr.value >= 400 ? '#fbbf24' : '#34d399') : '#cbd5e1'};">${byId.hySpr ? `${macroFmt(byId.hySpr.value, 0)} bps` : '--'}</span>
-                <span style="font-size:12px;color:var(--text-secondary);">> 500 bps 代表市場定價衰退</span>
+                <span class="label">美元指數 (DXY)</span>
+                <span class="value" style="font-size:26px;color:${byId.dxy ? macroColor(byId.dxy.changePct, true) : '#cbd5e1'};">${byId.dxy ? macroSigned(byId.dxy.changePct, 2, '%') : '--'}</span>
+                <span style="font-size:12px;color:var(--text-secondary);">美元強弱影響外資資金流向</span>
             </div>
         </div>
 
@@ -911,12 +898,12 @@ async function fetchMacroDashboardData() {
     };
 
     const wrapDaily = def => guardedFetch(
-        () => fetchDailyMacro(def), 9000,
+        () => fetchDailyMacro(def), 12000,
         { ...def, error: 'timeout' }
     ).then(r => { tick(); return r; });
 
     const wrapTrend = def => guardedFetch(
-        () => fetchTrendMacro(def), 11000,
+        () => fetchTrendMacro(def), 15000,
         { ...def, error: 'timeout' }
     ).then(r => { tick(); return r; });
 
@@ -927,7 +914,7 @@ async function fetchMacroDashboardData() {
     const [dailyResults, trendResults, ndc] = await Promise.all([
         Promise.all(DAILY_MACRO_SYMBOLS.map(wrapDaily)),
         Promise.all(TREND_MACRO_SERIES.map(wrapTrend)),
-        guardedFetch(() => fetchNdcMacroInfo(), 13000, ndcFallback)
+        guardedFetch(() => fetchNdcMacroInfo(), 18000, ndcFallback)
     ]);
     console.log('[Macro] 全部完成');
     return { fetchedAt: new Date().toISOString(), daily: dailyResults, trends: trendResults, ndc };
