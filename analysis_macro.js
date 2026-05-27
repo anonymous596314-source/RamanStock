@@ -27,19 +27,16 @@ const DAILY_MACRO_SYMBOLS = [
 
     //  利率與殖利率曲線 
     { id: 'tnx',     section: '利率曲線', name: '美債 10Y',         symbol: '^TNX',       fredSeries: 'DGS10',         stooq: '10usy.b', kind: 'rate',   note: '最重要的折現率基準，10Y 每上升 25 bp，成長股本益比通常收縮 5–8%' },
-    { id: 'twoY',    section: '利率曲線', name: '美債 2Y',          fredSeries: 'DGS2',                                stooq: '2usy.b',  kind: 'rate',   note: '最貼近 Fed 利率預期，2Y 走高代表市場認為降息遙遙無期' },
     { id: 'thirtyY', section: '利率曲線', name: '美債 30Y',         symbol: '^TYX',       fredSeries: 'DGS30',         stooq: '30usy.b', kind: 'rate',   note: '長期通膨預期的體現；30Y 持續走高代表市場不相信通膨已受控' },
 
 
 
 
     //  外匯市場 
-    { id: 'dxy',     section: '外匯',     name: '美元指數 (DXY)',   symbol: 'DX-Y.NYB',  fredSeries: 'DTWEXBGS',      stooq: 'dxy',     kind: 'index',  colorInverse: true, note: '美元走強通常壓抑新興市場；外資賣台股匯出時加速台幣貶值' },
     { id: 'usdjpy',  section: '外匯',     name: 'USD/JPY',          symbol: 'USDJPY=X',  fredSeries: 'DEXJPUS',  frankBase: 'USD', frankSymbol: 'JPY',                   stooq: 'usdjpy',  kind: 'fx',     colorInverse: true, note: '日圓貶值代表日本貨幣寬鬆、資金充沛；但過度貶值會引發亞幣競貶壓力' },
     { id: 'eurusd',  section: '外匯',     name: 'EUR/USD',          symbol: 'EURUSD=X',  fredSeries: 'DEXUSEU',  frankBase: 'EUR', frankSymbol: 'USD',                   stooq: 'eurusd',  kind: 'fx',     colorInverse: false, note: '歐元升值代表美元整體偏弱，有利新興市場資金流入' },
     { id: 'usdcnh',  section: '外匯',     name: 'USD/CNH',          symbol: 'USDCNH=X',  fredSeries: 'DEXCHUS',  frankBase: 'USD', frankSymbol: 'CNY',                   stooq: 'usdcny',  kind: 'fx',     colorInverse: true, note: '人民幣貶值通常壓抑港股與對中出口比重高的台灣產業' },
     { id: 'usdkrw',  section: '外匯',     name: 'USD/KRW',          symbol: 'USDKRW=X',  fredSeries: 'DEXKOUS',  frankBase: 'USD', frankSymbol: 'KRW',                   stooq: 'usdkrw',  kind: 'fx',     colorInverse: true, note: '韓圜貶值提升三星、SK 出口競爭力，對台灣記憶體與顯示器業形成壓力' },
-    { id: 'usdtwd',  section: '外匯',     name: 'USD/TWD',          symbol: 'TWD=X',     fredSeries: 'DEXTAUS',                         stooq: 'usdtwd',  kind: 'fx',     colorInverse: true, note: '台幣升值不利出口但吸引外資；台幣走強往往是外資淨流入的領先訊號' },
 
     //  大宗商品 
     { id: 'wti',     section: '大宗商品', name: 'WTI 原油',         symbol: 'CL=F',      fredSeries: 'DCOILWTICO',                       stooq: 'cl.f',    kind: 'commodity', colorInverse: true, note: '台灣能源 98% 仰賴進口；WTI 與 Brent 相關性 > 0.98，以 WTI 代表全球油價走勢' },
@@ -303,203 +300,20 @@ async function fetchStooqMacro(def) {
     return makeDailyMacroFromSeries(def, series, 'Stooq');
 }
 
-// Frankfurter.app (ECB official rates) — 免 proxy，直接有 ACAO: *，file:// 也能用
-async function fetchFrankfurterFX(def) {
-    if (!def.frankBase || !def.frankSymbol) throw new Error('no frankfurter config');
-    const from = new Date();
-    from.setMonth(from.getMonth() - 6);
-    const fromStr = from.toISOString().split('T')[0];
-    const url = `https://api.frankfurter.app/${fromStr}..?base=${def.frankBase}&symbols=${def.frankSymbol}`;
-    const json = await fetchMacroUrl(url, true, 6000);
-    if (!json || !json.rates) throw new Error('frankfurter: no rates');
-    const series = Object.entries(json.rates)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([date, rates]) => {
-            let value = rates[def.frankSymbol];
-            if (!isFinite(value)) return null;
-            if (def.frankInvert) value = 1 / value; // EUR/USD: invert if needed
-            return { date, value };
-        }).filter(Boolean);
-    return makeDailyMacroFromSeries(def, series, 'Frankfurter/ECB');
-}
-
-async function fetchDailyMacro(def) {
-    // 優先順序：Frankfurter(FX) -> FRED -> historyUrl -> Yahoo -> Stooq
-    // 依序嘗試，成功即回傳，避免同時爆發大量並發請求
-    const sources = [];
-    if (def.frankBase)  sources.push(() => fetchFrankfurterFX(def));
-    if (def.fredSeries) sources.push(() => fetchFredDailyMacro(def));
-    if (def.historyUrl) sources.push(() => fetchHistoryMacro(def));
-    if (def.symbol)     sources.push(() => fetchYahooMacro(def));
-    if (def.stooq)      sources.push(() => fetchStooqMacro(def));
-    if (!sources.length) throw new Error(`no source for ${def.id}`);
-    let lastErr;
-    for (const fn of sources) {
-        try   { return await fn(); }
-        catch (e) { lastErr = e; }
-    }
-    throw lastErr || new Error(`all sources failed for ${def.id}`);
-}
-
-//  月頻 FRED 趨勢指標 fetch 
-
-async function fetchFredMacro(def) {
-    const url  = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(def.series)}`;
-    const csv  = await fetchMacroUrl(url, false, 10000);
-    const rows = parseMacroCsv(csv).filter(r => isFinite(r.value));
-    if (rows.length < 14) throw new Error(`FRED ${def.series}: not enough data`);
-
-    if (def.mode === 'yoy') {
-        const yoy = [];
-        for (let i = 12; i < rows.length; i++) {
-            if (rows[i - 12].value !== 0) {
-                yoy.push({ date: rows[i].date, value: ((rows[i].value / rows[i - 12].value) - 1) * 100 });
-            }
-        }
-        const latest = yoy[yoy.length - 1]; const prev = yoy[yoy.length - 2];
-        const raw    = rows[rows.length - 1]; const rawP = rows[rows.length - 2];
-        return { ...def, date: latest.date, value: latest.value,
-            change: latest.value - prev.value,
-            mom:    ((raw.value / rawP.value) - 1) * 100,
-            series: yoy };
-    }
-    if (def.mode === 'mom_diff') {
-        // Absolute month-over-month difference (for NFP in thousands)
-        const latest = rows[rows.length - 1]; const prev = rows[rows.length - 2];
-        const diffs  = rows.slice(1).map((r, i) => ({ date: r.date, value: r.value - rows[i].value }));
-        return { ...def, date: latest.date, value: latest.value,
-            change: latest.value - prev.value,
-            mom: latest.value - prev.value,
-            series: diffs };
-    }
-    if (def.mode === 'mom_pct') {
-        // Percentage month-over-month (retail, industrial production)
-        const latest = rows[rows.length - 1]; const prev = rows[rows.length - 2];
-        const pcts   = rows.slice(1).map((r, i) => ({
-            date: r.date,
-            value: rows[i].value !== 0 ? ((r.value / rows[i].value) - 1) * 100 : 0
-        }));
-        return { ...def, date: latest.date, value: latest.value,
-            change: latest.value - prev.value,
-            mom: prev.value !== 0 ? ((latest.value / prev.value) - 1) * 100 : 0,
-            series: pcts };
-    }
-    // mode: 'level'
-    const latest = rows[rows.length - 1]; const prev = rows[rows.length - 2];
-    return { ...def, date: latest.date, value: latest.value,
-        change: latest.value - prev.value, series: rows };
-}
-
-async function fetchTrendMacro(def) {
-    try {
-        return await fetchFredMacro(def);
-    } catch (err) {
-        if (!def.fallbackSeries) throw err;
-        return fetchFredMacro({
-            ...def,
-            series:   def.fallbackSeries,
-            name:     def.fallbackName  || def.name,
-            note:     def.fallbackNote  || def.note,
-            isFallback: true
-        });
-    }
-}
-
-//  景氣燈號解析工具 
-
-function ndcScoreToSignal(score) {
-    if (!isFinite(score)) return null;
-    if (score >= 38) return { label: '紅燈',   emoji: '[RED]', code: 'red',        desc: '景氣過熱',  color: '#ef4444' };
-    if (score >= 32) return { label: '黃紅燈', emoji: '[YR]', code: 'yellow-red', desc: '景氣活絡',  color: '#f97316' };
-    if (score >= 23) return { label: '綠燈',   emoji: '[GRN]', code: 'green',      desc: '景氣穩定',  color: '#22c55e' };
-    if (score >= 17) return { label: '黃藍燈', emoji: '[YB]', code: 'yellow-blue',desc: '景氣低迷',  color: '#eab308' };
-    return              { label: '藍燈',   emoji: '[BLU]', code: 'blue',       desc: '景氣衰退',  color: '#3b82f6' };
-}
-
-function ndcLabelToSignal(text) {
-    if (!text) return null;
-    if (text.includes('黃紅') || text.includes('黄紅')) return ndcScoreToSignal(34);
-    if (text.includes('黃藍') || text.includes('黄藍')) return ndcScoreToSignal(19);
-    if (text.includes('紅燈') || text.includes('红灯')) return ndcScoreToSignal(41);
-    if (text.includes('綠燈') || text.includes('绿灯')) return ndcScoreToSignal(27);
-    if (text.includes('藍燈') || text.includes('蓝灯')) return ndcScoreToSignal(14);
-    return null;
-}
-
-// 嘗試從 FRED CSV 取得台灣 CLI 領先指標（作為燈號代理）
-async function tryFredTaiwanCli() {
-    // FRED: OECD Taiwan Composite Leading Indicator (amplitude adjusted)
-    const url = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=TWLOLITONOSTSAM';
-    const csv = await fetchMacroUrl(url, false, 5000);
-    const rows = parseMacroCsv(csv).filter(r => isFinite(r.value));
-    if (rows.length < 2) throw new Error('no FRED Taiwan CLI data');
-    const latest = rows[rows.length - 1];
-    const prev   = rows[rows.length - 2];
-    // OECD CLI > 100 = expansion, < 100 = contraction
-    const v    = latest.value;
-    const diff = latest.value - prev.value;
-    // Map CLI to approximate NDC score (rough proxy)
-    const proxyScore = v >= 101.5 ? 35 : v >= 100.5 ? 29 : v >= 99.5 ? 25 : v >= 98.5 ? 20 : 15;
-    return {
-        signal: ndcScoreToSignal(proxyScore),
-        score:  null,  // CLI 不等於 NDC 分數
-        date:   latest.date,
-        source: 'OECD CLI（FRED TWLOLITONOSTSAM）',
-        cli:    { value: v.toFixed(2), diff: diff.toFixed(3) },
-        isProxy: true,
-        note:   `OECD 台灣領先指標 ${v.toFixed(2)}（>${100} 擴張、<${100} 收縮），趨勢方向與國發會燈號高度相關`
-    };
-}
-
-// 嘗試抓 NDC 景氣指標網頁並 parse 燈號
-async function tryNdcWebsite() {
-    const urls = [
-        'https://index.ndc.gov.tw/n/zh_tw',
-        'https://index.ndc.gov.tw/',
-    ];
-    for (const url of urls) {
-        try {
-            const html = await fetchMacroUrl(url, false, 5000);
-            if (!html || html.length < 200) continue;
-            // 嘗試找分數：常見格式「綜合判斷分數 XX 分」或直接出現燈號文字
-            const scoreM  = html.match(/[\u7d9c\u5408\u5224\u65b7].*?(\d{1,2})\s*[\u5206]/);
-            const score   = scoreM ? parseInt(scoreM[1]) : NaN;
-            const signalM = html.match(/(紅燈|黃紅燈|綠燈|黃藍燈|藍燈)/);
-            if (signalM || isFinite(score)) {
-                const sig = isFinite(score) ? ndcScoreToSignal(score)
-                                             : ndcLabelToSignal(signalM?.[1] || '');
-                if (sig) return {
-                    signal: sig, score: isFinite(score) ? score : null,
-                    date: new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit' }),
-                    source: 'index.ndc.gov.tw', isProxy: false,
-                    note: '直接解析國發會景氣指標網頁'
-                };
-            }
-        } catch {}
-    }
-    throw new Error('NDC website parse failed');
-}
-
 async function fetchNdcMacroInfo() {
-    // 1. 嘗試解析 NDC 官方網頁
+    // 嘗試解析 NDC 官方網頁（SPA 架構不一定能取得，但試試）
     try {
         const r = await tryNdcWebsite();
         return { id: 'ndc', status: 'ok', ...r };
     } catch {}
 
-    // 2. 退而用 OECD CLI（FRED）作為代理指標
-    try {
-        const r = await tryFredTaiwanCli();
-        return { id: 'ndc', status: 'proxy', ...r };
-    } catch {}
-
-    // 3. 全部失敗
+    // 官網解析失敗 → 不用推算，直接告知使用者去查
     return {
         id: 'ndc', status: 'failed',
         signal: null, score: null,
-        date: '抓取失敗',
+        date: '--',
         source: '',
-        note: '無法連線至國發會網頁或 FRED。如需準確燈號，請至 index.ndc.gov.tw 查閱。',
+        note: '因國發會網頁為 SPA 架構，無法由前端直接解析燈號。請點下方連結至官網查詢最新燈號。',
         isProxy: false
     };
 }
@@ -729,11 +543,7 @@ function renderNdcCard(item) {
         </div>`;
     }).join('');
 
-    const proxyWarning = item.isProxy ? `
-        <div style="font-size:10px;color:#f59e0b;margin-top:6px;padding:4px 6px;background:rgba(245,158,11,0.08);border-radius:4px;">
-            [!] 以 OECD 領先指標推估（非官方燈號）
-            ${item.cli ? `· CLI = ${item.cli.value}（月差 ${item.cli.diff}）` : ''}
-        </div>` : '';
+    const proxyWarning = ''; // CLI proxy removed
 
     return `
         <div class="macro-card" style="min-width:240px;">
