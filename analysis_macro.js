@@ -768,62 +768,20 @@ function renderMacroDashboard(data, fromCache = false) {
     const macroStatusEl = document.getElementById('macroStatus');
     if (!macroBodyEl) return;
 
-    const byId  = Object.fromEntries((data.daily  || []).filter(x => !x.error).map(x => [x.id, x]));
-    const tone  = evaluateMacroTone(data.daily, data.trends);
-    const okCount = (data.daily || []).filter(x => !x.error).length;
 
     if (macroStatusEl) {
         const src = fromCache ? '快取' : '即時';
         macroStatusEl.textContent =
-            `${src} · ${new Date(data.fetchedAt).toLocaleString('zh-TW')} · 每日指標 ${okCount}/${DAILY_MACRO_SYMBOLS.length} 項成功`;
+            `${src} · ${new Date(data.fetchedAt).toLocaleString('zh-TW')} · 每日指標 ${(data.daily||[]).filter(x=>!x.error).length}/${DAILY_MACRO_SYMBOLS.length} 項成功`;
     }
 
     //  頂部摘要卡 
-    const sox     = byId.sox;
-    const vix     = byId.vix;
-    const spread  = null; // removed
-    const copper  = byId.copper;
-    const toneNotes = tone.notes.length ? tone.notes.slice(0, 5).join('、') : '目前無明顯單一方向訊號';
 
     const spreadVal = null;   // spread indicator removed (FRED CORS)
     const spreadColor = '#cbd5e1';
     const spreadText  = '--';
 
     macroBodyEl.innerHTML = `
-        <div class="macro-summary-grid">
-            <div class="dashboard-card highlight-card" style="min-height:130px;">
-                <span class="label">隔日台股風險溫度</span>
-                <span class="value" style="color:${tone.color};">${tone.score}</span>
-                <span style="font-size:14px;font-weight:800;color:${tone.color};">${tone.label}</span>
-                <span style="font-size:11px;color:var(--text-secondary);line-height:1.45;margin-top:4px;">${toneNotes}</span>
-            </div>
-            <div class="dashboard-card">
-                <span class="label">費半日變動</span>
-                <span class="value" style="font-size:28px;color:${sox ? macroColor(sox.changePct) : '#cbd5e1'};">${sox ? macroSigned(sox.changePct, 2, '%') : '--'}</span>
-                <span style="font-size:12px;color:var(--text-secondary);">費城半導體 · 台股電子股最強先行指標</span>
-            </div>
-            <div class="dashboard-card">
-                <span class="label">VIX 恐慌指數</span>
-                <span class="value" style="font-size:28px;color:${vix ? (vix.value >= 30 ? '#f87171' : vix.value >= 20 ? '#fbbf24' : '#34d399') : '#cbd5e1'};">${vix ? macroFmt(vix.value, 1) : '--'}</span>
-                <span style="font-size:12px;color:var(--text-secondary);">< 15 自滿 ｜ 25–30 恐慌 ｜ > 40 歷史買點</span>
-            </div>
-            <div class="dashboard-card">
-                <span class="label">銅博士日變動</span>
-                <span class="value" style="font-size:26px;color:${copper ? macroColor(copper.changePct) : '#cbd5e1'};">${copper ? macroSigned(copper.changePct, 2, '%') : '--'}</span>
-                <span style="font-size:12px;color:var(--text-secondary);">景氣實物溫度計</span>
-            </div>
-            <div class="dashboard-card">
-                <span class="label">銅價日變動</span>
-                <span class="value" style="font-size:26px;color:${copper ? macroColor(copper.changePct) : '#cbd5e1'};">${copper ? macroSigned(copper.changePct, 2, '%') : '--'}</span>
-                <span style="font-size:12px;color:var(--text-secondary);">銅博士 · 景氣實物溫度計</span>
-            </div>
-            <div class="dashboard-card">
-                <span class="label">美元指數 (DXY)</span>
-                <span class="value" style="font-size:26px;color:${byId.dxy ? macroColor(byId.dxy.changePct, true) : '#cbd5e1'};">${byId.dxy ? macroSigned(byId.dxy.changePct, 2, '%') : '--'}</span>
-                <span style="font-size:12px;color:var(--text-secondary);">美元強弱影響外資資金流向</span>
-            </div>
-        </div>
-
         ${DAILY_SECTIONS.map(sec => {
             const items = (data.daily || []).filter(x => x.section === sec.key);
             if (!items.length) return '';
