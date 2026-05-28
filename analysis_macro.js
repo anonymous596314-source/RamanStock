@@ -300,6 +300,117 @@ async function fetchStooqMacro(def) {
     return makeDailyMacroFromSeries(def, series, 'Stooq');
 }
 
+// Frankfurter.app (ECB official rates) — 直連有 ACAO:*，不需 proxy
+async function fetchFrankfurterFX(def) {
+    if (!def.frankBase || !def.frankSymbol) throw new Error('no frankfurter config');
+    const from = new Date();
+    from.setMonth(from.getMonth() - 6);
+    const fromStr = from.toISOString().split('T')[0];
+    const url = `https://api.frankfurter.app/${fromStr}..?base=${def.frankBase}&symbols=${def.frankSymbol}`;
+    const json = await fetchMacroUrl(url, true, 6000);
+    if (!json || !json.rates) throw new Error('frankfurter: no rates');
+    const series = Object.entries(json.rates)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([date, rates]) => {
+            let value = rates[def.frankSymbol];
+            if (!isFinite(value)) return null;
+            if (def.frankInvert) value = 1 / value;
+            return { date, value };
+        }).filter(Boolean);
+    return makeDailyMacroFromSeries(def, series, 'Frankfurter/ECB');
+}
+
+async function fetchDailyMacro(def) {
+    const sources = [];
+    if (def.frankBase)  sources.push(() => fetchFrankfurterFX(def));
+    if (def.fredSeries) sources.push(() => fetchFredDailyMacro(def));
+    if (def.historyUrl) sources.push(() => fetchHistoryMacro(def));
+    if (def.symbol)     sources.push(() => fetchYahooMacro(def));
+    if (def.stooq)      sources.push(() => fetchStooqMacro(def));
+    if (!sources.length) throw new Error(`no source for ${def.id}`);
+    let lastErr;
+    for (const fn of sources) {
+        try   { return await fn(); }
+        catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error(`all sources failed for ${def.id}`);
+}
+
+async function fetchFredMacro(def) {
+    const url  = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(def.series)}`;
+    const csv  = await fetchMacroUrl(url, false, 10000);
+    const rows = parseMacroCsv(csv).filter(r => isFinite(r.value));
+    if (rows.length < 14) throw new Error(`FRED ${def.series}: not enough data`);
+
+    if (def.mode === 'yoy') {
+        const yoy = [];
+        for (let i = 12; i < rows.length; i++) {
+            if (rows[i - 12].value !== 0)
+                yoy.push({ date: rows[i].date, value: ((rows[i].value / rows[i - 12].value) - 1) * 100 });
+        }
+        const latest = yoy[yoy.length - 1]; const prev = yoy[yoy.length - 2];
+        const raw = rows[rows.length - 1];   const rawP = rows[rows.length - 2];
+        return { ...def, date: latest.date, value: latest.value,
+            change: latest.value - prev.value,
+            mom:    ((raw.value / rawP.value) - 1) * 100, series: yoy };
+    }
+    if (def.mode === 'mom_diff') {
+        const latest = rows[rows.length - 1]; const prev = rows[rows.length - 2];
+        const diffs  = rows.slice(1).map((r, i) => ({ date: r.date, value: r.value - rows[i].value }));
+        return { ...def, date: latest.date, value: latest.value,
+            change: latest.value - prev.value, mom: latest.value - prev.value, series: diffs };
+    }
+    if (def.mode === 'mom_pct') {
+        const latest = rows[rows.length - 1]; const prev = rows[rows.length - 2];
+        const pcts   = rows.slice(1).map((r, i) => ({
+            date: r.date, value: rows[i].value !== 0 ? ((r.value / rows[i].value) - 1) * 100 : 0
+        }));
+        return { ...def, date: latest.date, value: latest.value,
+            change: latest.value - prev.value,
+            mom: prev.value !== 0 ? ((latest.value / prev.value) - 1) * 100 : 0, series: pcts };
+    }
+    const latest = rows[rows.length - 1]; const prev = rows[rows.length - 2];
+    return { ...def, date: latest.date, value: latest.value,
+        change: latest.value - prev.value, series: rows };
+}
+
+async function fetchTrendMacro(def) {
+    try {
+        return await fetchFredMacro(def);
+    } catch (err) {
+        if (!def.fallbackSeries) throw err;
+        return fetchFredMacro({
+            ...def, series: def.fallbackSeries,
+            name: def.fallbackName || def.name,
+            note: def.fallbackNote || def.note,
+            isFallback: true
+        });
+    }
+}
+
+async function tryNdcWebsite() {
+    const urls = ['https://index.ndc.gov.tw/n/zh_tw', 'https://index.ndc.gov.tw/'];
+    for (const url of urls) {
+        try {
+            const html = await fetchMacroUrl(url, false, 5000);
+            if (!html || html.length < 200) continue;
+            const scoreM  = html.match(/[\u7d9c\u5408\u5224\u65b7].*?(\d{1,2})\s*[\u5206]/);
+            const score   = scoreM ? parseInt(scoreM[1]) : NaN;
+            const signalM = html.match(/([\u7d05\u71c8|\u9ec3\u7d05\u71c8|\u7da0\u71c8|\u9ec3\u85cd\u71c8|\u85cd\u71c8])/);
+            if (signalM || isFinite(score)) {
+                const sig = isFinite(score) ? ndcScoreToSignal(score) : ndcLabelToSignal(signalM?.[1] || '');
+                if (sig) return {
+                    signal: sig, score: isFinite(score) ? score : null,
+                    date: new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit' }),
+                    source: 'index.ndc.gov.tw', isProxy: false,
+                    note: '直接解析國發會景氣指標網頁'
+                };
+            }
+        } catch {}
+    }
+    throw new Error('NDC website parse failed');
+}
+
 async function fetchNdcMacroInfo() {
     // 嘗試解析 NDC 官方網頁（SPA 架構不一定能取得，但試試）
     try {
