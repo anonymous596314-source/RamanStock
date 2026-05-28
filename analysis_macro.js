@@ -65,10 +65,8 @@ const TREND_MACRO_SERIES = [
     { id: 'ismSvc',    section: '景氣循環',          name: 'ISM 服務業 PMI',      series: 'NMFSL',    mode: 'level', fallbackSeries: 'DPCERA3M086SBEA', fallbackName: '美國實質個人消費', fallbackNote: 'ISM 服務 PMI 暫取不到，改用 FRED 實質個人消費替代。', note: '美國消費服務佔 GDP 70%；服務業 PMI > 50 代表內需動能健全' },
     { id: 'retail',    section: '景氣循環',          name: '零售銷售 MoM',        series: 'RSXFS',    mode: 'mom_pct', note: '扣除食品的月增率；連續兩個月負成長為消費降溫警訊' },
     { id: 'indProd',   section: '景氣循環',          name: '工業生產 YoY',        series: 'INDPRO',   mode: 'yoy',   note: '製造業實物產出；轉負代表工廠訂單萎縮，對台灣 B2B 出口影響直接' },
-    { id: 'lei',       section: '景氣循環',          name: '領先指標指數 MoM',    series: 'USALOLITONOSTSAM', mode: 'mom_pct', note: '由 10 個分項組成的 OECD 領先指標；連續 6 個月下滑通常預示衰退' },
     // 消費與信心
     { id: 'sentiment', section: '消費與信心',        name: '密大消費者信心',      series: 'UMCSENT',  mode: 'level', note: '美國消費者信心；趨勢向下通常領先零售銷售滑落 2–3 個月' },
-    { id: 'confBoard', section: '消費與信心',        name: '諮商會消費信心',      series: 'CSCICP03USM665S', mode: 'level', note: '另一個消費信心指標，側重就業預期；兩者同步下滑代表消費降溫趨勢確立' },
     // 房市
     { id: 'houst',     section: '房市與信用',        name: '美國新屋開工',        series: 'HOUST',    mode: 'level', note: '新屋開工是高乘數景氣指標；持續低迷代表建築材料與家電需求下滑' },
     { id: 'mortRate',  section: '房市與信用',        name: '30Y 房貸利率',        series: 'MORTGAGE30US', mode: 'level', note: '高房貸利率壓抑換屋需求，房市降溫會拉低整體消費財富效應' },
@@ -611,7 +609,7 @@ function renderTrendMacroCard(item) {
     // Override colors for specific indicators
     if (item.id === 'unemp')     valueColor = item.value >= 4.5 ? '#f87171' : item.value <= 3.5 ? '#fbbf24' : '#e2e8f0';
     if (item.id === 'fedRate')   valueColor = item.value >= 5 ? '#f87171' : item.value <= 2 ? '#34d399' : '#fbbf24';
-    if (item.id === 'sentiment' || item.id === 'confBoard') valueColor = macroColor(item.change, false);
+    if (item.id === 'sentiment') valueColor = macroColor(item.change, false);
 
     const sparkColor = isPMI ? '#f59e0b' : item.mode === 'yoy' ? '#a78bfa' : '#60a5fa';
 
