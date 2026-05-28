@@ -43,7 +43,7 @@ const DAILY_MACRO_SYMBOLS = [
 
     { id: 'gold',    section: '大宗商品', name: '黃金',             symbol: 'GC=F',      fredSeries: 'GOLDAMGBD228NLBM',                 stooq: 'xauusd',  kind: 'commodity', colorInverse: false, note: '避險情緒指標；金價飆升代表市場不確定性升高，通常與股市呈反向' },
     { id: 'copper',  section: '大宗商品', name: '銅 (Dr. Copper)',  symbol: 'HG=F',                                    stooq: 'hg.f',    kind: 'commodity', colorInverse: false, note: '「銅博士」是景氣最準確的實物指標，銅價上漲代表製造業需求健康' },
-    { id: 'natgas',  section: '大宗商品', name: '天然氣',           symbol: 'NG=F',      fredSeries: 'DHHNGSP',                          stooq: 'ng.f',    kind: 'commodity', colorInverse: true, note: '台灣電廠與工業用氣主要來源，天然氣走高直接推升電費與生產成本' },
+
 
     //  風險情緒 
     { id: 'vix',     section: '風險情緒', name: 'VIX 恐慌指數',    symbol: '^VIX',       stooq: '^vix',   historyUrl: 'https://historyofmarket.com/api/sp500/vix.json',        kind: 'vol',   colorInverse: true, note: '< 15 市場自滿、> 25 恐慌升溫、> 40 極度恐慌（歷史買點）' },
@@ -283,8 +283,11 @@ async function fetchHistoryMacro(def) {
 
 async function fetchFredDailyMacro(def) {
     if (!def.fredSeries) throw new Error('no fred series');
-    const url    = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(def.fredSeries)}`;
-    const csv    = await fetchMacroUrl(url, false, 10000);
+    const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(def.fredSeries)}`;
+    const csv = await fetchMacroUrl(url, false, 10000);
+    // Validate: FRED CSV must start with "date," — reject HTML challenge pages
+    const firstLine = String(csv || '').trim().split(/\r?\n/)[0] || '';
+    if (!firstLine.toLowerCase().startsWith('date')) throw new Error('FRED: invalid response (not CSV)');
     const series = parseMacroCsv(csv);
     return makeDailyMacroFromSeries(def, series, 'FRED');
 }
@@ -777,7 +780,7 @@ async function fetchMacroDashboardData() {
     };
 
     const wrapDaily = def => guardedFetch(
-        () => fetchDailyMacro(def), 12000,
+        () => fetchDailyMacro(def), 15000,
         { ...def, error: 'timeout' }
     ).then(r => { tick(); return r; });
 
