@@ -276,7 +276,11 @@ async function fetchHistoryMacro(def) {
     if (!def.historyUrl) throw new Error('no history endpoint');
     const json   = await fetchMacroUrl(def.historyUrl, true, 9000);
     const series = extractMacroJsonSeries(json);
-    return makeDailyMacroFromSeries(def, series, 'History of Market');
+    const result = makeDailyMacroFromSeries(def, series, 'History of Market');
+    // 若資料超過 5 天未更新，拋錯讓程式改試 Yahoo / Stooq
+    const daysDiff = (Date.now() - new Date(result.date).getTime()) / 86400000;
+    if (daysDiff > 5) throw new Error(`historyofmarket stale (${result.date})`);
+    return result;
 }
 
 async function fetchFredDailyMacro(def) {
