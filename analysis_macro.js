@@ -780,20 +780,6 @@ function guardedFetch(fn, ms, fallback) {
     });
 }
 
-// 並發限制器：同時最多 limit 個 task，避免 browser connection pool 被塞爆
-async function limitedParallel(items, fn, limit = 8) {
-    const results = new Array(items.length);
-    let nextIdx = 0;
-    async function worker() {
-        while (nextIdx < items.length) {
-            const i = nextIdx++;
-            results[i] = await fn(items[i]);
-        }
-    }
-    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-    return results;
-}
-
 async function fetchMacroDashboardData() {
     let cnt = 0;
     const total = DAILY_MACRO_SYMBOLS.length + TREND_MACRO_SERIES.length;
@@ -801,7 +787,6 @@ async function fetchMacroDashboardData() {
         cnt++;
         const prog = document.getElementById('macroProg');
         if (prog) prog.textContent = `${cnt} / ${total} 完成`;
-        console.log(`[Macro] ${cnt}/${total}`);
     };
 
     const wrapDaily = def => guardedFetch(
@@ -815,15 +800,14 @@ async function fetchMacroDashboardData() {
     ).then(r => { tick(); return r; });
 
     const ndcFallback = { id:'ndc', status:'failed', signal:null, score:null,
-        date:'逾時', source:'', note:'連線逾時，請稍後重試。', isProxy:false };
+        date:'--', source:'', note:'連線逾時，請稍後重試。', isProxy:false };
 
-    console.log('[Macro] 開始，共', total, '個指標，並發限制 8');
+    // Promise.all：全部同時起跑，每個最多等 10/12s，總時間 = max(個別時間) ≤ 12s
     const [dailyResults, trendResults, ndc] = await Promise.all([
-        limitedParallel(DAILY_MACRO_SYMBOLS, wrapDaily, 8),
-        limitedParallel(TREND_MACRO_SERIES,  wrapTrend, 6),
+        Promise.all(DAILY_MACRO_SYMBOLS.map(wrapDaily)),
+        Promise.all(TREND_MACRO_SERIES.map(wrapTrend)),
         guardedFetch(() => fetchNdcMacroInfo(), 12000, ndcFallback)
     ]);
-    console.log('[Macro] 全部完成');
     return { fetchedAt: new Date().toISOString(), daily: dailyResults, trends: trendResults, ndc };
 }
 
