@@ -48,6 +48,11 @@ const DAILY_MACRO_SYMBOLS = [
     //  風險情緒 
     { id: 'vix',     section: '風險情緒', name: 'VIX 恐慌指數',    symbol: '^VIX',       stooq: '^vix',   historyUrl: 'https://historyofmarket.com/api/sp500/vix.json',        kind: 'vol',   colorInverse: true, note: '< 15 市場自滿、> 25 恐慌升溫、> 40 極度恐慌（歷史買點）' },
 
+    // ── 補回：無 FRED 依賴，靠 Yahoo / Stooq ──────────────────────────────────
+    { id: 'twoY',    section: '利率曲線', name: '美債 2Y',          stooq: '2usy.b',  kind: 'rate',      note: '貼近 Fed 利率預期；2Y 走高代表市場認為降息遙遙無期' },
+    { id: 'dxy',     section: '外匯',     name: '美元指數 (DXY)',    stooq: 'dxy',     kind: 'index', colorInverse: true, note: '美元走強通常壓抑新興市場；外資賣台股匯出時加速台幣貶值' },
+    { id: 'usdtwd',  section: '外匯',     name: 'USD/TWD',          symbol: 'TWD=X',  stooq: 'usdtwd',  kind: 'fx', colorInverse: true, note: '台幣升值不利出口但吸引外資；台幣走強往往是外資淨流入的領先訊號' },
+    { id: 'natgas',  section: '大宗商品', name: '天然氣',            symbol: 'NG=F',   stooq: 'ng.f',    kind: 'commodity', colorInverse: true, note: '台灣電廠與工業用氣主要來源，天然氣走高直接推升電費與生產成本' },
 ];
 
 const TREND_MACRO_SERIES = [
@@ -154,7 +159,7 @@ function parseMacroCsv(text) {
 
 //  Fetch 通用工具 
 
-async function fetchMacroUrl(targetUrl, isJson = false, timeout = 5000) {
+async function fetchMacroUrl(targetUrl, isJson = false, timeout = 3000) {
     async function tryOne(proxyUrl, allorigins = false) {
         const ctrl = new AbortController();
         const tid  = setTimeout(() => ctrl.abort(), timeout);
@@ -344,6 +349,9 @@ async function fetchDailyMacro(def) {
 async function fetchFredMacro(def) {
     const url  = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(def.series)}`;
     const csv  = await fetchMacroUrl(url, false, 10000);
+    const firstLine = String(csv || '').trim().split(/?
+/)[0] || '';
+    if (!firstLine.toLowerCase().startsWith('date')) throw new Error(`FRED ${def.series}: invalid response`);
     const rows = parseMacroCsv(csv).filter(r => isFinite(r.value));
     if (rows.length < 14) throw new Error(`FRED ${def.series}: not enough data`);
 
