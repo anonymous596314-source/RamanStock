@@ -349,7 +349,8 @@ async function fetchDailyMacro(def) {
 async function fetchFredMacro(def) {
     const url  = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(def.series)}`;
     const csv  = await fetchMacroUrl(url, false, 10000);
-    const firstLine = String(csv || '').trim().split(/?
+    const firstLine = String(csv || '').trim().split(/
+?
 /)[0] || '';
     if (!firstLine.toLowerCase().startsWith('date')) throw new Error(`FRED ${def.series}: invalid response`);
     const rows = parseMacroCsv(csv).filter(r => isFinite(r.value));
@@ -779,6 +780,20 @@ function guardedFetch(fn, ms, fallback) {
     });
 }
 
+// 並發限制器：同時最多 limit 個 task，避免 browser connection pool 被塞爆
+async function limitedParallel(items, fn, limit = 8) {
+    const results = new Array(items.length);
+    let nextIdx = 0;
+    async function worker() {
+        while (nextIdx < items.length) {
+            const i = nextIdx++;
+            results[i] = await fn(items[i]);
+        }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
+}
+
 async function fetchMacroDashboardData() {
     let cnt = 0;
     const total = DAILY_MACRO_SYMBOLS.length + TREND_MACRO_SERIES.length;
@@ -790,23 +805,23 @@ async function fetchMacroDashboardData() {
     };
 
     const wrapDaily = def => guardedFetch(
-        () => fetchDailyMacro(def), 15000,
+        () => fetchDailyMacro(def), 10000,
         { ...def, error: 'timeout' }
     ).then(r => { tick(); return r; });
 
     const wrapTrend = def => guardedFetch(
-        () => fetchTrendMacro(def), 15000,
+        () => fetchTrendMacro(def), 12000,
         { ...def, error: 'timeout' }
     ).then(r => { tick(); return r; });
 
     const ndcFallback = { id:'ndc', status:'failed', signal:null, score:null,
         date:'逾時', source:'', note:'連線逾時，請稍後重試。', isProxy:false };
 
-    console.log('[Macro] 開始，共', total, '個指標');
+    console.log('[Macro] 開始，共', total, '個指標，並發限制 8');
     const [dailyResults, trendResults, ndc] = await Promise.all([
-        Promise.all(DAILY_MACRO_SYMBOLS.map(wrapDaily)),
-        Promise.all(TREND_MACRO_SERIES.map(wrapTrend)),
-        guardedFetch(() => fetchNdcMacroInfo(), 18000, ndcFallback)
+        limitedParallel(DAILY_MACRO_SYMBOLS, wrapDaily, 8),
+        limitedParallel(TREND_MACRO_SERIES,  wrapTrend, 6),
+        guardedFetch(() => fetchNdcMacroInfo(), 12000, ndcFallback)
     ]);
     console.log('[Macro] 全部完成');
     return { fetchedAt: new Date().toISOString(), daily: dailyResults, trends: trendResults, ndc };
@@ -840,17 +855,14 @@ window.loadMacroDashboard = async function loadMacroDashboard(force = false) {
     const escapeTimer = setTimeout(() => {
         console.warn('[Macro] [T] 逃生門觸發（18s）');
         const el = document.getElementById('macroBody');
-        if (el && el.id && (el.querySelector('#macroProg') || el.querySelector('.spinner'))) {
+        if (el) {
             el.innerHTML = `<div style="padding:24px;color:#fca5a5;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:12px;line-height:1.7;">
-                [T] 載入逾時（18 秒）<br>
-                <span style="font-size:12px;color:#94a3b8;">
-                    請開啟瀏覽器 DevTools -> Console，尋找 <code>[Macro]</code> 開頭的訊息，
-                    確認卡在哪個步驟。網路若正常，按「 更新」重試。
-                </span>
+                載入逾時（14 秒），請按「↻ 更新」重試。<br>
+                <span style="font-size:12px;color:#94a3b8;">若持續發生，表示目前網路對外部 API 存取受限。</span>
             </div>`;
         }
-        if (macroRefreshBtn) { macroRefreshBtn.disabled = false; macroRefreshBtn.textContent = ' 更新'; }
-    }, 18000);
+        if (macroRefreshBtn) { macroRefreshBtn.disabled = false; macroRefreshBtn.textContent = '↻ 更新'; }
+    }, 14000);
 
     try {
         const data = await fetchMacroDashboardData();
