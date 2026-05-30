@@ -527,6 +527,12 @@ function evaluateMacroTone(daily, trends) {
 //  Render：單一卡片 
 
 function renderMacroErrorCard(name, message) {
+    if (message === '載入中...') {
+        return `<div class="macro-card" style="opacity:0.35;">
+            <span class="macro-label">${name}</span>
+            <span class="macro-value" style="font-size:20px;color:#475569;">…</span>
+        </div>`;
+    }
     return `
         <div class="macro-card">
             <span class="macro-label">${name}</span>
@@ -819,7 +825,7 @@ window.loadMacroDashboard = async function loadMacroDashboard(force = false) {
     const macroStatusEl   = document.getElementById('macroStatus');
     if (!macroBodyEl) return;
 
-    // 試讀快取
+    // 讀快取
     if (!force) {
         try {
             const cached = JSON.parse(localStorage.getItem(MACRO_CACHE_KEY) || 'null');
@@ -830,65 +836,58 @@ window.loadMacroDashboard = async function loadMacroDashboard(force = false) {
         } catch {}
     }
 
-    renderMacroLoading();
     if (macroRefreshBtn) { macroRefreshBtn.disabled = true; macroRefreshBtn.textContent = '更新中...'; }
 
-    console.log('[Macro] loadMacroDashboard 開始，', new Date().toLocaleTimeString());
+    // ── 立即顯示空框架（不等任何 API）────────────────────────────────────────
+    const state = {
+        fetchedAt: new Date().toISOString(),
+        daily:  DAILY_MACRO_SYMBOLS.map(d => ({ ...d, error: '載入中...' })),
+        trends: TREND_MACRO_SERIES.map(d => ({ ...d, error: '載入中...' })),
+        ndc:    { id:'ndc', status:'failed', signal:null, score:null,
+                  date:'--', source:'', note:'載入中...', isProxy:false }
+    };
+    renderMacroDashboard(state, false);  // t=0 立即可見
 
-    //  逃生門：18 秒後強制結束 loading，無論 async 是否完成 
-    const escapeTimer = setTimeout(() => {
-        console.warn('[Macro] [T] 逃生門觸發（18s）');
-        const el = document.getElementById('macroBody');
-        if (el) {
-            el.innerHTML = `<div style="padding:24px;color:#fca5a5;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:12px;line-height:1.7;">
-                載入逾時（14 秒），請按「↻ 更新」重試。<br>
-                <span style="font-size:12px;color:#94a3b8;">若持續發生，表示目前網路對外部 API 存取受限。</span>
-            </div>`;
-        }
-        if (macroRefreshBtn) { macroRefreshBtn.disabled = false; macroRefreshBtn.textContent = '↻ 更新'; }
-    }, 14000);
+    const ndcFallback = { id:'ndc', status:'failed', signal:null, score:null,
+        date:'--', source:'', note:'連線逾時，請稍後重試。', isProxy:false };
 
-    try {
-        const data = await fetchMacroDashboardData();
-        clearTimeout(escapeTimer);
-        console.log('[Macro] fetch 完成，日頻成功 ', (data.daily||[]).filter(x=>!x.error).length,
-                    '/', (data.daily||[]).length);
-        // 先 render，再存快取；避免 QuotaExceededError 導致畫面空白
-        try {
-            renderMacroDashboard(data, false);
-        } catch (renderErr) {
-            console.error('Macro render failed:', renderErr);
-            const el = document.getElementById('macroBody');
-            if (el) el.innerHTML = `<div style="padding:28px;color:#fca5a5;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:12px;">
-                總經資料已取得但顯示失敗，請開啟 DevTools Console 查看錯誤。<br>
-                <small style="color:#94a3b8;">${renderErr.message}</small>
-            </div>`;
-        }
-        // 儲存快取：只保留每個 series 最後 60 筆，避免 localStorage quota 超標
+    // ── 所有 fetch 並行，各自完成後更新 state ─────────────────────────────────
+    const allPromises = [
+        ...DAILY_MACRO_SYMBOLS.map((def, i) =>
+            guardedFetch(() => fetchDailyMacro(def), 10000, { ...def, error: 'timeout' })
+            .then(r => { state.daily[i] = r; })
+        ),
+        ...TREND_MACRO_SERIES.map((def, i) =>
+            guardedFetch(() => fetchTrendMacro(def), 12000, { ...def, error: 'timeout' })
+            .then(r => { state.trends[i] = r; })
+        ),
+        guardedFetch(() => fetchNdcMacroInfo(), 12000, ndcFallback)
+            .then(r => { state.ndc = r; })
+    ];
+
+    // ── 每 2 秒重新渲染（讓使用者看到陸續完成的資料）────────────────────────
+    const refreshInterval = setInterval(() => {
+        renderMacroDashboard(state, false);
+    }, 2000);
+
+    // ── 全部完成後最終渲染 + 存快取 ─────────────────────────────────────────
+    Promise.all(allPromises).then(() => {
+        clearInterval(refreshInterval);
+        state.fetchedAt = new Date().toISOString();
+        renderMacroDashboard(state, false);
         try {
             const slim = {
-                ...data,
-                daily:  (data.daily  || []).map(x => ({ ...x, series: (x.series  || []).slice(-60) })),
-                trends: (data.trends || []).map(x => ({ ...x, series: (x.series  || []).slice(-60) })),
+                ...state,
+                daily:  state.daily.map(x => ({ ...x, series: (x.series||[]).slice(-60) })),
+                trends: state.trends.map(x => ({ ...x, series: (x.series||[]).slice(-60) })),
             };
             localStorage.setItem(MACRO_CACHE_KEY, JSON.stringify(slim));
-        } catch (cacheErr) {
-            console.warn('Macro cache write failed (quota?):', cacheErr.message);
-        }
-    } catch (err) {
-        clearTimeout(escapeTimer);
-        console.error('[Macro] 整體失敗:', err);
-        try {
-            const cached = JSON.parse(localStorage.getItem(MACRO_CACHE_KEY) || 'null');
-            if (cached) {
-                renderMacroDashboard(cached, true);
-                if (macroStatusEl) macroStatusEl.textContent += ' · 即時更新失敗，顯示快取';
-                return;
-            }
         } catch {}
-        const el = document.getElementById('macroBody');
-        if (el) el.innerHTML = `<div style="padding:28px;color:#fca5a5;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:12px;">總經資料暫時抓取失敗，請稍後再試。</div>`;
-    } finally {
-        if (macroRefreshBtn) { macroRefreshBtn.disabled = false; macroRefreshBtn.textContent = ' 更新'; }
-    }
+        if (macroStatusEl) {
+            const ok = state.daily.filter(x => !x.error || x.error === 'timeout').length;
+            macroStatusEl.textContent = `即時 · ${new Date(state.fetchedAt).toLocaleString('zh-TW')} · 每日指標 ${state.daily.filter(x=>!x.error).length}/${DAILY_MACRO_SYMBOLS.length} 項成功`;
+        }
+    }).finally(() => {
+        if (macroRefreshBtn) { macroRefreshBtn.disabled = false; macroRefreshBtn.textContent = '↻ 更新'; }
+    });
 };
