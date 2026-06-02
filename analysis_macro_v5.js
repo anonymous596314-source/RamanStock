@@ -349,9 +349,7 @@ async function fetchDailyMacro(def) {
 async function fetchFredMacro(def) {
     const url  = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(def.series)}`;
     const csv  = await fetchMacroUrl(url, false, 10000);
-    const firstLine = String(csv || '').trim().split(/
-?
-/)[0] || '';
+    const firstLine = (csv || '').split('\n')[0].replace('\r', '') || '';
     if (!firstLine.toLowerCase().startsWith('date')) throw new Error(`FRED ${def.series}: invalid response`);
     const rows = parseMacroCsv(csv).filter(r => isFinite(r.value));
     if (rows.length < 14) throw new Error(`FRED ${def.series}: not enough data`);
