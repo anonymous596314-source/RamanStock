@@ -639,6 +639,39 @@ async function fetchTrendMacro(def) {
     }
 }
 
+// ── 台灣景氣對策信號：政府開放資料 API ──────────────────────────────────────
+// data.gov.tw 提供結構化 JSON，有 CORS header，不需要解析 SPA
+async function fetchNdcFromDataGov() {
+    // 資料集 301000000A-000080-001：景氣對策信號
+    const url = 'https://data.gov.tw/api/v2/rest/datastore/301000000A-000080-001?limit=3&sort=period+desc';
+    const json = await fetchMacroUrl(url, true, 8000);
+
+    const records = json?.result?.records || json?.records || [];
+    if (!records.length) throw new Error('data.gov.tw: no records');
+
+    // 取最新一筆
+    const rec = records[0];
+    // 欄位名稱：period（年月）、score（綜合判斷分數）、signal（燈號中文）
+    // 實際欄位名因資料集版本而異，嘗試多個可能
+    const period = rec['period'] || rec['年月'] || rec['date'] || '';
+    const scoreRaw = rec['score'] || rec['綜合判斷分數'] || rec['composite_score'] || '';
+    const signalRaw = rec['signal'] || rec['燈號'] || rec['light'] || '';
+    const score = parseInt(scoreRaw);
+
+    const sig = isFinite(score) ? ndcScoreToSignal(score)
+              : signalRaw       ? ndcLabelToSignal(signalRaw)
+              : null;
+    if (!sig) throw new Error(`data.gov.tw: cannot parse signal from ${JSON.stringify(rec)}`);
+
+    return {
+        signal: sig,
+        score:  isFinite(score) ? score : null,
+        date:   String(period).replace(/(\d{4})(\d{2})/, '$1/$2'),
+        source: 'data.gov.tw',
+        note:   '資料來源：政府開放資料平台 景氣對策信號'
+    };
+}
+
 async function tryNdcWebsite() {
     const urls = ['https://index.ndc.gov.tw/n/zh_tw', 'https://index.ndc.gov.tw/'];
     for (const url of urls) {
@@ -663,13 +696,20 @@ async function tryNdcWebsite() {
 }
 
 async function fetchNdcMacroInfo() {
-    // 嘗試解析 NDC 官方網頁（SPA 架構不一定能取得，但試試）
+    // 1. 政府開放資料 API（最可靠，結構化 JSON）
+    try {
+        const r = await fetchNdcFromDataGov();
+        return { id: 'ndc', status: 'ok', ...r };
+    } catch (e) {
+        console.warn('[NDC] data.gov.tw failed:', e.message);
+    }
+
+    // 2. NDC 官網（SPA，成功率低）
     try {
         const r = await tryNdcWebsite();
         return { id: 'ndc', status: 'ok', ...r };
     } catch {}
 
-    // 官網解析失敗 → 不用推算，直接告知使用者去查
     return {
         id: 'ndc', status: 'failed',
         signal: null, score: null,
