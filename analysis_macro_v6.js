@@ -379,22 +379,75 @@ const FRED_API_KEY = '8c585d6fcf7fa72274c20411ef079c63';
 // ── 方法 A：FRED 官方 JSON API（需要 API key，直接 CORS，最穩）────────────────
 async function fetchFredJsonApi(def) {
     if (!FRED_API_KEY) throw new Error('no FRED API key');
-    const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${encodeURIComponent(def.series)}&api_key=${FRED_API_KEY}&file_type=json&sort_order=asc&observation_start=1990-01-01`;
-    const ctrl = new AbortController();
-    const tid  = setTimeout(() => ctrl.abort(), 10000);
-    let json;
+    const fredUrl = `https://api.stlouisfed.org/fred/series/observations?series_id=${encodeURIComponent(def.series)}&api_key=${FRED_API_KEY}&file_type=json&sort_order=asc&observation_start=1990-01-01`;
+
+    // api.stlouisfed.org 封鎖 GitHub Pages 的 cross-origin fetch，
+    // 必須透過 CORS proxy 轉發。用多個 proxy 並聯，取最快成功者。
+    async function tryFredProxy(proxyUrl) {
+        const ctrl = new AbortController();
+        const tid  = setTimeout(() => ctrl.abort(), 10000);
+        try {
+            const res = await fetch(proxyUrl, { signal: ctrl.signal, cache: 'no-store' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const json = await res.json();
+            if (json?.error_code) throw new Error(`FRED error ${json.error_code}: ${json.error_message}`);
+            const obs = json?.observations || json?.contents?.observations || [];
+            if (!obs.length) {
+                // allorigins wraps in { contents: "..." }
+                const inner = typeof json?.contents === 'string' ? JSON.parse(json.contents) : null;
+                if (inner?.error_code) throw new Error(`FRED error ${inner.error_code}: ${inner.error_message}`);
+                const obs2 = inner?.observations || [];
+                if (!obs2.length) throw new Error('no observations');
+                return obs2;
+            }
+            return obs;
+        } finally { clearTimeout(tid); }
+    }
+
+    async function tryAllorigins() {
+        const wrapped = `https://api.allorigins.win/get?url=${encodeURIComponent(fredUrl)}`;
+        const ctrl = new AbortController();
+        const tid  = setTimeout(() => ctrl.abort(), 10000);
+        try {
+            const res = await fetch(wrapped, { signal: ctrl.signal, cache: 'no-store' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const w = await res.json();
+            const inner = JSON.parse(w?.contents || '{}');
+            if (inner?.error_code) throw new Error(`FRED error ${inner.error_code}: ${inner.error_message}`);
+            const obs = inner?.observations || [];
+            if (!obs.length) throw new Error('no observations');
+            return obs;
+        } finally { clearTimeout(tid); }
+    }
+
+    let obs;
+    // 批次 1：corsproxy.io 直接轉發 JSON
     try {
-        const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
-        if (!res.ok) throw new Error(`FRED API HTTP ${res.status}`);
-        json = await res.json();
-    } finally { clearTimeout(tid); }
-    if (json?.error_code) throw new Error(`FRED API error ${json.error_code}: ${json.error_message}`);
-    const obs = json?.observations || [];
+        obs = await Promise.any([
+            tryFredProxy(`https://corsproxy.io/?${encodeURIComponent(fredUrl)}`),
+            tryFredProxy(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fredUrl)}`),
+            tryAllorigins(),
+        ]);
+    } catch {}
+
+    // 批次 2：備援
+    if (!obs) {
+        try {
+            obs = await Promise.any([
+                tryFredProxy(`https://corsproxy.io/?${encodeURIComponent(fredUrl)}`),
+                tryFredProxy(`https://proxy.cors.sh/${fredUrl}`),
+            ]);
+        } catch {}
+    }
+
+    if (!obs || !obs.length) throw new Error(`FRED API proxy unavailable for ${def.series}`);
+
     const rows = obs.map(o => {
         const v = parseFloat(o.value);
         if (!o.date || !isFinite(v)) return null;
         return { date: o.date, value: v };
     }).filter(Boolean);
+
     if (rows.length < 14) throw new Error(`FRED API: not enough data (${rows.length}) for ${def.series}`);
     return processFredRows(def, rows, 'FRED API');
 }
