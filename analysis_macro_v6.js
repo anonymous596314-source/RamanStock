@@ -721,10 +721,11 @@ async function fetchNdcMacroInfo() {
     // NDC 景氣指標網站對非瀏覽器請求一律回傳 HTML，無法機器讀取。
     // 顯示最近已知燈號（每月人工更新），並附官網連結。
     // 2026/04：紅燈，綜合判斷分數 39 分（2026/05/29 公布）
+    const score = 39;
     return {
         id: 'ndc', status: 'static',
-        signal: 'red',
-        score: 39,
+        signal: ndcScoreToSignal(score),
+        score,
         date: '2026/04',
         source: 'index.ndc.gov.tw',
         note: '⚠ 資料為靜態，最新燈號請至官網確認。',
