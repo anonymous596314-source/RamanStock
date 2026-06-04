@@ -281,9 +281,24 @@ async function fetchHistoryMacro(def) {
     const json   = await fetchMacroUrl(def.historyUrl, true, 9000);
     const series = extractMacroJsonSeries(json);
     const result = makeDailyMacroFromSeries(def, series, 'History of Market');
-    // 若資料超過 5 天未更新，拋錯讓程式改試 Yahoo / Stooq
-    const daysDiff = (Date.now() - new Date(result.date).getTime()) / 86400000;
-    if (daysDiff > 5) throw new Error(`historyofmarket stale (${result.date})`);
+    // 若資料落後超過 1 個交易日（含週末：週一允許到週五，否則只允許昨天）
+    // 簡單判斷：若資料日期不是「最近一個交易日」就 fallback
+    const dataDate = new Date(result.date + 'T00:00:00Z');
+    const now = new Date();
+    const nowUtcDay = now.getUTCDay(); // 0=Sun,1=Mon,...,6=Sat
+    // 計算最近交易日（美東時間收盤後約 UTC 21:00 才算「今天有資料」）
+    // 保守起見：週一~週五，若 UTC 超過 22:00 則今天資料應存在；否則昨天
+    const hourUTC = now.getUTCHours();
+    let expectedDate = new Date(now);
+    expectedDate.setUTCHours(0,0,0,0);
+    // 若現在 UTC < 22:00（美股未收盤），期望資料是前一交易日
+    if (hourUTC < 22) expectedDate.setUTCDate(expectedDate.getUTCDate() - 1);
+    // 往前跳過週末
+    while ([0, 6].includes(expectedDate.getUTCDay()))
+        expectedDate.setUTCDate(expectedDate.getUTCDate() - 1);
+
+    if (dataDate < expectedDate)
+        throw new Error(`historyofmarket stale: got ${result.date}, expected ${expectedDate.toISOString().slice(0,10)}`);
     return result;
 }
 
