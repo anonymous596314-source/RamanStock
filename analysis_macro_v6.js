@@ -287,11 +287,16 @@ function extractMacroJsonSeries(payload) {
 }
 
 function makeDailyMacroFromSeries(def, rawSeries, source) {
+    // Yahoo Finance 回傳 ^TNX / ^TYX 時單位是 × 10（例如 43.5 代表 4.35%）
+    // Stooq 和 FRED 已是正確單位（4.35）
+    // 用 source 標記判斷，避免混用時鋸齒
+    const isYahooRate = def.kind === 'rate' && !def.bpsUnit && source === 'Yahoo Finance';
+
     const series = (rawSeries || [])
         .filter(p => p && p.date && isFinite(p.value))
         .sort((a, b) => String(a.date).localeCompare(String(b.date)))
         .map(p => {
-            const v = (def.kind === 'rate' && !def.bpsUnit && p.value > 20) ? p.value / 10 : p.value;
+            const v = isYahooRate ? p.value / 10 : p.value;
             return { date: p.date, raw: p.value, value: v };
         });
     if (series.length < 2) throw new Error(`${source} has not enough data`);
@@ -333,10 +338,20 @@ async function fetchYahooMacro(def) {
 async function fetchStooqMacro(def) {
     if (!def.stooq) throw new Error('no stooq');
     const csv    = await fetchStooqCsv(def.stooq);
-    const series = String(csv || '').trim().split(/\r?\n/).slice(1).map(line => {
-        const p = line.split(','); const c = Number(p[4]);
-        return p[0] && isFinite(c) ? { date: p[0], value: c } : null;
+    const lines  = String(csv || '').trim().split(/\r?\n/);
+    if (lines.length < 2) throw new Error('Stooq: empty');
+    // 用 header 找 Close 欄位，避免欄數不一致
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+    const closeIdx = headers.indexOf('close');
+    const dateIdx  = headers.indexOf('date');
+    if (closeIdx < 0 || dateIdx < 0) throw new Error('Stooq: unexpected format');
+    const series = lines.slice(1).map(line => {
+        const p = line.split(',');
+        const date = p[dateIdx]?.trim();
+        const c    = Number(p[closeIdx]);
+        return date && isFinite(c) && c > 0 ? { date, value: c } : null;
     }).filter(Boolean);
+    if (series.length < 2) throw new Error('Stooq: not enough data');
     return makeDailyMacroFromSeries(def, series, 'Stooq');
 }
 
