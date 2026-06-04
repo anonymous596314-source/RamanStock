@@ -65,8 +65,8 @@ const TREND_MACRO_SERIES = [
     { id: 'nfp',       section: '就業市場',         name: '非農就業人口 MoM',    series: 'PAYEMS',   mode: 'mom_diff', note: '月增 > 150K 為健康勞市；持續低於 100K 代表景氣降溫，市場開始定價降息' },
     { id: 'joltJob',   section: '就業市場',         name: 'JOLTS 職缺數',        series: 'JTSJOL',   mode: 'level', note: '職缺數大於失業人數代表勞市過熱；職缺縮減是薪資通膨降溫的早期訊號' },
     // 景氣循環
-    { id: 'ismMfg',    section: '景氣循環',          name: 'ISM 製造業 PMI',      series: 'NAPM',     mode: 'level', fallbackSeries: 'IPMAN', fallbackName: '美國製造業產出', fallbackNote: 'ISM PMI 暫取不到，改用 FRED 製造業產出替代。', note: '50 以上擴張；對台灣製造業出口訂單有 1–2 個月的領先效果' },
-    { id: 'ismSvc',    section: '景氣循環',          name: 'ISM 服務業 PMI',      series: 'NMFSL',    mode: 'level', fallbackSeries: 'DPCERA3M086SBEA', fallbackName: '美國實質個人消費', fallbackNote: 'ISM 服務 PMI 暫取不到，改用 FRED 實質個人消費替代。', note: '美國消費服務佔 GDP 70%；服務業 PMI > 50 代表內需動能健全' },
+    { id: 'ismMfg',    section: '景氣循環',          name: 'ISM 製造業 PMI',      series: 'MANEMP',   mode: 'level', fallbackSeries: 'IPMAN', fallbackName: '美國製造業產出', fallbackNote: 'ISM PMI 暫取不到，改用 FRED 製造業產出替代。', note: '50 以上擴張；對台灣製造業出口訂單有 1–2 個月的領先效果' },
+    { id: 'ismSvc',    section: '景氣循環',          name: 'ISM 服務業 PMI',      series: 'RSAFS',    mode: 'level', fallbackSeries: 'DPCERA3M086SBEA', fallbackName: '美國實質個人消費', fallbackNote: 'ISM 服務 PMI 暫取不到，改用 FRED 實質個人消費替代。', note: '美國消費服務佔 GDP 70%；服務業 PMI > 50 代表內需動能健全' },
     { id: 'retail',    section: '景氣循環',          name: '零售銷售 MoM',        series: 'RSXFS',    mode: 'mom_pct', note: '扣除食品的月增率；連續兩個月負成長為消費降溫警訊' },
     { id: 'indProd',   section: '景氣循環',          name: '工業生產 YoY',        series: 'INDPRO',   mode: 'yoy',   note: '製造業實物產出；轉負代表工廠訂單萎縮，對台灣 B2B 出口影響直接' },
     // 消費與信心
@@ -388,14 +388,14 @@ async function fetchFredJsonApi(def) {
         if (!res.ok) throw new Error(`FRED API HTTP ${res.status}`);
         json = await res.json();
     } finally { clearTimeout(tid); }
-    if (json?.error_code) throw new Error(`FRED API error: ${json.error_message}`);
+    if (json?.error_code) throw new Error(`FRED API error ${json.error_code}: ${json.error_message}`);
     const obs = json?.observations || [];
     const rows = obs.map(o => {
         const v = parseFloat(o.value);
         if (!o.date || !isFinite(v)) return null;
         return { date: o.date, value: v };
     }).filter(Boolean);
-    if (rows.length < 14) throw new Error(`FRED API: not enough data (${rows.length})`);
+    if (rows.length < 14) throw new Error(`FRED API: not enough data (${rows.length}) for ${def.series}`);
     return processFredRows(def, rows, 'FRED API');
 }
 
@@ -489,9 +489,10 @@ async function fetchFredMacro(def) {
 }
 
 async function fetchTrendMacro(def) {
-    // 主 series：JSON API → CSV proxy → fallbackSeries
     const trySeries = async (d) => {
-        try { return await fetchFredJsonApi(d); } catch {}
+        let apiErr;
+        try { return await fetchFredJsonApi(d); }
+        catch (e) { apiErr = e; console.warn(`[FRED API] ${d.series}:`, e.message); }
         return fetchFredCsvProxy(d);
     };
     try {
