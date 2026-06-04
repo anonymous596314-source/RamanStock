@@ -1,0 +1,27 @@
+name: Update NDC Signal
+ 
+on:
+  schedule:
+    - cron: '0 2 25 * *'   # 每月 25 日 UTC 02:00（台灣時間 10:00）
+  workflow_dispatch:         # 允許手動觸發
+ 
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+ 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+ 
+      - name: Run fetch script
+        run: python3 fetch_ndc.py
+ 
+      - name: Commit and push if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ndc_signal.json
+          git diff --staged --quiet || git commit -m "chore: update NDC signal $(date +'%Y/%m')"
+          git push
