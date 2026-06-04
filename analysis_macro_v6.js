@@ -208,22 +208,17 @@ async function fetchMacroUrl(targetUrl, isJson = false, timeout = 8000) {
         try { return await tryOne(`${WORKER_PROXY_URL}/?url=${enc}`); } catch {}
     }
 
-    // Stage 1: 直連 + 公共 proxy 並聯
+    // Stage 1: 直連 + corsproxy.io 並聯
     try {
         return await Promise.any([
             tryOne(targetUrl),
             tryOne(`https://corsproxy.io/?${enc}`),
-            tryOne(`https://api.allorigins.win/raw?url=${enc}`),
         ]);
     } catch {}
 
-    // Stage 2: 備援 proxy
+    // Stage 2: codetabs 備援
     try {
-        return await Promise.any([
-            tryOne(`https://api.codetabs.com/v1/proxy?quest=${enc}`),
-            tryOne(`https://api.allorigins.win/get?url=${enc}`, true),
-            tryOne(`https://corsproxy.io/?${enc}`),
-        ]);
+        return await tryOne(`https://api.codetabs.com/v1/proxy?quest=${enc}`);
     } catch {}
 
     throw new Error('macro source unavailable');
@@ -640,32 +635,37 @@ async function fetchTrendMacro(def) {
 }
 
 // ── 台灣景氣對策信號：政府開放資料 API ──────────────────────────────────────
-// data.gov.tw 提供結構化 JSON，有 CORS header，不需要解析 SPA
 async function fetchNdcFromDataGov() {
-    // 資料集 301000000A-000080-001：景氣對策信號
+    // data.gov.tw CORS 只允許自己的 origin，必須走 Worker
+    if (!WORKER_PROXY_URL) throw new Error('需要 Cloudflare Worker');
     const url = 'https://data.gov.tw/api/v2/rest/datastore/301000000A-000080-001?limit=3&sort=period+desc';
-    const json = await fetchMacroUrl(url, true, 8000);
+    const enc = encodeURIComponent(url);
+    const res = await fetchWithTimeout(`${WORKER_PROXY_URL}/?url=${enc}`, {}, 8000);
+    if (!res.ok) throw new Error(`Worker HTTP ${res.status} for data.gov.tw`);
+    const json = await res.json();
 
     const records = json?.result?.records || json?.records || [];
-    if (!records.length) throw new Error('data.gov.tw: no records');
+    if (!records.length) {
+        console.warn('[NDC] data.gov.tw response:', JSON.stringify(json).slice(0, 300));
+        throw new Error('data.gov.tw: no records');
+    }
 
-    // 取最新一筆
     const rec = records[0];
-    // 欄位名稱：period（年月）、score（綜合判斷分數）、signal（燈號中文）
-    // 實際欄位名因資料集版本而異，嘗試多個可能
-    const period = rec['period'] || rec['年月'] || rec['date'] || '';
-    const scoreRaw = rec['score'] || rec['綜合判斷分數'] || rec['composite_score'] || '';
-    const signalRaw = rec['signal'] || rec['燈號'] || rec['light'] || '';
-    const score = parseInt(scoreRaw);
+    console.log('[NDC] record keys:', Object.keys(rec), JSON.stringify(rec).slice(0, 200));
 
-    const sig = isFinite(score) ? ndcScoreToSignal(score)
-              : signalRaw       ? ndcLabelToSignal(signalRaw)
+    const period   = rec['period']  || rec['年月']       || rec['date']  || rec['ym']    || '';
+    const scoreRaw = rec['score']   || rec['綜合判斷分數'] || rec['composite_score']      || '';
+    const signalRaw= rec['signal']  || rec['燈號']       || rec['light'] || rec['color'] || '';
+    const score    = parseInt(scoreRaw);
+
+    const sig = isFinite(score) && score > 0 ? ndcScoreToSignal(score)
+              : signalRaw ? ndcLabelToSignal(String(signalRaw))
               : null;
-    if (!sig) throw new Error(`data.gov.tw: cannot parse signal from ${JSON.stringify(rec)}`);
+    if (!sig) throw new Error(`data.gov.tw: cannot parse — keys: ${Object.keys(rec).join(',')}`);
 
     return {
         signal: sig,
-        score:  isFinite(score) ? score : null,
+        score:  isFinite(score) && score > 0 ? score : null,
         date:   String(period).replace(/(\d{4})(\d{2})/, '$1/$2'),
         source: 'data.gov.tw',
         note:   '資料來源：政府開放資料平台 景氣對策信號'
