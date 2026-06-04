@@ -158,6 +158,11 @@ function parseMacroCsv(text) {
 
 //  Fetch 通用工具 
 
+// ── 自架 Cloudflare Worker Proxy URL ─────────────────────────────────────────
+// 部署 cloudflare-worker.js 後填入你的 Worker URL（結尾不加斜線）
+// 例如：'https://ramanstock-proxy.yourname.workers.dev'
+const WORKER_PROXY_URL = 'https://young-unit-cf65.anonymous596314.workers.dev';
+
 async function fetchWithTimeout(url, opts = {}, ms = 8000) {
     const ctrl = new AbortController();
     const tid  = setTimeout(() => ctrl.abort(), ms);
@@ -167,16 +172,8 @@ async function fetchWithTimeout(url, opts = {}, ms = 8000) {
 }
 
 async function fetchMacroUrl(targetUrl, isJson = false, timeout = 8000) {
-    async function tryDirect(url) {
+    async function tryOne(url, unwrapAllorigins = false) {
         const res = await fetchWithTimeout(url, {}, timeout);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const text = await res.text();
-        if (!text || text.length < 5) throw new Error('empty');
-        return isJson ? JSON.parse(text) : text;
-    }
-
-    async function tryProxy(proxyUrl, unwrapAllorigins = false) {
-        const res = await fetchWithTimeout(proxyUrl, {}, timeout);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         let text = await res.text();
         if (unwrapAllorigins) { const w = JSON.parse(text); text = w?.contents || ''; }
@@ -186,21 +183,26 @@ async function fetchMacroUrl(targetUrl, isJson = false, timeout = 8000) {
 
     const enc = encodeURIComponent(targetUrl);
 
-    // Stage 1: 直連 + 最可靠的 proxy 並聯
+    // Stage 0: 自架 Worker（最優先，穩定無 rate limit）
+    if (WORKER_PROXY_URL) {
+        try { return await tryOne(`${WORKER_PROXY_URL}/?url=${enc}`); } catch {}
+    }
+
+    // Stage 1: 直連 + 公共 proxy 並聯
     try {
         return await Promise.any([
-            tryDirect(targetUrl),
-            tryProxy(`https://corsproxy.io/?${enc}`),
-            tryProxy(`https://api.allorigins.win/raw?url=${enc}`),
+            tryOne(targetUrl),
+            tryOne(`https://corsproxy.io/?${enc}`),
+            tryOne(`https://api.allorigins.win/raw?url=${enc}`),
         ]);
     } catch {}
 
-    // Stage 2: 備援 proxy（速度較慢）
+    // Stage 2: 備援 proxy
     try {
         return await Promise.any([
-            tryProxy(`https://api.codetabs.com/v1/proxy?quest=${enc}`),
-            tryProxy(`https://api.allorigins.win/get?url=${enc}`, true),
-            tryProxy(`https://corsproxy.io/?${enc}`),   // 重試一次
+            tryOne(`https://api.codetabs.com/v1/proxy?quest=${enc}`),
+            tryOne(`https://api.allorigins.win/get?url=${enc}`, true),
+            tryOne(`https://corsproxy.io/?${enc}`),
         ]);
     } catch {}
 
@@ -213,20 +215,18 @@ async function fetchYahooJson(symbol) {
         `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=6mo&interval=1d`,
         `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=6mo&interval=1d`,
     ];
-    // Yahoo 允許直連（有時），也走 proxy
     for (const base of urls) {
-        try {
-            return await fetchMacroUrl(base, true, 9000);
-        } catch {}
+        try { return await fetchMacroUrl(base, true, 9000); } catch {}
     }
     throw new Error(`Yahoo: all endpoints failed for ${symbol}`);
 }
 
-// Stooq 專用 fetch（Stooq 允許直連 CORS）
+// Stooq 專用 fetch
 async function fetchStooqCsv(stooqSymbol) {
     const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&i=d`;
     return fetchMacroUrl(url, false, 9000);
 }
+
 
 function extractMacroJsonSeries(payload) {
     const arrays = []; const seen = new Set();
