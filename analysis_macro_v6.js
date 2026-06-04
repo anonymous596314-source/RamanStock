@@ -158,39 +158,74 @@ function parseMacroCsv(text) {
 
 //  Fetch 通用工具 
 
-async function fetchMacroUrl(targetUrl, isJson = false, timeout = 3000) {
-    async function tryOne(proxyUrl, allorigins = false) {
-        const ctrl = new AbortController();
-        const tid  = setTimeout(() => ctrl.abort(), timeout);
-        try {
-            const res  = await fetch(proxyUrl, { signal: ctrl.signal, cache: 'no-store' });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            let text = await res.text();
-            if (allorigins) { const w = JSON.parse(text); text = w?.contents || ''; }
-            if (!text || text.length < 5 || text.startsWith('Edge:')) throw new Error('Empty');
-            return isJson ? JSON.parse(text) : text;
-        } finally { clearTimeout(tid); }
+async function fetchWithTimeout(url, opts = {}, ms = 8000) {
+    const ctrl = new AbortController();
+    const tid  = setTimeout(() => ctrl.abort(), ms);
+    try {
+        return await fetch(url, { ...opts, signal: ctrl.signal, cache: 'no-store' });
+    } finally { clearTimeout(tid); }
+}
+
+async function fetchMacroUrl(targetUrl, isJson = false, timeout = 8000) {
+    async function tryDirect(url) {
+        const res = await fetchWithTimeout(url, {}, timeout);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        if (!text || text.length < 5) throw new Error('empty');
+        return isJson ? JSON.parse(text) : text;
     }
 
-    // Stage 1: 3 個 proxy 並聯 (最快者優先)
+    async function tryProxy(proxyUrl, unwrapAllorigins = false) {
+        const res = await fetchWithTimeout(proxyUrl, {}, timeout);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        let text = await res.text();
+        if (unwrapAllorigins) { const w = JSON.parse(text); text = w?.contents || ''; }
+        if (!text || text.length < 5 || text.startsWith('Edge:')) throw new Error('empty');
+        return isJson ? JSON.parse(text) : text;
+    }
+
+    const enc = encodeURIComponent(targetUrl);
+
+    // Stage 1: 直連 + 最可靠的 proxy 並聯
     try {
         return await Promise.any([
-            tryOne(targetUrl),
-            tryOne(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`),
-            tryOne(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`)
+            tryDirect(targetUrl),
+            tryProxy(`https://corsproxy.io/?${enc}`),
+            tryProxy(`https://api.allorigins.win/raw?url=${enc}`),
         ]);
     } catch {}
 
-    // Stage 2: 備援 proxy
+    // Stage 2: 備援 proxy（速度較慢）
     try {
         return await Promise.any([
-            tryOne(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`),
-            tryOne(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`, true),
-            tryOne(`https://thingproxy.freeboard.io/fetch/${targetUrl}`)
+            tryProxy(`https://api.codetabs.com/v1/proxy?quest=${enc}`),
+            tryProxy(`https://api.allorigins.win/get?url=${enc}`, true),
+            tryProxy(`https://corsproxy.io/?${enc}`),   // 重試一次
         ]);
     } catch {}
 
     throw new Error('macro source unavailable');
+}
+
+// Yahoo Finance 專用 fetch（query1 / query2 雙域名互備）
+async function fetchYahooJson(symbol) {
+    const urls = [
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=6mo&interval=1d`,
+        `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=6mo&interval=1d`,
+    ];
+    // Yahoo 允許直連（有時），也走 proxy
+    for (const base of urls) {
+        try {
+            return await fetchMacroUrl(base, true, 9000);
+        } catch {}
+    }
+    throw new Error(`Yahoo: all endpoints failed for ${symbol}`);
+}
+
+// Stooq 專用 fetch（Stooq 允許直連 CORS）
+async function fetchStooqCsv(stooqSymbol) {
+    const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&i=d`;
+    return fetchMacroUrl(url, false, 9000);
 }
 
 function extractMacroJsonSeries(payload) {
@@ -263,8 +298,7 @@ function makeDailyMacroFromSeries(def, rawSeries, source) {
 
 async function fetchYahooMacro(def) {
     if (!def.symbol) throw new Error('no symbol');
-    const url    = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(def.symbol)}?range=6mo&interval=1d`;
-    const json   = await fetchMacroUrl(url, true);
+    const json   = await fetchYahooJson(def.symbol);
     const result = json?.chart?.result?.[0];
     if (!result || json?.chart?.error) throw new Error(json?.chart?.error?.description || 'empty');
     const ts = result.timestamp || [];
@@ -274,6 +308,16 @@ async function fetchYahooMacro(def) {
         return { date: new Date(t * 1000).toISOString().slice(0, 10), value: r };
     }).filter(Boolean);
     return makeDailyMacroFromSeries(def, series, 'Yahoo Finance');
+}
+
+async function fetchStooqMacro(def) {
+    if (!def.stooq) throw new Error('no stooq');
+    const csv    = await fetchStooqCsv(def.stooq);
+    const series = String(csv || '').trim().split(/\r?\n/).slice(1).map(line => {
+        const p = line.split(','); const c = Number(p[4]);
+        return p[0] && isFinite(c) ? { date: p[0], value: c } : null;
+    }).filter(Boolean);
+    return makeDailyMacroFromSeries(def, series, 'Stooq');
 }
 
 async function fetchHistoryMacro(def) {
@@ -313,16 +357,6 @@ async function fetchFredDailyMacro(def) {
     return makeDailyMacroFromSeries(def, series, 'FRED');
 }
 
-async function fetchStooqMacro(def) {
-    if (!def.stooq) throw new Error('no stooq');
-    const url    = `https://stooq.com/q/d/l/?s=${encodeURIComponent(def.stooq)}&i=d`;
-    const csv    = await fetchMacroUrl(url, false, 9000);
-    const series = String(csv || '').trim().split(/\r?\n/).slice(1).map(line => {
-        const p = line.split(','); const c = Number(p[4]);
-        return p[0] && isFinite(c) ? { date: p[0], value: c } : null;
-    }).filter(Boolean);
-    return makeDailyMacroFromSeries(def, series, 'Stooq');
-}
 
 // Frankfurter.app (ECB official rates) — 直連有 ACAO:*，不需 proxy
 async function fetchFrankfurterFX(def) {
