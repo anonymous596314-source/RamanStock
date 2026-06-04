@@ -634,41 +634,63 @@ async function fetchTrendMacro(def) {
     }
 }
 
-// ── 台灣景氣對策信號：政府開放資料 API ──────────────────────────────────────
+// ── 台灣景氣對策信號：NDC 內部 API + 政府開放資料 ───────────────────────────
+async function fetchNdcLightscore() {
+    if (!WORKER_PROXY_URL) throw new Error('需要 Cloudflare Worker');
+    const url = 'https://index.ndc.gov.tw/n/json/lightscore';
+    const enc = encodeURIComponent(url);
+    const res = await fetchWithTimeout(`${WORKER_PROXY_URL}/?url=${enc}`, {}, 8000);
+    if (!res.ok) throw new Error(`Worker HTTP ${res.status}`);
+    const json = await res.json();
+    console.log('[NDC lightscore] raw:', JSON.stringify(json).slice(0, 300));
+
+    // 回傳格式待確認，嘗試多種結構
+    const data = Array.isArray(json) ? json[0] : (json?.data?.[0] || json?.result?.[0] || json);
+    if (!data) throw new Error('lightscore: empty response');
+
+    const scoreRaw  = data['score']  || data['Score']  || data['綜合判斷分數'] || data['composite'] || '';
+    const signalRaw = data['signal'] || data['Signal'] || data['燈號']        || data['light']     || data['color'] || '';
+    const period    = data['period'] || data['Period'] || data['yearMonth']   || data['date']       || data['ym']    || '';
+    const score     = parseInt(scoreRaw);
+
+    const sig = isFinite(score) && score > 0 ? ndcScoreToSignal(score)
+              : signalRaw ? ndcLabelToSignal(String(signalRaw)) : null;
+    if (!sig) throw new Error(`lightscore: cannot parse — keys: ${Object.keys(data).join(',')}, data: ${JSON.stringify(data).slice(0,150)}`);
+
+    return {
+        signal: sig,
+        score:  isFinite(score) && score > 0 ? score : null,
+        date:   String(period).replace(/(\d{4})(\d{2})/, '$1/$2'),
+        source: 'index.ndc.gov.tw',
+        note:   '資料來源：國發會景氣指標'
+    };
+}
+
 async function fetchNdcFromDataGov() {
-    // data.gov.tw CORS 只允許自己的 origin，必須走 Worker
     if (!WORKER_PROXY_URL) throw new Error('需要 Cloudflare Worker');
     const url = 'https://data.gov.tw/api/v2/rest/datastore/301000000A-000080-001?limit=3&sort=period+desc';
     const enc = encodeURIComponent(url);
     const res = await fetchWithTimeout(`${WORKER_PROXY_URL}/?url=${enc}`, {}, 8000);
     if (!res.ok) throw new Error(`Worker HTTP ${res.status} for data.gov.tw`);
     const json = await res.json();
-
     const records = json?.result?.records || json?.records || [];
     if (!records.length) {
         console.warn('[NDC] data.gov.tw response:', JSON.stringify(json).slice(0, 300));
         throw new Error('data.gov.tw: no records');
     }
-
     const rec = records[0];
     console.log('[NDC] record keys:', Object.keys(rec), JSON.stringify(rec).slice(0, 200));
-
-    const period   = rec['period']  || rec['年月']       || rec['date']  || rec['ym']    || '';
-    const scoreRaw = rec['score']   || rec['綜合判斷分數'] || rec['composite_score']      || '';
-    const signalRaw= rec['signal']  || rec['燈號']       || rec['light'] || rec['color'] || '';
-    const score    = parseInt(scoreRaw);
-
+    const period    = rec['period']  || rec['年月']       || rec['date']  || rec['ym']    || '';
+    const scoreRaw  = rec['score']   || rec['綜合判斷分數'] || rec['composite_score']      || '';
+    const signalRaw = rec['signal']  || rec['燈號']       || rec['light'] || rec['color'] || '';
+    const score     = parseInt(scoreRaw);
     const sig = isFinite(score) && score > 0 ? ndcScoreToSignal(score)
-              : signalRaw ? ndcLabelToSignal(String(signalRaw))
-              : null;
+              : signalRaw ? ndcLabelToSignal(String(signalRaw)) : null;
     if (!sig) throw new Error(`data.gov.tw: cannot parse — keys: ${Object.keys(rec).join(',')}`);
-
     return {
-        signal: sig,
-        score:  isFinite(score) && score > 0 ? score : null,
-        date:   String(period).replace(/(\d{4})(\d{2})/, '$1/$2'),
-        source: 'data.gov.tw',
-        note:   '資料來源：政府開放資料平台 景氣對策信號'
+        signal: sig, score: isFinite(score) && score > 0 ? score : null,
+        date: String(period).replace(/(\d{4})(\d{2})/, '$1/$2'),
+        source: 'data.gov.tw', note: '資料來源：政府開放資料平台 景氣對策信號'
     };
 }
 
@@ -696,15 +718,21 @@ async function tryNdcWebsite() {
 }
 
 async function fetchNdcMacroInfo() {
-    // 1. 政府開放資料 API（最可靠，結構化 JSON）
+    // 1. NDC 內部 lightscore API（最直接）
+    if (WORKER_PROXY_URL) {
+        try {
+            const r = await fetchNdcLightscore();
+            return { id: 'ndc', status: 'ok', ...r };
+        } catch (e) { console.warn('[NDC] lightscore failed:', e.message); }
+    }
+
+    // 2. 政府開放資料 API
     try {
         const r = await fetchNdcFromDataGov();
         return { id: 'ndc', status: 'ok', ...r };
-    } catch (e) {
-        console.warn('[NDC] data.gov.tw failed:', e.message);
-    }
+    } catch (e) { console.warn('[NDC] data.gov.tw failed:', e.message); }
 
-    // 2. NDC 官網（SPA，成功率低）
+    // 3. NDC 官網 HTML（SPA，成功率低）
     try {
         const r = await tryNdcWebsite();
         return { id: 'ndc', status: 'ok', ...r };
@@ -712,10 +740,8 @@ async function fetchNdcMacroInfo() {
 
     return {
         id: 'ndc', status: 'failed',
-        signal: null, score: null,
-        date: '--',
-        source: '',
-        note: '因國發會網頁為 SPA 架構，無法由前端直接解析燈號。請點下方連結至官網查詢最新燈號。',
+        signal: null, score: null, date: '--', source: '',
+        note: '燈號資料暫時無法取得，請點下方連結至官網查詢。',
         isProxy: false
     };
 }
