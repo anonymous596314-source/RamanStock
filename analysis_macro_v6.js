@@ -718,31 +718,17 @@ async function tryNdcWebsite() {
 }
 
 async function fetchNdcMacroInfo() {
-    // 1. NDC 內部 lightscore API（最直接）
-    if (WORKER_PROXY_URL) {
-        try {
-            const r = await fetchNdcLightscore();
-            return { id: 'ndc', status: 'ok', ...r };
-        } catch (e) { console.warn('[NDC] lightscore failed:', e.message); }
-    }
-
-    // 2. 政府開放資料 API
-    try {
-        const r = await fetchNdcFromDataGov();
-        return { id: 'ndc', status: 'ok', ...r };
-    } catch (e) { console.warn('[NDC] data.gov.tw failed:', e.message); }
-
-    // 3. NDC 官網 HTML（SPA，成功率低）
-    try {
-        const r = await tryNdcWebsite();
-        return { id: 'ndc', status: 'ok', ...r };
-    } catch {}
-
+    // NDC 景氣指標網站對非瀏覽器請求一律回傳 HTML，無法機器讀取。
+    // 顯示最近已知燈號（每月人工更新），並附官網連結。
+    // 2026/04：紅燈，綜合判斷分數 39 分（2026/05/29 公布）
     return {
-        id: 'ndc', status: 'failed',
-        signal: null, score: null, date: '--', source: '',
-        note: '燈號資料暫時無法取得，請點下方連結至官網查詢。',
-        isProxy: false
+        id: 'ndc', status: 'static',
+        signal: 'red',
+        score: 39,
+        date: '2026/04',
+        source: 'index.ndc.gov.tw',
+        note: '⚠ 資料為靜態，最新燈號請至官網確認。',
+        isStatic: true,
     };
 }
 
@@ -962,7 +948,9 @@ function renderNdcCard(item) {
                 <div style="font-size:28px;font-weight:800;color:${sig.color};">${item.score}</div>
                 <div style="font-size:10px;color:#94a3b8;">/ 45 分</div>
             </div>` : ''}
-        </div>` : `<div style="font-size:13px;color:#94a3b8;padding:6px 0;">燈號資料暫時無法取得</div>`;
+        </div>
+        ${item.isStatic ? `<div style="font-size:11px;color:#f59e0b;margin-top:2px;">⚠ 靜態資料（${item.date}），最新燈號請至官網確認</div>` : ''}
+        ` : `<div style="font-size:13px;color:#94a3b8;padding:6px 0;">燈號資料暫時無法取得</div>`;
 
     const lampSegments = [
         ['#ef4444','[RED] 紅燈','38–45'],
