@@ -287,18 +287,10 @@ function extractMacroJsonSeries(payload) {
 }
 
 function makeDailyMacroFromSeries(def, rawSeries, source) {
-    // Yahoo Finance 回傳 ^TNX / ^TYX 時單位是 × 10（例如 43.5 代表 4.35%）
-    // Stooq 和 FRED 已是正確單位（4.35）
-    // 用 source 標記判斷，避免混用時鋸齒
-    const isYahooRate = def.kind === 'rate' && !def.bpsUnit && source === 'Yahoo Finance';
-
     const series = (rawSeries || [])
-        .filter(p => p && p.date && isFinite(p.value))
+        .filter(p => p && p.date && p.value !== null && p.value !== undefined && isFinite(p.value))
         .sort((a, b) => String(a.date).localeCompare(String(b.date)))
-        .map(p => {
-            const v = isYahooRate ? p.value / 10 : p.value;
-            return { date: p.date, raw: p.value, value: v };
-        });
+        .map(p => ({ date: p.date, raw: p.value, value: p.value }));
     if (series.length < 2) throw new Error(`${source} has not enough data`);
     const latest = series[series.length - 1];
     const prev   = series[series.length - 2];
@@ -329,7 +321,9 @@ async function fetchYahooMacro(def) {
     const ts = result.timestamp || [];
     const cl = result.indicators?.quote?.[0]?.close || [];
     const series = ts.map((t, i) => {
-        const r = cl[i]; if (!isFinite(r)) return null;
+        const r = cl[i];
+        // 明確排除 null / undefined / NaN（isFinite(null) === true，需要額外檢查）
+        if (r === null || r === undefined || !isFinite(r)) return null;
         return { date: new Date(t * 1000).toISOString().slice(0, 10), value: r };
     }).filter(Boolean);
     return makeDailyMacroFromSeries(def, series, 'Yahoo Finance');
