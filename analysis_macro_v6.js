@@ -371,78 +371,80 @@ async function fetchDailyMacro(def) {
     throw lastErr || new Error(`all sources failed for ${def.id}`);
 }
 
-// ── Trend 指標：econdb.com (CORS OK，免 API key) ─────────────────────────────
-// econdb 提供 FRED 同系列資料，端點：https://www.econdb.com/api/series/{TICKER}/?format=json
-// FRED series ID 與 econdb ticker 幾乎一對一，但需要確認對應關係。
-// econdb 直接回傳 JSON，有正確 CORS header，不需要 proxy。
-const FRED_TO_ECONDB = {
-    'CPIAUCSL':         'CPIUS',
-    'CPILFESL':         'COREPCEUS',    // Core CPI
-    'PCEPILFE':         'CORPCEPIUS',   // Core PCE
-    'FEDFUNDS':         'USFEDfunds',
-    'UNRATE':           'UNRATUS',
-    'PAYEMS':           'NFPAYUS',
-    'JTSJOL':           'JOLTSJOLUS',
-    'NAPM':             'ISMMAN',       // ISM Manufacturing PMI
-    'NMFSL':            'ISMSVC',       // ISM Services PMI
-    'RSXFS':            'RETAILSUS',
-    'INDPRO':           'IPUS',
-    'UMCSENT':          'UMCSIUS',
-    'HOUST':            'HOUST',
-    'MORTGAGE30US':     'MORTGAGE30',
-    // fallback series
-    'IPMAN':            'IPMAN',
-    'DPCERA3M086SBEA':  'DPCERA',
-};
+// ── FRED API Key（使用者可選填，免費申請：https://fred.stlouisfed.org/docs/api/api_key.html）
+// 填入後走官方 JSON API，有正確 CORS header，完全不需要 proxy。
+// 留空則走多重 proxy fallback。
+const FRED_API_KEY = '8c585d6fcf7fa72274c20411ef079c63';
 
-async function fetchEcondbMacro(def) {
-    // econdb 支援部分 FRED ticker 直查，也有自己的 ticker
-    // 同時嘗試兩種，取先成功者
-    const tickers = [];
-    const mapped = FRED_TO_ECONDB[def.series];
-    if (mapped) tickers.push(mapped);
-    // 部分 FRED series ID 可直接用於 econdb
-    tickers.push(def.series);
-
-    let lastErr;
-    for (const ticker of tickers) {
-        try {
-            const url = `https://www.econdb.com/api/series/${encodeURIComponent(ticker)}/?format=json`;
-            const ctrl = new AbortController();
-            const tid  = setTimeout(() => ctrl.abort(), 8000);
-            let json;
-            try {
-                const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
-                if (!res.ok) throw new Error(`econdb HTTP ${res.status} for ${ticker}`);
-                json = await res.json();
-            } finally { clearTimeout(tid); }
-
-            // econdb 回傳格式：{ data: { dates: [...], values: [...] }, ... }
-            const dates  = json?.data?.dates  || json?.dates  || [];
-            const values = json?.data?.values || json?.values || [];
-            if (!dates.length || !values.length) throw new Error(`econdb: empty for ${ticker}`);
-
-            const rows = dates.map((d, i) => {
-                const v = values[i];
-                if (d == null || v == null || !isFinite(Number(v))) return null;
-                return { date: String(d).slice(0, 10), value: Number(v) };
-            }).filter(Boolean);
-            if (rows.length < 14) throw new Error(`econdb: not enough data (${rows.length}) for ${ticker}`);
-            return processFredRows(def, rows, `Econdb/${ticker}`);
-        } catch (e) { lastErr = e; }
-    }
-    throw lastErr || new Error(`econdb: all tickers failed for ${def.series}`);
+// ── 方法 A：FRED 官方 JSON API（需要 API key，直接 CORS，最穩）────────────────
+async function fetchFredJsonApi(def) {
+    if (!FRED_API_KEY) throw new Error('no FRED API key');
+    const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${encodeURIComponent(def.series)}&api_key=${FRED_API_KEY}&file_type=json&sort_order=asc&observation_start=1990-01-01`;
+    const ctrl = new AbortController();
+    const tid  = setTimeout(() => ctrl.abort(), 10000);
+    let json;
+    try {
+        const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
+        if (!res.ok) throw new Error(`FRED API HTTP ${res.status}`);
+        json = await res.json();
+    } finally { clearTimeout(tid); }
+    if (json?.error_code) throw new Error(`FRED API error: ${json.error_message}`);
+    const obs = json?.observations || [];
+    const rows = obs.map(o => {
+        const v = parseFloat(o.value);
+        if (!o.date || !isFinite(v)) return null;
+        return { date: o.date, value: v };
+    }).filter(Boolean);
+    if (rows.length < 14) throw new Error(`FRED API: not enough data (${rows.length})`);
+    return processFredRows(def, rows, 'FRED API');
 }
 
-// ── FRED CSV（備援；需要 CORS proxy）────────────────────────────────────────
-async function fetchFredMacroFallback(def) {
-    const url  = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(def.series)}`;
-    const csv  = await fetchMacroUrl(url, false, 4000);  // 縮短讓 Stage 2 有時間
-    const firstLine = (csv || '').split('\n')[0].replace('\r', '') || '';
-    if (!firstLine.toLowerCase().startsWith('date')) throw new Error(`FRED ${def.series}: invalid response`);
+// ── 方法 B：FRED CSV via proxy（不需 key，但 proxy 可能不穩）───────────────────
+// 使用多個 proxy 並聯，增加成功率
+async function fetchFredCsvProxy(def) {
+    const fredUrl = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${encodeURIComponent(def.series)}`;
+
+    // 同時嘗試多個 proxy，取最快成功者
+    async function tryProxy(proxyUrl, allorigins = false) {
+        const ctrl = new AbortController();
+        const tid  = setTimeout(() => ctrl.abort(), 9000);
+        try {
+            const res = await fetch(proxyUrl, { signal: ctrl.signal, cache: 'no-store' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            let text = await res.text();
+            if (allorigins) { const w = JSON.parse(text); text = w?.contents || ''; }
+            const firstLine = (text || '').split('\n')[0].replace('\r', '');
+            if (!firstLine.toLowerCase().startsWith('date')) throw new Error('not CSV');
+            if (text.length < 100) throw new Error('too short');
+            return text;
+        } finally { clearTimeout(tid); }
+    }
+
+    let csv;
+    // 批次 1：3 個並聯
+    try {
+        csv = await Promise.any([
+            tryProxy(`https://corsproxy.io/?${encodeURIComponent(fredUrl)}`),
+            tryProxy(`https://api.allorigins.win/raw?url=${encodeURIComponent(fredUrl)}`),
+            tryProxy(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fredUrl)}`),
+        ]);
+    } catch {}
+
+    // 批次 2：備援
+    if (!csv) {
+        try {
+            csv = await Promise.any([
+                tryProxy(`https://api.allorigins.win/get?url=${encodeURIComponent(fredUrl)}`, true),
+                tryProxy(`https://thingproxy.freeboard.io/fetch/${fredUrl}`),
+                tryProxy(`https://yacdn.org/proxy/${fredUrl}`),
+            ]);
+        } catch {}
+    }
+
+    if (!csv) throw new Error(`FRED ${def.series}: proxy unavailable`);
     const rows = parseMacroCsv(csv).filter(r => isFinite(r.value));
     if (rows.length < 14) throw new Error(`FRED ${def.series}: not enough data`);
-    return processFredRows(def, rows, 'FRED');
+    return processFredRows(def, rows, 'FRED CSV');
 }
 
 // ── 共用：把原始 rows 依 mode 計算成 trend 物件 ─────────────────────────────
@@ -481,14 +483,16 @@ function processFredRows(def, rows, source) {
 }
 
 async function fetchFredMacro(def) {
-    return fetchFredMacroFallback(def);
+    // 先試 JSON API（有 key 時直接成功），否則走 proxy CSV
+    try { return await fetchFredJsonApi(def); } catch {}
+    return fetchFredCsvProxy(def);
 }
 
 async function fetchTrendMacro(def) {
-    // 嘗試鏈：econdb（直連 CORS）→ FRED CSV（需 proxy，慢）→ fallbackSeries
+    // 主 series：JSON API → CSV proxy → fallbackSeries
     const trySeries = async (d) => {
-        try { return await fetchEcondbMacro(d); } catch {}
-        return fetchFredMacroFallback(d);
+        try { return await fetchFredJsonApi(d); } catch {}
+        return fetchFredCsvProxy(d);
     };
     try {
         return await trySeries(def);
