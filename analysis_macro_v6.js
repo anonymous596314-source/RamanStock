@@ -634,7 +634,33 @@ async function fetchTrendMacro(def) {
     }
 }
 
-// ── 台灣景氣對策信號：NDC 內部 API + 政府開放資料 ───────────────────────────
+// ── 景氣燈號對應表（內嵌，不依賴外部 analysis.js）────────────────────────────
+const NDC_SIGNALS = {
+    red:          { color: '#ef4444', emoji: '🔴', label: '紅燈',  desc: '景氣過熱', range: [38, 45] },
+    yellow_red:   { color: '#f97316', emoji: '🟠', label: '黃紅燈', desc: '景氣活絡', range: [32, 37] },
+    green:        { color: '#22c55e', emoji: '🟢', label: '綠燈',  desc: '景氣穩定', range: [23, 31] },
+    yellow_blue:  { color: '#eab308', emoji: '🟡', label: '黃藍燈', desc: '景氣欠佳', range: [17, 22] },
+    blue:         { color: '#3b82f6', emoji: '🔵', label: '藍燈',  desc: '景氣衰退', range: [9,  16] },
+};
+
+function ndcScoreToSignal(score) {
+    const s = Number(score);
+    if (s >= 38) return NDC_SIGNALS.red;
+    if (s >= 32) return NDC_SIGNALS.yellow_red;
+    if (s >= 23) return NDC_SIGNALS.green;
+    if (s >= 17) return NDC_SIGNALS.yellow_blue;
+    if (s >=  9) return NDC_SIGNALS.blue;
+    return null;
+}
+
+function ndcLabelToSignal(label) {
+    if (/紅燈|red/i.test(label))                       return NDC_SIGNALS.red;
+    if (/黃紅|yellow.?red|orange/i.test(label))        return NDC_SIGNALS.yellow_red;
+    if (/綠燈|green/i.test(label))                     return NDC_SIGNALS.green;
+    if (/黃藍|yellow.?blue/i.test(label))              return NDC_SIGNALS.yellow_blue;
+    if (/藍燈|blue/i.test(label))                      return NDC_SIGNALS.blue;
+    return null;
+}
 async function fetchNdcLightscore() {
     if (!WORKER_PROXY_URL) throw new Error('需要 Cloudflare Worker');
     const url = 'https://index.ndc.gov.tw/n/json/lightscore';
@@ -718,17 +744,30 @@ async function tryNdcWebsite() {
 }
 
 async function fetchNdcMacroInfo() {
-    // NDC 景氣指標網站對非瀏覽器請求一律回傳 HTML，無法機器讀取。
-    // 顯示最近已知燈號（每月人工更新），並附官網連結。
-    // 2026/04：紅燈，綜合判斷分數 39 分（2026/05/29 公布）
-    const score = 39;
+    // 優先讀取 GitHub Actions 每月自動產生的 ndc_signal.json（同 origin，無 CORS 問題）
+    try {
+        const res = await fetchWithTimeout('ndc_signal.json', {}, 5000);
+        if (res.ok) {
+            const j = await res.json();
+            const sig = ndcScoreToSignal(j.score) || ndcLabelToSignal(j.signal || '');
+            if (sig) return {
+                id: 'ndc', status: 'ok',
+                signal: sig, score: j.score, date: j.date,
+                source: j.source || 'ndc_signal.json',
+                note: `自動更新於 ${(j.updated || '').slice(0, 10)}`,
+            };
+        }
+    } catch {}
+
+    // 靜態備援（ndc_signal.json 不存在時）
+    // 2026/04：紅燈，39 分（2026/05/29 公布）
     return {
         id: 'ndc', status: 'static',
-        signal: ndcScoreToSignal(score),
-        score,
+        signal: ndcScoreToSignal(39),
+        score: 39,
         date: '2026/04',
         source: 'index.ndc.gov.tw',
-        note: '⚠ 資料為靜態，最新燈號請至官網確認。',
+        note: '⚠ 靜態資料，最新燈號請至官網確認',
         isStatic: true,
     };
 }
