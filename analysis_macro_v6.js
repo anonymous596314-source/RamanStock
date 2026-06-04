@@ -139,11 +139,31 @@ function macroSparkline(points, color = '#60a5fa') {
     const dotColor = last.value >= prev.value ? '#f87171' : '#34d399';
     const lx = (width - pad).toFixed(1);
     const ly = (height - pad - ((last.value - min) / range) * (height - pad * 2)).toFixed(1);
+
+    // 把 series 序列化成 data 屬性，供 mousemove tooltip 使用
+    const seriesJson = JSON.stringify(clean.map(p => ({ d: p.date, v: p.value })));
+
     return `
-        <svg class="macro-sparkline" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
-            <path d="${d}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
-            <circle cx="${lx}" cy="${ly}" r="3" fill="${dotColor}"></circle>
-        </svg>`;
+        <div class="macro-spark-wrap" style="position:relative;">
+            <svg class="macro-sparkline macro-spark-svg" viewBox="0 0 ${width} ${height}"
+                preserveAspectRatio="none" aria-hidden="true"
+                data-min="${min}" data-max="${max}" data-range="${range}"
+                data-pad="${pad}" data-w="${width}" data-h="${height}"
+                data-color="${color}"
+                data-series='${seriesJson.replace(/'/g, '&apos;')}'>
+                <path d="${d}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                <line class="spark-cursor" x1="-100" y1="${pad}" x2="-100" y2="${height - pad}"
+                    stroke="rgba(255,255,255,0.4)" stroke-width="1" stroke-dasharray="3,2"/>
+                <circle class="spark-dot-hover" cx="-100" cy="-100" r="3.5" fill="${color}" stroke="#1e293b" stroke-width="1.5"/>
+                <circle cx="${lx}" cy="${ly}" r="3" fill="${dotColor}"></circle>
+            </svg>
+            <div class="spark-tooltip" style="
+                display:none;position:absolute;top:-28px;
+                background:rgba(15,23,42,0.92);border:1px solid rgba(255,255,255,0.12);
+                border-radius:6px;padding:3px 8px;font-size:11px;color:#e2e8f0;
+                white-space:nowrap;pointer-events:none;z-index:10;transform:translateX(-50%);">
+            </div>
+        </div>`;
 }
 
 function parseMacroCsv(text) {
@@ -956,6 +976,78 @@ function renderMacroDashboard(data, fromCache = false) {
             <a href="https://fred.stlouisfed.org/" target="_blank" rel="noopener">FRED (St. Louis Fed)</a>
             <a href="https://data.gov.tw/dataset/6099" target="_blank" rel="noopener">國發會開放資料</a>
         </div>`;
+
+    bindSparklineTooltips(macroBodyEl);
+}
+
+// ── Sparkline 互動 tooltip ────────────────────────────────────────────────────
+function bindSparklineTooltips(container) {
+    container.querySelectorAll('.macro-spark-svg').forEach(svg => {
+        const wrap    = svg.closest('.macro-spark-wrap');
+        const tooltip = wrap?.querySelector('.spark-tooltip');
+        const cursor  = svg.querySelector('.spark-cursor');
+        const dotH    = svg.querySelector('.spark-dot-hover');
+        if (!tooltip || !cursor || !dotH) return;
+
+        let series;
+        try { series = JSON.parse(svg.dataset.series); } catch { return; }
+        if (!series || series.length < 2) return;
+
+        const pad   = +svg.dataset.pad;
+        const w     = +svg.dataset.w;
+        const h     = +svg.dataset.h;
+        const min   = +svg.dataset.min;
+        const range = +svg.dataset.range;
+        const n     = series.length;
+
+        function getIndex(clientX) {
+            const rect = svg.getBoundingClientRect();
+            const ratio = (clientX - rect.left) / rect.width;
+            return Math.max(0, Math.min(n - 1, Math.round(ratio * (n - 1))));
+        }
+
+        function update(clientX) {
+            const i   = getIndex(clientX);
+            const pt  = series[i];
+            const x   = pad + (i / (n - 1)) * (w - pad * 2);
+            const y   = h - pad - ((pt.v - min) / range) * (h - pad * 2);
+
+            cursor.setAttribute('x1', x); cursor.setAttribute('x2', x);
+            dotH.setAttribute('cx', x);   dotH.setAttribute('cy', y);
+
+            // 格式化數值
+            const val = Math.abs(pt.v) >= 1000
+                ? pt.v.toLocaleString('zh-TW', { maximumFractionDigits: 0 })
+                : pt.v.toLocaleString('zh-TW', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+            tooltip.textContent = `${pt.d}  ${val}`;
+            tooltip.style.display = 'block';
+
+            // tooltip 水平定位：跟著游標但不超出 wrap
+            const wrapW = wrap.offsetWidth;
+            const tipW  = tooltip.offsetWidth || 120;
+            const xPct  = x / w * 100;
+            const leftPx = (x / w) * wrapW;
+            let finalLeft = leftPx;
+            if (finalLeft - tipW / 2 < 0) finalLeft = tipW / 2;
+            if (finalLeft + tipW / 2 > wrapW) finalLeft = wrapW - tipW / 2;
+            tooltip.style.left = `${finalLeft}px`;
+        }
+
+        function hide() {
+            cursor.setAttribute('x1', -100); cursor.setAttribute('x2', -100);
+            dotH.setAttribute('cx', -100);   dotH.setAttribute('cy', -100);
+            tooltip.style.display = 'none';
+        }
+
+        svg.addEventListener('mousemove', e => update(e.clientX));
+        svg.addEventListener('mouseleave', hide);
+        svg.addEventListener('touchmove', e => {
+            e.preventDefault();
+            update(e.touches[0].clientX);
+        }, { passive: false });
+        svg.addEventListener('touchend', hide);
+    });
 }
 
 function renderMacroLoading() {
