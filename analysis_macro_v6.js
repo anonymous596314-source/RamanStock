@@ -48,7 +48,6 @@ const DAILY_MACRO_SYMBOLS = [
 
     //  風險情緒 
     { id: 'vix',     section: '風險情緒', name: 'VIX 恐慌指數',    symbol: '^VIX',       stooq: '^vix',   historyUrl: 'https://historyofmarket.com/api/sp500/vix.json',        kind: 'vol',   colorInverse: true, note: '< 15 市場自滿、> 25 恐慌升溫、> 40 極度恐慌（歷史買點）' },
-    { id: 'hySpread',section: '風險情緒', name: 'HY 信用利差',     fredSeries: 'BAMLH0A0HYM2',                                                                                   kind: 'rate',  colorInverse: true, note: '高收益債與美債利差；> 500 bp 代表市場對企業違約的恐慌升溫，是系統風險訊號' },
 
     // ── 補回：無 FRED 依賴，靠 Yahoo / Stooq ──────────────────────────────────
     { id: 'dxy',     section: '外匯',     name: '美元指數 (DXY)',    symbol: 'DX-Y.NYB', stooq: 'dxy', kind: 'index', colorInverse: true, note: '美元走強通常壓抑新興市場；外資賣台股匯出時加速台幣貶值' },
@@ -67,7 +66,9 @@ const TREND_MACRO_SERIES = [
     { id: 'nfp',       section: '就業市場',         name: '非農就業人口 MoM',    series: 'PAYEMS',   mode: 'mom_diff', note: '月增 > 150K 為健康勞市；持續低於 100K 代表景氣降溫，市場開始定價降息' },
     { id: 'joltJob',   section: '就業市場',         name: 'JOLTS 職缺數',        series: 'JTSJOL',   mode: 'level', note: '職缺數大於失業人數代表勞市過熱；職缺縮減是薪資通膨降溫的早期訊號' },
     // 台灣
-    { id: 'twExport', section: '台灣指標', name: '台灣出口年增率',    series: 'XTEXVA01TWM657S', mode: 'yoy', note: '台灣出口是 GDP 最大引擎；年增率轉正代表全球科技需求回溫，是台股最直接的領先指標' },
+    { id: 'twExport', section: '台灣指標', name: '台灣出口年增率',    series: 'XTEXVA01TWM657S', mode: 'yoy',   note: '台灣出口是 GDP 最大引擎；年增率轉正代表全球科技需求回溫，是台股最直接的領先指標' },
+    // 風險情緒
+    { id: 'hySpread', section: '風險情緒', name: 'HY 信用利差',       series: 'BAMLH0A0HYM2',   mode: 'level', note: '高收益債與美債利差；> 500 bp 代表市場對企業違約的恐慌升溫，是系統風險訊號' },
     // GDP
     { id: 'gdp',      section: '景氣循環', name: '美國 GDP 季增率',   series: 'A191RL1Q225SBEA', mode: 'level', note: '兩季連續負成長為技術性衰退定義；GDP 季增率是景氣最終裁判，但公布有 1 季落差' },
     { id: 'ismMfg',   section: '景氣循環', name: 'ISM 製造業 PMI',    series: 'MANEMP',   mode: 'level', fallbackSeries: 'IPMAN', fallbackName: '美國製造業產出', fallbackNote: 'ISM PMI 暫取不到，改用 FRED 製造業產出替代。', note: '50 以上擴張；對台灣製造業出口訂單有 1–2 個月的領先效果' },
@@ -93,7 +94,8 @@ const DAILY_SECTIONS = [
 ];
 
 const TREND_SECTIONS = [
-    { key: '台灣指標',         title: ' 台灣經濟指標',   note: '台灣出口年增率是台股走勢最直接的領先指標，反映全球科技需求與供應鏈健康度' },
+    { key: '台灣指標',       title: ' 台灣經濟指標',   note: '台灣出口年增率是台股走勢最直接的領先指標，反映全球科技需求與供應鏈健康度' },
+    { key: '風險情緒',       title: ' 風險情緒',       note: 'HY 信用利差擴大代表市場對企業違約恐慌升溫，是股市壓力的早期預警' },
     { key: '通膨與貨幣政策', title: ' 通膨與貨幣政策', note: 'CPI、Core PCE 是 Fed 升降息的核心依據；PCE 高於 2.5% 時降息預期降溫' },
     { key: '就業市場',       title: ' 就業市場',       note: '非農與 JOLTS 是 Fed 雙重使命的另一半；就業過熱時 Fed 不敢快速降息' },
     { key: '景氣循環',       title: ' 景氣循環指標',   note: 'ISM 製造業 PMI 是台灣出口訂單的最佳領先指標，提前 1–2 個月反映需求變化' },
@@ -1210,7 +1212,7 @@ async function fetchMacroDashboardData() {
     ).then(r => { tick(); return r; });
 
     const wrapTrend = def => guardedFetch(
-        () => fetchTrendMacro(def), 18000,   // econdb 最多 8s + FRED fallback 最多 8s
+        () => fetchTrendMacro(def), 25000,   // FRED proxy 有時很慢，給足夠時間
         { ...def, error: 'timeout' }
     ).then(r => { tick(); return r; });
 
