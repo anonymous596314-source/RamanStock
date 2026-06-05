@@ -20,6 +20,7 @@ const DAILY_MACRO_SYMBOLS = [
     { id: 'smh',     section: '美股指數', name: '半導體 ETF (SMH)', symbol: 'SMH',        stooq: 'smh.us',                                                                     kind: 'index', note: '追蹤台積電、輝達、英特爾等半導體龍頭，是費半的 ETF 代理版本' },
 
     //  亞太股市 
+    { id: 'taiex',   section: '亞太股市', name: '加權指數 (TAIEX)',  symbol: '^TWII',      stooq: '^twii',                                                                        kind: 'index', note: '台灣大盤指數，反映本地資金動向與外資買賣超' },
     { id: 'nikkei',  section: '亞太股市', name: '日經 225',         symbol: '^N225',      stooq: 'n225.jp',                                                                       kind: 'index', note: '日圓升貶直接影響日經；日股強勢時外資往往連帶增持台股' },
     { id: 'hsi',     section: '亞太股市', name: '恒生指數',         symbol: '^HSI',       stooq: 'hsi.hk',                                                                       kind: 'index', note: '中港資金動向風向球；港股重挫通常伴隨外資流出亞洲新興市場' },
     { id: 'kospi',   section: '亞太股市', name: 'KOSPI',            symbol: '^KS11',      stooq: 'ks11.kr',                                                                      kind: 'index', note: '韓股與台股半導體同業競爭，韓圜匯率走弱時三星出口競爭力上升' },
@@ -47,6 +48,7 @@ const DAILY_MACRO_SYMBOLS = [
 
     //  風險情緒 
     { id: 'vix',     section: '風險情緒', name: 'VIX 恐慌指數',    symbol: '^VIX',       stooq: '^vix',   historyUrl: 'https://historyofmarket.com/api/sp500/vix.json',        kind: 'vol',   colorInverse: true, note: '< 15 市場自滿、> 25 恐慌升溫、> 40 極度恐慌（歷史買點）' },
+    { id: 'hySpread',section: '風險情緒', name: 'HY 信用利差',     fredSeries: 'BAMLH0A0HYM2',                                                                                   kind: 'rate',  colorInverse: true, note: '高收益債與美債利差；> 500 bp 代表市場對企業違約的恐慌升溫，是系統風險訊號' },
 
     // ── 補回：無 FRED 依賴，靠 Yahoo / Stooq ──────────────────────────────────
     { id: 'dxy',     section: '外匯',     name: '美元指數 (DXY)',    symbol: 'DX-Y.NYB', stooq: 'dxy', kind: 'index', colorInverse: true, note: '美元走強通常壓抑新興市場；外資賣台股匯出時加速台幣貶值' },
@@ -64,8 +66,11 @@ const TREND_MACRO_SERIES = [
     { id: 'unemp',     section: '就業市場',         name: '美國失業率',          series: 'UNRATE',   mode: 'level', note: '薩姆法則：失業率 3 個月均值較前 12 個月低點上升 0.5% 即為衰退訊號' },
     { id: 'nfp',       section: '就業市場',         name: '非農就業人口 MoM',    series: 'PAYEMS',   mode: 'mom_diff', note: '月增 > 150K 為健康勞市；持續低於 100K 代表景氣降溫，市場開始定價降息' },
     { id: 'joltJob',   section: '就業市場',         name: 'JOLTS 職缺數',        series: 'JTSJOL',   mode: 'level', note: '職缺數大於失業人數代表勞市過熱；職缺縮減是薪資通膨降溫的早期訊號' },
-    // 景氣循環
-    { id: 'ismMfg',    section: '景氣循環',          name: 'ISM 製造業 PMI',      series: 'MANEMP',   mode: 'level', fallbackSeries: 'IPMAN', fallbackName: '美國製造業產出', fallbackNote: 'ISM PMI 暫取不到，改用 FRED 製造業產出替代。', note: '50 以上擴張；對台灣製造業出口訂單有 1–2 個月的領先效果' },
+    // 台灣
+    { id: 'twExport', section: '台灣指標', name: '台灣出口年增率',    series: 'XTEXVA01TWM657S', mode: 'yoy', note: '台灣出口是 GDP 最大引擎；年增率轉正代表全球科技需求回溫，是台股最直接的領先指標' },
+    // GDP
+    { id: 'gdp',      section: '景氣循環', name: '美國 GDP 季增率',   series: 'A191RL1Q225SBEA', mode: 'level', note: '兩季連續負成長為技術性衰退定義；GDP 季增率是景氣最終裁判，但公布有 1 季落差' },
+    { id: 'ismMfg',   section: '景氣循環', name: 'ISM 製造業 PMI',    series: 'MANEMP',   mode: 'level', fallbackSeries: 'IPMAN', fallbackName: '美國製造業產出', fallbackNote: 'ISM PMI 暫取不到，改用 FRED 製造業產出替代。', note: '50 以上擴張；對台灣製造業出口訂單有 1–2 個月的領先效果' },
     { id: 'ismSvc',    section: '景氣循環',          name: 'ISM 服務業 PMI',      series: 'RSAFS',    mode: 'level', fallbackSeries: 'DPCERA3M086SBEA', fallbackName: '美國實質個人消費', fallbackNote: 'ISM 服務 PMI 暫取不到，改用 FRED 實質個人消費替代。', note: '美國消費服務佔 GDP 70%；服務業 PMI > 50 代表內需動能健全' },
     { id: 'retail',    section: '景氣循環',          name: '零售銷售 MoM',        series: 'RSXFS',    mode: 'mom_pct', note: '扣除食品的月增率；連續兩個月負成長為消費降溫警訊' },
     { id: 'indProd',   section: '景氣循環',          name: '工業生產 YoY',        series: 'INDPRO',   mode: 'yoy',   note: '製造業實物產出；轉負代表工廠訂單萎縮，對台灣 B2B 出口影響直接' },
@@ -88,10 +93,11 @@ const DAILY_SECTIONS = [
 ];
 
 const TREND_SECTIONS = [
+    { key: '台灣指標',         title: ' 台灣經濟指標',   note: '台灣出口年增率是台股走勢最直接的領先指標，反映全球科技需求與供應鏈健康度' },
     { key: '通膨與貨幣政策', title: ' 通膨與貨幣政策', note: 'CPI、Core PCE 是 Fed 升降息的核心依據；PCE 高於 2.5% 時降息預期降溫' },
     { key: '就業市場',       title: ' 就業市場',       note: '非農與 JOLTS 是 Fed 雙重使命的另一半；就業過熱時 Fed 不敢快速降息' },
     { key: '景氣循環',       title: ' 景氣循環指標',   note: 'ISM 製造業 PMI 是台灣出口訂單的最佳領先指標，提前 1–2 個月反映需求變化' },
-    { key: '消費與信心',     title: ' 消費者信心',    note: '消費信心連續下滑超過 3 個月，往往預示企業收入成長放緩' },
+    { key: '消費與信心',     title: ' 消費者信心',     note: '消費信心連續下滑超過 3 個月，往往預示企業收入成長放緩' },
     { key: '房市與信用',     title: ' 房市與信用',     note: '房市冷熱反映利率政策效果；高房貸利率持續越久，消費財富效應侵蝕越深' },
 ];
 
