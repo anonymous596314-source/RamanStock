@@ -71,9 +71,11 @@ const TREND_MACRO_SERIES = [
     { id: 'hySpread', section: '風險情緒', name: 'HY 信用利差',       series: 'BAMLH0A0HYM2',   mode: 'level', note: '高收益債與美債利差；> 500 bp 代表市場對企業違約的恐慌升溫，是系統風險訊號' },
     // GDP
     { id: 'gdp',      section: '景氣循環', name: '美國 GDP 季增率',   series: 'A191RL1Q225SBEA', mode: 'level', note: '兩季連續負成長為技術性衰退定義；GDP 季增率是景氣最終裁判，但公布有 1 季落差' },
-    { id: 'ismMfg',   section: '景氣循環', name: '製造業生產 YoY',     series: 'IPMAN',              mode: 'yoy',     note: 'FRED 已無 ISM PMI 原始資料；製造業工業生產 YoY 為同步替代指標，轉負代表訂單萎縮' },
-    { id: 'ismSvc',   section: '景氣循環', name: '實質個人消費 YoY',   series: 'DPCERA3M086SBEA',    mode: 'yoy',     note: '服務消費佔美國 GDP 70%，是就業與薪資的最終去向；持續放緩預示企業收入下修' },
-    { id: 'retail',   section: '景氣循環', name: '零售銷售 MoM',       series: 'RSXFS',              mode: 'mom_pct', note: '扣除食品的月增率；連續兩個月負成長為消費降溫警訊' },
+    { id: 'ismMfg',   section: '景氣循環', name: '製造業生產 YoY',      series: 'IPMAN',              mode: 'yoy',     note: 'FRED 已無 ISM PMI 原始資料；製造業工業生產 YoY 為同步替代指標，轉負代表訂單萎縮' },
+    { id: 'ismSvc',   section: '景氣循環', name: '實質個人消費 YoY',    series: 'DPCERA3M086SBEA',    mode: 'yoy',     note: '服務消費佔美國 GDP 70%，是就業與薪資的最終去向；持續放緩預示企業收入下修' },
+    { id: 'retail',   section: '景氣循環', name: '零售銷售 MoM',        series: 'RSXFS',              mode: 'mom_pct', note: '扣除食品的月增率；連續兩個月負成長為消費降溫警訊' },
+    { id: 'retailTot',section: '景氣循環', name: '零售暨餐飲銷售 MoM',  series: 'RSAFS',              mode: 'mom_pct', note: '包含餐飲的總零售月增率；美國消費最即時的月度指標，比 PCE 早約 2 週公布' },
+    { id: 'mfgEmp',   section: '就業市場', name: '製造業就業人數',      series: 'MANEMP',             mode: 'mom_diff',note: '製造業就業月變化（千人）；連續下滑代表廠商縮編，是景氣轉弱與台灣出口需求下降的早期訊號' },
     { id: 'indProd',   section: '景氣循環',          name: '工業生產 YoY',        series: 'INDPRO',   mode: 'yoy',   note: '製造業實物產出；轉負代表工廠訂單萎縮，對台灣 B2B 出口影響直接' },
     // 消費與信心
     { id: 'sentiment', section: '消費與信心',        name: '密大消費者信心',      series: 'UMCSENT',  mode: 'level', note: '美國消費者信心；趨勢向下通常領先零售銷售滑落 2–3 個月' },
