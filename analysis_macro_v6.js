@@ -29,7 +29,7 @@ const DAILY_MACRO_SYMBOLS = [
     //  利率與殖利率曲線 
     { id: 'tnx',     section: '利率曲線', name: '美債 10Y',         symbol: '^TNX',       fredSeries: 'DGS10',         stooq: '10usy.b', kind: 'rate',   note: '最重要的折現率基準，10Y 每上升 25 bp，成長股本益比通常收縮 5–8%' },
     { id: 'thirtyY', section: '利率曲線', name: '美債 30Y',         symbol: '^TYX',       fredSeries: 'DGS30',         stooq: '30usy.b', kind: 'rate',   note: '長期通膨預期的體現；30Y 持續走高代表市場不相信通膨已受控' },
-    { id: 'twoY',    section: '利率曲線', name: '美債 2Y',          symbol: '^TWO',       fredSeries: 'DGS2',          stooq: '2usy.b',  kind: 'rate',   note: '最直接反映 Fed 升降息預期；2Y 下行代表市場定價降息，是股市的領先訊號' },
+    { id: 'twoY',    section: '利率曲線', name: '美債 2Y',          fredSeries: 'DGS2',          stooq: '2usy.b',  kind: 'rate',   note: '最直接反映 Fed 升降息預期；2Y 下行代表市場定價降息，是股市的領先訊號' },
 
 
 
@@ -69,7 +69,6 @@ const TREND_MACRO_SERIES = [
     { id: 'joltJob',   section: '就業市場',         name: 'JOLTS 職缺數',        series: 'JTSJOL',   mode: 'level', note: '職缺數大於失業人數代表勞市過熱；職缺縮減是薪資通膨降溫的早期訊號' },
     // 台灣
     { id: 'twExport', section: '台灣指標', name: '台灣出口年增率',  series: 'VALEXPTWM052N',   mode: 'yoy',   note: '台灣出口是 GDP 最大引擎；年增率轉正代表全球科技需求回溫，是台股最直接的領先指標' },
-    { id: 'twM2',     section: '台灣指標', name: '台灣 M2 年增率',  series: 'MYAGM2TWM189N',   mode: 'yoy',   note: 'M2 擴張代表信用寬鬆、資金充裕，是資產價格的領先指標；M2 加速成長往往伴隨股市多頭' },
     // 風險情緒
     { id: 'hySpread',  section: '風險情緒', name: 'HY 信用利差',       series: 'BAMLH0A0HYM2', mode: 'level', note: '高收益債與美債利差；> 500 bp 代表市場對企業違約的恐慌升溫，是系統風險訊號' },
     { id: 'yieldSprd', section: '風險情緒', name: '美債 2Y-10Y 利差',  series: 'T10Y2Y',       mode: 'level', note: '殖利率曲線倒掛（負值）是最可靠的衰退預測指標；歷史上每次倒掛後 6–18 個月內均出現衰退' },
