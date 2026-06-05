@@ -469,7 +469,11 @@ async function fetchFredJsonApi(def) {
         const tid  = setTimeout(() => ctrl.abort(), 12000);
         try {
             const res = await fetch(proxyUrl, { signal: ctrl.signal, cache: 'no-store' });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            if (!res.ok) {
+                const body = await res.text().catch(() => '');
+                console.warn(`[tryFredProxy] HTTP ${res.status} from ${proxyUrl.slice(0,60)}:`, body.slice(0, 200));
+                throw new Error(`HTTP ${res.status}`);
+            }
             const json = await res.json();
             if (json?.error_code) throw new Error(`FRED error ${json.error_code}: ${json.error_message}`);
             const obs = json?.observations || json?.contents?.observations || [];
