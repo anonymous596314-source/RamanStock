@@ -66,7 +66,7 @@ const TREND_MACRO_SERIES = [
     { id: 'nfp',       section: '就業市場',         name: '非農就業人口 MoM',    series: 'PAYEMS',   mode: 'mom_diff', note: '月增 > 150K 為健康勞市；持續低於 100K 代表景氣降溫，市場開始定價降息' },
     { id: 'joltJob',   section: '就業市場',         name: 'JOLTS 職缺數',        series: 'JTSJOL',   mode: 'level', note: '職缺數大於失業人數代表勞市過熱；職缺縮減是薪資通膨降溫的早期訊號' },
     // 台灣
-    { id: 'twExport', section: '台灣指標', name: '台灣出口年增率',    series: 'XTEXVA01TWM657S', mode: 'yoy',   note: '台灣出口是 GDP 最大引擎；年增率轉正代表全球科技需求回溫，是台股最直接的領先指標' },
+    { id: 'twExport', section: '台灣指標', name: '台灣出口年增率',    series: 'VALEXPTWM052N',   mode: 'yoy',   note: '台灣出口是 GDP 最大引擎；年增率轉正代表全球科技需求回溫，是台股最直接的領先指標' },
     // 風險情緒
     { id: 'hySpread', section: '風險情緒', name: 'HY 信用利差',       series: 'BAMLH0A0HYM2',   mode: 'level', note: '高收益債與美債利差；> 500 bp 代表市場對企業違約的恐慌升溫，是系統風險訊號' },
     // GDP
