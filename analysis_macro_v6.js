@@ -460,13 +460,13 @@ const FRED_API_KEY = '8c585d6fcf7fa72274c20411ef079c63';
 // ── 方法 A：FRED 官方 JSON API（需要 API key，直接 CORS，最穩）────────────────
 async function fetchFredJsonApi(def) {
     if (!FRED_API_KEY) throw new Error('no FRED API key');
-    const fredUrl = `https://api.stlouisfed.org/fred/series/observations?series_id=${encodeURIComponent(def.series)}&api_key=${FRED_API_KEY}&file_type=json&sort_order=asc&observation_start=1990-01-01`;
+    const fredUrl = `https://api.stlouisfed.org/fred/series/observations?series_id=${encodeURIComponent(def.series)}&api_key=${FRED_API_KEY}&file_type=json&sort_order=asc&observation_start=2015-01-01`;
 
     // api.stlouisfed.org 封鎖 GitHub Pages 的 cross-origin fetch，
     // 必須透過 CORS proxy 轉發。用多個 proxy 並聯，取最快成功者。
     async function tryFredProxy(proxyUrl) {
         const ctrl = new AbortController();
-        const tid  = setTimeout(() => ctrl.abort(), 10000);
+        const tid  = setTimeout(() => ctrl.abort(), 12000);
         try {
             const res = await fetch(proxyUrl, { signal: ctrl.signal, cache: 'no-store' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -509,7 +509,10 @@ async function fetchFredJsonApi(def) {
         tryAllorigins(),
     ];
     if (WORKER_PROXY_URL) {
+        console.log(`[FRED] ${def.series}: trying Worker first`);
         batch1.unshift(tryFredProxy(`${WORKER_PROXY_URL}/?url=${encodeURIComponent(fredUrl)}`));
+    } else {
+        console.warn(`[FRED] ${def.series}: no Worker configured, using public proxies`);
     }
     try {
         obs = await Promise.any(batch1);
