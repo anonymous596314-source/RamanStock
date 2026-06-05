@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
-"""
-每月自動抓取國發會景氣燈號，寫入 ndc_signal.json
-GitHub Actions 每月 25 日執行
-"""
-import json, re, sys
-from datetime import datetime
-import urllib.request, urllib.error
+import json, re, sys, urllib.request, urllib.parse
+from datetime import datetime, timezone
  
-def fetch(url, headers=None):
-    req = urllib.request.Request(url, headers=headers or {
+WORKER_URL = 'https://young-unit-cf65.anonymous596314.workers.dev'
+ 
+def fetch_via_worker(target_url):
+    proxy_url = WORKER_URL + '/?url=' + urllib.parse.quote(target_url, safe='')
+    req = urllib.request.Request(proxy_url, headers={
         'User-Agent': 'Mozilla/5.0',
-        'Accept': 'application/json, */*',
-        'Referer': 'https://index.ndc.gov.tw/n/zh_tw',
-        'X-Requested-With': 'XMLHttpRequest',
+        'Origin': 'https://anonymous596314-source.github.io',
     })
     with urllib.request.urlopen(req, timeout=15) as r:
         return r.read().decode('utf-8')
@@ -28,54 +24,35 @@ def score_to_signal(score):
  
 def main():
     result = None
- 
-    # 方法 1：NDC JSON API
     try:
-        text = fetch('https://index.ndc.gov.tw/n/json/lightscore')
+        text = fetch_via_worker('https://index.ndc.gov.tw/n/json/lightscore')
+        print('[DEBUG] raw response:', text[:300])
         data = json.loads(text)
         item = data[0] if isinstance(data, list) else data
         score = int(item.get('score') or item.get('Score') or item.get('綜合判斷分數') or 0)
         period = str(item.get('period') or item.get('yearMonth') or item.get('date') or '')
         period = re.sub(r'(\d{4})(\d{2})', r'\1/\2', period)
         sig = score_to_signal(score)
-        if sig:
+        if sig and score > 0:
             result = {'signal': sig, 'score': score, 'date': period, 'source': 'NDC API'}
-            print(f'[OK] NDC API: {result}')
+            print(f'[OK] {result}')
     except Exception as e:
-        print(f'[WARN] NDC API failed: {e}')
- 
-    # 方法 2：抓 NDC 新聞稿頁面（純 HTML，有分數）
-    if not result:
-        try:
-            html = fetch('https://index.ndc.gov.tw/n/zh_tw/data/news',
-                         {'User-Agent': 'Mozilla/5.0', 'Accept': 'text/html'})
-            m = re.search(r'綜合判斷分數.*?(\d{1,2})\s*分', html)
-            if m:
-                score = int(m.group(1))
-                now = datetime.now()
-                period = f'{now.year}/{now.month - 1:02d}' if now.month > 1 else f'{now.year - 1}/12'
-                sig = score_to_signal(score)
-                if sig:
-                    result = {'signal': sig, 'score': score, 'date': period, 'source': 'NDC news'}
-                    print(f'[OK] NDC news: {result}')
-        except Exception as e:
-            print(f'[WARN] NDC news failed: {e}')
+        print(f'[WARN] failed: {e}')
  
     if not result:
-        print('[ERROR] All sources failed, keeping existing data')
+        print('[ERROR] All sources failed')
         sys.exit(1)
  
-    # 寫入 JSON
     out = {
         'signal': result['signal'],
         'score':  result['score'],
         'date':   result['date'],
         'source': result['source'],
-        'updated': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'updated': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     }
     with open('ndc_signal.json', 'w', encoding='utf-8') as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
-    print(f'[DONE] Written ndc_signal.json: {out}')
+    print(f'[DONE] ndc_signal.json written')
  
 if __name__ == '__main__':
     main()
