@@ -502,13 +502,17 @@ async function fetchFredJsonApi(def) {
     }
 
     let obs;
-    // 批次 1：corsproxy.io 直接轉發 JSON
+    // 批次 1：Worker 優先 + 公共 proxy 並聯
+    const batch1 = [
+        tryFredProxy(`https://corsproxy.io/?${encodeURIComponent(fredUrl)}`),
+        tryFredProxy(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fredUrl)}`),
+        tryAllorigins(),
+    ];
+    if (WORKER_PROXY_URL) {
+        batch1.unshift(tryFredProxy(`${WORKER_PROXY_URL}/?url=${encodeURIComponent(fredUrl)}`));
+    }
     try {
-        obs = await Promise.any([
-            tryFredProxy(`https://corsproxy.io/?${encodeURIComponent(fredUrl)}`),
-            tryFredProxy(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fredUrl)}`),
-            tryAllorigins(),
-        ]);
+        obs = await Promise.any(batch1);
     } catch {}
 
     // 批次 2：備援
