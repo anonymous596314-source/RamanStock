@@ -1509,14 +1509,57 @@ select option {
             <!-- 短期操作視圖 -->
             <div id="shortTermView" style="display:none; flex-direction:column; flex-grow:1; flex-shrink:1; min-height:0;">
                 <div class="inventory-dashboard" style="flex-wrap: wrap;">
-                    <div class="dashboard-card" style="flex-basis:100%;">
-                        <span class="label">短期操作本金</span>
-                        <div style="display:flex; align-items:center;">
-                            <span class="value-prefix" style="margin-right:4px;">$</span>
-                            <input type="number" id="shortTermCapitalInput" value="0" min="0" step="1"
-                                class="value-input">
+                    <!-- 第一行：本金 + 質押 + 借貸 -->
+                    <div style="display:flex; gap:12px; flex-basis:100%; flex-wrap:wrap;">
+                        <div class="dashboard-card" style="flex:1; min-width:160px;">
+                            <span class="label">短期操作本金</span>
+                            <div style="display:flex; align-items:center;">
+                                <span class="value-prefix" style="margin-right:4px;">$</span>
+                                <input type="number" id="shortTermCapitalInput" value="0" min="0" step="1" class="value-input">
+                            </div>
+                        </div>
+                        <!-- 質押卡 -->
+                        <div class="dashboard-card" style="flex:1.4; min-width:200px; border-color:rgba(251,191,36,0.3);">
+                            <span class="label" style="color:#fbbf24;">質押金額</span>
+                            <div style="display:flex; align-items:center; margin-bottom:6px;">
+                                <span class="value-prefix" style="margin-right:4px;">$</span>
+                                <input type="number" id="stPledgeAmountInput" value="0" min="0" step="1" class="value-input">
+                            </div>
+                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                <span style="font-size:11px; color:var(--text-secondary);">質押設定</span>
+                                <div style="display:flex; align-items:center; gap:4px;">
+                                    <input type="number" id="stPledgeRateInput" value="4" min="0" step="0.1" style="width:48px; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:var(--text-primary); padding:2px 4px; text-align:right;">
+                                    <span style="font-size:11px; color:var(--text-secondary);">%</span>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:4px;">
+                                    <input type="number" id="stPledgeDaysInput" value="180" min="1" step="1" style="width:52px; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:var(--text-primary); padding:2px 4px; text-align:right;">
+                                    <span style="font-size:11px; color:var(--text-secondary);">天</span>
+                                </div>
+                            </div>
+                            <div style="margin-top:4px; font-size:11px; color:#fbbf24;" id="stPledgeInterestLabel">利息：$0</div>
+                        </div>
+                        <!-- 借貸卡 -->
+                        <div class="dashboard-card" style="flex:1.4; min-width:200px; border-color:rgba(248,113,113,0.3);">
+                            <span class="label" style="color:#f87171;">借貸金額</span>
+                            <div style="display:flex; align-items:center; margin-bottom:6px;">
+                                <span class="value-prefix" style="margin-right:4px;">$</span>
+                                <input type="number" id="stLoanAmountInput" value="0" min="0" step="1" class="value-input">
+                            </div>
+                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                <span style="font-size:11px; color:var(--text-secondary);">借款設定</span>
+                                <div style="display:flex; align-items:center; gap:4px;">
+                                    <input type="number" id="stLoanRateInput" value="3" min="0" step="0.1" style="width:48px; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:var(--text-primary); padding:2px 4px; text-align:right;">
+                                    <span style="font-size:11px; color:var(--text-secondary);">%</span>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:4px;">
+                                    <input type="number" id="stLoanDaysInput" value="365" min="1" step="1" style="width:52px; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:var(--text-primary); padding:2px 4px; text-align:right;">
+                                    <span style="font-size:11px; color:var(--text-secondary);">天</span>
+                                </div>
+                            </div>
+                            <div style="margin-top:4px; font-size:11px; color:#f87171;" id="stLoanInterestLabel">利息：$0</div>
                         </div>
                     </div>
+                    <!-- 第二行：總付出成本、已實現損益、可動用資金（含質押/借貸分項） -->
                     <div style="display:flex; gap:16px; flex-basis:100%; flex-wrap:wrap; margin-top:4px;">
                         <div class="dashboard-card" style="flex:1;">
                             <span class="label">總付出成本</span>
@@ -1526,13 +1569,17 @@ select option {
                             <span class="label">短期已實現損益</span>
                             <div style="display:flex; align-items:center;">
                                 <span class="value-prefix" style="margin-right:4px;">$</span>
-                                <input type="number" id="stRealizedInput" value="0" step="1"
-                                    class="value-input">
+                                <input type="number" id="stRealizedInput" value="0" step="1" class="value-input">
                             </div>
                         </div>
-                        <div class="dashboard-card" style="flex:1;">
+                        <div class="dashboard-card" style="flex:1.6;">
                             <span class="label">剩餘可動用資金</span>
                             <span class="value" id="stRemainingFunds" style="color:#60a5fa;">0</span>
+                            <div style="margin-top:6px; display:flex; gap:12px; flex-wrap:wrap;">
+                                <span style="font-size:11px; color:var(--text-secondary);">含質押：<span id="stRemainingWithPledge" style="color:#fbbf24;">0</span></span>
+                                <span style="font-size:11px; color:var(--text-secondary);">含借貸：<span id="stRemainingWithLoan" style="color:#f87171;">0</span></span>
+                                <span style="font-size:11px; color:var(--text-secondary);">借貸總計（含息）：<span id="stTotalBorrowed" style="color:#a78bfa;">0</span></span>
+                            </div>
                         </div>
                     </div>
                     <div class="dashboard-card highlight-card" style="flex-basis:100%; margin-top:16px;">
@@ -3163,6 +3210,9 @@ document.addEventListener('DOMContentLoaded', () => {
         stRemainingFundsEl.textContent = formatCurrency(remainingFunds);
         stRemainingFundsEl.style.color = remainingFunds < 0 ? '#ef4444' : '#60a5fa';
 
+        // 同步質押/借貸分項
+        if (typeof calcPledgeLoan === 'function') calcPledgeLoan();
+
         // Bind events
         document.querySelectorAll('.live-price-input-st').forEach(input => {
             input.addEventListener('change', (e) => {
@@ -3405,6 +3455,61 @@ document.addEventListener('DOMContentLoaded', () => {
             renderShortTermInventory();
         });
     }
+
+    // 質押 / 借貸 inputs
+    const stPledgeAmountInput = document.getElementById('stPledgeAmountInput');
+    const stPledgeRateInput   = document.getElementById('stPledgeRateInput');
+    const stPledgeDaysInput   = document.getElementById('stPledgeDaysInput');
+    const stLoanAmountInput   = document.getElementById('stLoanAmountInput');
+    const stLoanRateInput     = document.getElementById('stLoanRateInput');
+    const stLoanDaysInput     = document.getElementById('stLoanDaysInput');
+    const stPledgeInterestLabel = document.getElementById('stPledgeInterestLabel');
+    const stLoanInterestLabel   = document.getElementById('stLoanInterestLabel');
+    const stRemainingWithPledge = document.getElementById('stRemainingWithPledge');
+    const stRemainingWithLoan   = document.getElementById('stRemainingWithLoan');
+    const stTotalBorrowed       = document.getElementById('stTotalBorrowed');
+
+    function calcPledgeLoan() {
+        const pledgeAmt  = parseFloat(stPledgeAmountInput?.value) || 0;
+        const pledgeRate = parseFloat(stPledgeRateInput?.value)  || 0;
+        const pledgeDays = parseFloat(stPledgeDaysInput?.value)  || 0;
+        const loanAmt    = parseFloat(stLoanAmountInput?.value)  || 0;
+        const loanRate   = parseFloat(stLoanRateInput?.value)    || 0;
+        const loanDays   = parseFloat(stLoanDaysInput?.value)    || 0;
+
+        const pledgeInterest = pledgeAmt * (pledgeRate / 100) * (pledgeDays / 365);
+        const loanInterest   = loanAmt   * (loanRate   / 100) * (loanDays   / 365);
+
+        if (stPledgeInterestLabel) stPledgeInterestLabel.textContent = `利息：$${formatCurrency(pledgeInterest)}`;
+        if (stLoanInterestLabel)   stLoanInterestLabel.textContent   = `利息：$${formatCurrency(loanInterest)}`;
+
+        // 更新剩餘可動用資金分項
+        const base = parseFloat(stRemainingFundsEl?.textContent?.replace(/,/g, '')) || 0;
+        if (stRemainingWithPledge) stRemainingWithPledge.textContent = formatCurrency(base + pledgeAmt);
+        if (stRemainingWithLoan)   stRemainingWithLoan.textContent   = formatCurrency(base + loanAmt);
+        if (stTotalBorrowed)       stTotalBorrowed.textContent       = formatCurrency(pledgeAmt + loanAmt + pledgeInterest + loanInterest);
+
+        // 存到 localStorage
+        localStorage.setItem('stPledge', JSON.stringify({ amt: pledgeAmt, rate: pledgeRate, days: pledgeDays }));
+        localStorage.setItem('stLoan',   JSON.stringify({ amt: loanAmt,   rate: loanRate,   days: loanDays   }));
+    }
+
+    [stPledgeAmountInput, stPledgeRateInput, stPledgeDaysInput,
+     stLoanAmountInput,   stLoanRateInput,   stLoanDaysInput].forEach(el => {
+        if (el) el.addEventListener('input', calcPledgeLoan);
+    });
+
+    // 載入已存的質押/借貸資料
+    try {
+        const sp = JSON.parse(localStorage.getItem('stPledge') || '{}');
+        const sl = JSON.parse(localStorage.getItem('stLoan')   || '{}');
+        if (stPledgeAmountInput && sp.amt) stPledgeAmountInput.value = sp.amt;
+        if (stPledgeRateInput   && sp.rate != null) stPledgeRateInput.value = sp.rate;
+        if (stPledgeDaysInput   && sp.days) stPledgeDaysInput.value = sp.days;
+        if (stLoanAmountInput   && sl.amt) stLoanAmountInput.value = sl.amt;
+        if (stLoanRateInput     && sl.rate != null) stLoanRateInput.value = sl.rate;
+        if (stLoanDaysInput     && sl.days) stLoanDaysInput.value = sl.days;
+    } catch {}
 
     if (stRealizedInput) {
         stRealizedInput.addEventListener('change', (e) => {
@@ -4455,7 +4560,7 @@ document.addEventListener('DOMContentLoaded', () => {
 <link rel="stylesheet" href="analysis.css">
 <script src="analysis_dict.js?v=1"></script>
 <script src="analysis.js?v=v25_ps_ratio"></script>
-<script src="analysis_macro_v6.js"></script>
+<script src="analysis_macro_v5.js"></script>
 </body>
 
 </html>
