@@ -29,7 +29,6 @@ const DAILY_MACRO_SYMBOLS = [
     //  利率與殖利率曲線 
     { id: 'tnx',     section: '利率曲線', name: '美債 10Y',         symbol: '^TNX',       fredSeries: 'DGS10',         stooq: '10usy.b', kind: 'rate',   note: '最重要的折現率基準，10Y 每上升 25 bp，成長股本益比通常收縮 5–8%' },
     { id: 'thirtyY', section: '利率曲線', name: '美債 30Y',         symbol: '^TYX',       fredSeries: 'DGS30',         stooq: '30usy.b', kind: 'rate',   note: '長期通膨預期的體現；30Y 持續走高代表市場不相信通膨已受控' },
-    { id: 'twoY',    section: '利率曲線', name: '美債 2Y',          fredSeries: 'DGS2',          stooq: '2usy.b',  kind: 'rate',   note: '最直接反映 Fed 升降息預期；2Y 下行代表市場定價降息，是股市的領先訊號' },
 
 
 
@@ -72,6 +71,8 @@ const TREND_MACRO_SERIES = [
     // 風險情緒
     { id: 'hySpread',  section: '風險情緒', name: 'HY 信用利差',       series: 'BAMLH0A0HYM2', mode: 'level', note: '高收益債與美債利差；> 500 bp 代表市場對企業違約的恐慌升溫，是系統風險訊號' },
     { id: 'yieldSprd', section: '風險情緒', name: '美債 2Y-10Y 利差',  series: 'T10Y2Y',       mode: 'level', note: '殖利率曲線倒掛（負值）是最可靠的衰退預測指標；歷史上每次倒掛後 6–18 個月內均出現衰退' },
+    // 利率曲線（Trend，用 FRED JSON API）
+    { id: 'twoY',      section: '利率曲線', name: '美債 2Y',           series: 'DGS2',         mode: 'level', note: '最直接反映 Fed 升降息預期；2Y 下行代表市場定價降息，是股市的領先訊號' },
     // GDP
     { id: 'gdp',      section: '景氣循環', name: '美國 GDP 季增率',   series: 'A191RL1Q225SBEA', mode: 'level', note: '兩季連續負成長為技術性衰退定義；GDP 季增率是景氣最終裁判，但公布有 1 季落差' },
     { id: 'ismMfg',   section: '景氣循環', name: '製造業生產 YoY',      series: 'IPMAN',              mode: 'yoy',     note: 'FRED 已無 ISM PMI 原始資料；製造業工業生產 YoY 為同步替代指標，轉負代表訂單萎縮' },
@@ -100,10 +101,11 @@ const DAILY_SECTIONS = [
 
 const TREND_SECTIONS = [
     { key: '台灣指標',       title: ' 台灣經濟指標',   note: '台灣出口年增率是台股走勢最直接的領先指標，反映全球科技需求與供應鏈健康度' },
-    { key: '風險情緒',       title: ' 風險情緒',       note: 'HY 信用利差擴大代表市場對企業違約恐慌升溫，是股市壓力的早期預警' },
+    { key: '風險情緒',       title: ' 風險情緒',       note: 'HY 利差與殖利率曲線是系統性風險最早的警示燈，倒掛或擴大都值得高度警戒' },
+    { key: '利率曲線',       title: ' 利率曲線',       note: '美債 2Y 最直接反映 Fed 預期，搭配 10Y 看曲線形狀' },
     { key: '通膨與貨幣政策', title: ' 通膨與貨幣政策', note: 'CPI、Core PCE 是 Fed 升降息的核心依據；PCE 高於 2.5% 時降息預期降溫' },
     { key: '就業市場',       title: ' 就業市場',       note: '非農與 JOLTS 是 Fed 雙重使命的另一半；就業過熱時 Fed 不敢快速降息' },
-    { key: '景氣循環',       title: ' 景氣循環指標',   note: 'ISM 製造業 PMI 是台灣出口訂單的最佳領先指標，提前 1–2 個月反映需求變化' },
+    { key: '景氣循環',       title: ' 景氣循環指標',   note: '製造業生產與個人消費是景氣最直接的同步指標' },
     { key: '消費與信心',     title: ' 消費者信心',     note: '消費信心連續下滑超過 3 個月，往往預示企業收入成長放緩' },
     { key: '房市與信用',     title: ' 房市與信用',     note: '房市冷熱反映利率政策效果；高房貸利率持續越久，消費財富效應侵蝕越深' },
 ];
