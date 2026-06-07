@@ -3873,7 +3873,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         const we = station.WeatherElement;
                         cwaWeather = we?.Weather || null;
                         const cwaTemp = parseFloat(we?.AirTemperature);
-                        if (isFinite(cwaTemp) && cwaTemp !== -99) temp = cwaTemp;
+                        if (isFinite(cwaTemp) && cwaTemp > -90) temp = cwaTemp;
                     }
                 }
             } catch(e) {}
@@ -3989,12 +3989,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         
         const savedCity = localStorage.getItem('twStockPreferredCity');
-        // 檢查格式是否為新格式（4個欄位：county,sitename,lat,lon）
-        if (savedCity && savedCity.split(',').length === 4) {
+        // 檢查格式是否為新格式（5個欄位：county,sitename,lat,lon,cwaId）
+        if (savedCity && savedCity.split(',').length === 5) {
             citySelector.value = savedCity;
         } else {
-            // 舊格式或無效，清除並使用預設（彰化市）
+            // 預設彰化市，清除舊格式
             localStorage.removeItem('twStockPreferredCity');
+            citySelector.value = '彰化縣,彰化,24.08,120.54,CAG050';
         }
         
         // 初次加載時調整寬度
