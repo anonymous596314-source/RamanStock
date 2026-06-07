@@ -3897,20 +3897,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch(e) {}
 
-        // B. 如果 A 失敗，嘗試 Open-Meteo (備援 1)
-        if (!success) {
-            try {
-                const backupAqiRes = await fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&current=us_aqi&t=` + Date.now());
-                if (backupAqiRes.ok) {
-                    const backupData = await backupAqiRes.json();
-                    aqi = backupData.current.us_aqi;
-                    aqiStatus = aqi > 150 ? '不健康' : (aqi > 100 ? '敏感不佳' : (aqi > 50 ? '普通' : '良好'));
-                    success = true;
-                }
-            } catch(e) {}
-        }
-
-        // C. 如果 B 也失敗，嘗試 WAQI (備援 2)
+        // B. 如果 A 失敗，嘗試 WAQI (備援)
         if (!success) {
             try {
                 const waqiRes = await fetch(`https://api.waqi.info/feed/geo:${lat};${lon}/?token=demo&t=` + Date.now());
@@ -3919,9 +3906,22 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (waqiData.status === 'ok') {
                         aqi = waqiData.data.aqi;
                         const v = parseInt(aqi);
-                        aqiStatus = v > 150 ? '不健康' : (v > 100 ? '敏感不佳' : (v > 50 ? '普通' : '良好'));
+                        aqiStatus = v > 150 ? '不健康' : (v > 100 ? '敏感不佳' : (v > 50 ? '普通' : '良好');
                         success = true;
                     }
+                }
+            } catch(e) {}
+        }
+
+        // C. 最後備援：Open-Meteo
+        if (!success) {
+            try {
+                const backupAqiRes = await fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&current=us_aqi&t=` + Date.now());
+                if (backupAqiRes.ok) {
+                    const backupData = await backupAqiRes.json();
+                    aqi = backupData.current.us_aqi;
+                    aqiStatus = aqi > 150 ? '不健康' : (aqi > 100 ? '敏感不佳' : (aqi > 50 ? '普通' : '良好'));
+                    success = true;
                 }
             } catch(e) {}
         }
