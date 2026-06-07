@@ -2732,6 +2732,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let anySuccess = false;
         let allItems = [...inventory, ...shortTermInventory];
+        let marketDataMap = {};
 
         function validatePrice(raw) {
             if (raw === null || raw === undefined || raw === '' || raw === '-') return null;
@@ -2741,9 +2742,70 @@ document.addEventListener('DOMContentLoaded', () => {
             return num;
         }
 
-        // --- Step 1: Bulk Fetch from Official OpenData (Fastest) ---
-        let marketDataMap = {};
-        
+        // --- Step 0: Yahoo Finance 盤中即時報價（最優先）---
+        // regularMarketPrice 盤中即時更新，收盤後也有當日收盤價
+        try {
+            const allItems0 = [...inventory, ...shortTermInventory];
+            const symbols = [...new Set(allItems0.map(item => {
+                const code = item.code.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
+                // 判斷上市(TW)或上櫃(TWO)—先嘗試 .TW，FinMind 失敗再說
+                return code + '.TW';
+            }))];
+
+            // Yahoo Finance 最多一次查 10 個 symbol
+            const chunkSize = 10;
+            for (let i = 0; i < symbols.length; i += chunkSize) {
+                const chunk = symbols.slice(i, i + chunkSize).join(',');
+                const yahooUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(chunk)}&fields=regularMarketPrice,symbol`;
+                try {
+                    const _url = (typeof WORKER_PROXY_URL !== 'undefined' && WORKER_PROXY_URL)
+                        ? `${WORKER_PROXY_URL}/?url=${encodeURIComponent(yahooUrl)}`
+                        : yahooUrl;
+                    const res = await fetch(_url);
+                    if (res.ok) {
+                        const json = await res.json();
+                        const quotes = json?.quoteResponse?.result || [];
+                        quotes.forEach(q => {
+                            const code = q.symbol.replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
+                            const price = validatePrice(q.regularMarketPrice);
+                            if (price !== null) marketDataMap[code] = price;
+                        });
+                    }
+                } catch(e) {
+                    console.warn('[Yahoo] chunk failed:', e.message);
+                }
+            }
+
+            // 也查 .TWO（上櫃股）
+            const symbolsTWO = [...new Set(allItems0.map(item => {
+                const code = item.code.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
+                return code + '.TWO';
+            }))];
+            for (let i = 0; i < symbolsTWO.length; i += chunkSize) {
+                const chunk = symbolsTWO.slice(i, i + chunkSize).join(',');
+                const yahooUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(chunk)}&fields=regularMarketPrice,symbol`;
+                try {
+                    const _url = (typeof WORKER_PROXY_URL !== 'undefined' && WORKER_PROXY_URL)
+                        ? `${WORKER_PROXY_URL}/?url=${encodeURIComponent(yahooUrl)}`
+                        : yahooUrl;
+                    const res = await fetch(_url);
+                    if (res.ok) {
+                        const json = await res.json();
+                        const quotes = json?.quoteResponse?.result || [];
+                        quotes.forEach(q => {
+                            const code = q.symbol.replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
+                            // 只有 .TWO 有回傳有效價格時才覆蓋（避免 .TW 已經有了）
+                            const price = validatePrice(q.regularMarketPrice);
+                            if (price !== null && !marketDataMap[code]) marketDataMap[code] = price;
+                        });
+                    }
+                } catch(e) {}
+            }
+        } catch(e) {
+            console.warn('[Yahoo Step 0] Error:', e.message);
+        }
+
+        // --- Step 1: Bulk Fetch from Official OpenData (收盤後備援) ---
         try {
             const [twseRes, tpexRes] = await Promise.all([
                 fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL').catch(() => null),
