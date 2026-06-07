@@ -1368,26 +1368,26 @@ select option {
                     <div style="margin-top:4px;">
                         <p style="font-size:14px; color:var(--text-secondary); margin:0; display:flex; align-items:center;">
                             <select id="citySelector" style="background:transparent; border:none; color:#f8fafc; font-size:14px; padding:0; margin:0; outline:none; cursor:pointer; font-weight:bold; font-family:inherit; -webkit-appearance:none; appearance:none; width:4.5em;">
-                                <option value="彰化縣,彰化,24.08,120.54">彰化市</option>
-                                <option value="臺北市,,25.04,121.51">臺北市</option>
-                                <option value="新北市,,25.01,121.46">新北市</option>
-                                <option value="桃園市,,24.99,121.31">桃園市</option>
-                                <option value="新竹市,,24.81,120.97">新竹市</option>
-                                <option value="苗栗縣,,24.56,120.82">苗栗縣</option>
-                                <option value="臺中市,,24.14,120.67">臺中市</option>
-                                <option value="南投縣,,23.91,120.69">南投縣</option>
-                                <option value="雲林縣,,23.71,120.54">雲林縣</option>
-                                <option value="嘉義市,,23.48,120.45">嘉義市</option>
-                                <option value="臺南市,,22.99,120.21">臺南市</option>
-                                <option value="高雄市,,22.62,120.31">高雄市</option>
-                                <option value="屏東縣,,22.67,120.49">屏東縣</option>
-                                <option value="基隆市,,25.13,121.74">基隆市</option>
-                                <option value="宜蘭縣,,24.75,121.75">宜蘭縣</option>
-                                <option value="花蓮縣,,23.98,121.61">花蓮縣</option>
-                                <option value="臺東縣,,22.75,121.15">臺東縣</option>
-                                <option value="澎湖縣,,23.57,119.57">澎湖縣</option>
-                                <option value="金門縣,,24.43,118.37">金門縣</option>
-                                <option value="連江縣,,26.16,119.95">連江縣</option>
+                                <option value="彰化縣,彰化,24.08,120.54,CAG050">彰化市</option>
+                                <option value="臺北市,,25.04,121.51,466920">臺北市</option>
+                                <option value="新北市,,25.01,121.46,466881">新北市</option>
+                                <option value="桃園市,,24.99,121.31,C0C480">桃園市</option>
+                                <option value="新竹市,,24.81,120.97,466990">新竹市</option>
+                                <option value="苗栗縣,,24.56,120.82,C0E420">苗栗縣</option>
+                                <option value="臺中市,,24.14,120.67,467490">臺中市</option>
+                                <option value="南投縣,,23.91,120.69,467530">南投縣</option>
+                                <option value="雲林縣,,23.71,120.54,C0I180">雲林縣</option>
+                                <option value="嘉義市,,23.48,120.45,467480">嘉義市</option>
+                                <option value="臺南市,,22.99,120.21,467410">臺南市</option>
+                                <option value="高雄市,,22.62,120.31,467440">高雄市</option>
+                                <option value="屏東縣,,22.67,120.49,467590">屏東縣</option>
+                                <option value="基隆市,,25.13,121.74,466940">基隆市</option>
+                                <option value="宜蘭縣,,24.75,121.75,466990">宜蘭縣</option>
+                                <option value="花蓮縣,,23.98,121.61,466990">花蓮縣</option>
+                                <option value="臺東縣,,22.75,121.15,467660">臺東縣</option>
+                                <option value="澎湖縣,,23.57,119.57,467350">澎湖縣</option>
+                                <option value="金門縣,,24.43,118.37,C0R030">金門縣</option>
+                                <option value="連江縣,,26.16,119.95,C0S530">連江縣</option>
                             </select>
                             <span id="portfolioWeatherMain" style="margin:0; padding:0;">載入中...</span>
                         </p>
@@ -3851,25 +3851,55 @@ document.addEventListener('DOMContentLoaded', () => {
         const citySelector = document.getElementById('citySelector');
         if (!elMain || !elAqi || !citySelector) return;
         
-        const [county, sitename, lat, lon] = citySelector.value.split(',');
+        const [county, sitename, lat, lon, cwaId] = citySelector.value.split(',');
         
-        // --- 1. 抓取氣溫 (Open-Meteo) ---
+        // --- 1. 抓取氣溫 (Open-Meteo) + 天氣描述優先用 CWA ---
         let weatherStr = '更新中';
         let temp = '--';
+
+        // 1a. CWA 即時觀測（天氣描述最準）
+        let cwaWeather = null;
+        if (cwaId) {
+            try {
+                const cwaUrl = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001?Authorization=CWA-A97184C6-D788-4CA8-AFDF-97B1CED79C9F&StationId=${cwaId}&format=JSON&limit=1`;
+                const _cwaWorkerUrl = (typeof WORKER_PROXY_URL !== 'undefined' && WORKER_PROXY_URL)
+                    ? `${WORKER_PROXY_URL}/?url=${encodeURIComponent(cwaUrl)}`
+                    : cwaUrl;
+                const cwaRes = await fetch(_cwaWorkerUrl);
+                if (cwaRes.ok) {
+                    const cwaData = await cwaRes.json();
+                    const station = cwaData?.records?.Station?.[0];
+                    if (station) {
+                        const we = station.WeatherElement;
+                        cwaWeather = we?.Weather || null;
+                        const cwaTemp = parseFloat(we?.AirTemperature);
+                        if (isFinite(cwaTemp) && cwaTemp !== -99) temp = cwaTemp;
+                    }
+                }
+            } catch(e) {}
+        }
+
+        // 1b. Open-Meteo（溫度備援，天氣描述備援）
         try {
             const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&t=` + Date.now());
             if (weatherRes.ok) {
                 const weatherData = await weatherRes.json();
-                temp = weatherData.current.temperature_2m;
-                const code = weatherData.current.weather_code;
-                weatherStr = '晴天';
-                if ([1,2,3].includes(code)) weatherStr = '多雲';
-                else if ([45,48].includes(code)) weatherStr = '霧';
-                else if ([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) weatherStr = '雨天';
-                else if ([71,73,75,77,85,86].includes(code)) weatherStr = '雪天';
-                else if ([95,96,99].includes(code)) weatherStr = '雷雨';
+                if (temp === '--') temp = weatherData.current.temperature_2m;
+                if (!cwaWeather) {
+                    const code = weatherData.current.weather_code;
+                    cwaWeather = '晴天';
+                    if ([1,2].includes(code)) cwaWeather = '多雲';
+                    else if ([3].includes(code)) cwaWeather = '陰天';
+                    else if ([45,48].includes(code)) cwaWeather = '霧';
+                    else if ([51,53,55,56,57].includes(code)) cwaWeather = '多雲';
+                    else if ([61,63,65,66,67,80,81,82].includes(code)) cwaWeather = '雨天';
+                    else if ([71,73,75,77,85,86].includes(code)) cwaWeather = '雪天';
+                    else if ([95,96,99].includes(code)) cwaWeather = '雷雨';
+                }
             }
         } catch(e) {}
+
+        weatherStr = cwaWeather || '更新中';
         elMain.innerHTML = `${weatherStr}${temp}°C`;
 
         // --- 2. 抓取 AQI (多重備援) ---
