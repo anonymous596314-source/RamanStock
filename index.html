@@ -3880,8 +3880,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // A. 環境部 MoENV — 走 Cloudflare Worker 繞過 CORS
         try {
             const filter = sitename
-                ? `filters=sitename,EQ,${encodeURIComponent(sitename)}`
-                : `filters=county,EQ,${encodeURIComponent(county)}`;
+                ? `filters=sitename,EQ,${sitename}`
+                : `filters=county,EQ,${county}`;
             const moenvUrl = `https://data.moenv.gov.tw/api/v2/aqx_p_432?api_key=d49749a6-d928-4c9c-b0df-d8bf215a1228&limit=1&format=JSON&${filter}&t=${Date.now()}`;
             const _workerUrl = (typeof WORKER_PROXY_URL !== 'undefined' && WORKER_PROXY_URL)
                 ? `${WORKER_PROXY_URL}/?url=${encodeURIComponent(moenvUrl)}`
