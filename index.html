@@ -1368,26 +1368,26 @@ select option {
                     <div style="margin-top:4px;">
                         <p style="font-size:14px; color:var(--text-secondary); margin:0; display:flex; align-items:center;">
                             <select id="citySelector" style="background:transparent; border:none; color:#f8fafc; font-size:14px; padding:0; margin:0; outline:none; cursor:pointer; font-weight:bold; font-family:inherit; -webkit-appearance:none; appearance:none; width:4.5em;">
-                                <option value="彰化,24.08,120.54">彰化市</option>
-                                <option value="臺北,25.04,121.51">臺北市</option>
-                                <option value="新北,25.01,121.46">新北市</option>
-                                <option value="桃園,24.99,121.31">桃園市</option>
-                                <option value="新竹,24.81,120.97">新竹市</option>
-                                <option value="苗栗,24.56,120.82">苗栗縣</option>
-                                <option value="臺中,24.14,120.67">臺中市</option>
-                                <option value="南投,23.91,120.69">南投縣</option>
-                                <option value="斗六,23.71,120.54">雲林縣</option>
-                                <option value="嘉義,23.48,120.45">嘉義市</option>
-                                <option value="臺南,22.99,120.21">臺南市</option>
-                                <option value="高雄,22.62,120.31">高雄市</option>
-                                <option value="屏東,22.67,120.49">屏東縣</option>
-                                <option value="基隆,25.13,121.74">基隆市</option>
-                                <option value="宜蘭,24.75,121.75">宜蘭縣</option>
-                                <option value="花蓮,23.98,121.61">花蓮縣</option>
-                                <option value="臺東,22.75,121.15">臺東縣</option>
-                                <option value="澎湖,23.57,119.57">澎湖縣</option>
-                                <option value="金門,24.43,118.37">金門縣</option>
-                                <option value="馬祖,26.16,119.95">連江縣</option>
+                                <option value="彰化縣,彰化,24.08,120.54">彰化市</option>
+                                <option value="臺北市,,25.04,121.51">臺北市</option>
+                                <option value="新北市,,25.01,121.46">新北市</option>
+                                <option value="桃園市,,24.99,121.31">桃園市</option>
+                                <option value="新竹市,,24.81,120.97">新竹市</option>
+                                <option value="苗栗縣,,24.56,120.82">苗栗縣</option>
+                                <option value="臺中市,,24.14,120.67">臺中市</option>
+                                <option value="南投縣,,23.91,120.69">南投縣</option>
+                                <option value="雲林縣,,23.71,120.54">雲林縣</option>
+                                <option value="嘉義市,,23.48,120.45">嘉義市</option>
+                                <option value="臺南市,,22.99,120.21">臺南市</option>
+                                <option value="高雄市,,22.62,120.31">高雄市</option>
+                                <option value="屏東縣,,22.67,120.49">屏東縣</option>
+                                <option value="基隆市,,25.13,121.74">基隆市</option>
+                                <option value="宜蘭縣,,24.75,121.75">宜蘭縣</option>
+                                <option value="花蓮縣,,23.98,121.61">花蓮縣</option>
+                                <option value="臺東縣,,22.75,121.15">臺東縣</option>
+                                <option value="澎湖縣,,23.57,119.57">澎湖縣</option>
+                                <option value="金門縣,,24.43,118.37">金門縣</option>
+                                <option value="連江縣,,26.16,119.95">連江縣</option>
                             </select>
                             <span id="portfolioWeatherMain" style="margin:0; padding:0;">載入中...</span>
                         </p>
@@ -3851,7 +3851,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const citySelector = document.getElementById('citySelector');
         if (!elMain || !elAqi || !citySelector) return;
         
-        const [cityName, lat, lon] = citySelector.value.split(',');
+        const [county, sitename, lat, lon] = citySelector.value.split(',');
         
         // --- 1. 抓取氣溫 (Open-Meteo) ---
         let weatherStr = '更新中';
@@ -3877,9 +3877,12 @@ document.addEventListener('DOMContentLoaded', () => {
         let aqiStatus = '待更新';
         let success = false;
 
-        // A. 環境部 MoENV
+        // A. 環境部 MoENV — 有指定 sitename 就用 sitename，否則用 county 抓第一筆
         try {
-            const aqiRes = await fetch(`https://data.moenv.gov.tw/api/v2/aqx_p_432?api_key=e8dd42e6-9b8b-43f8-991e-b3dee723a52d&limit=1&format=JSON&filters=sitename,EQ,${cityName}&t=` + Date.now());
+            const filter = sitename
+                ? `filters=sitename,EQ,${sitename}`
+                : `filters=county,EQ,${county}`;
+            const aqiRes = await fetch(`https://data.moenv.gov.tw/api/v2/aqx_p_432?api_key=e8dd42e6-9b8b-43f8-991e-b3dee723a52d&limit=1&format=JSON&${filter}&t=` + Date.now());
             if (aqiRes.ok) {
                 const aqiData = await aqiRes.json();
                 if (aqiData.records && aqiData.records.length > 0) {
