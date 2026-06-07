@@ -3856,9 +3856,26 @@ document.addEventListener('DOMContentLoaded', () => {
         // --- 1. 抓取氣溫 (Open-Meteo) + 天氣描述優先用 CWA ---
         let weatherStr = '更新中';
         let temp = '--';
-
-        // 1a. CWA 即時觀測（天氣描述最準）
         let cwaWeather = null;
+        try {
+            const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&t=` + Date.now());
+            if (weatherRes.ok) {
+                const weatherData = await weatherRes.json();
+                temp = weatherData.current.temperature_2m;
+                // Open-Meteo 天氣描述作為備援
+                const code = weatherData.current.weather_code;
+                cwaWeather = '晴天';
+                if ([1,2].includes(code)) cwaWeather = '多雲';
+                else if ([3].includes(code)) cwaWeather = '陰天';
+                else if ([45,48].includes(code)) cwaWeather = '霧';
+                else if ([51,53,55,56,57].includes(code)) cwaWeather = '多雲';
+                else if ([61,63,65,66,67,80,81,82].includes(code)) cwaWeather = '雨天';
+                else if ([71,73,75,77,85,86].includes(code)) cwaWeather = '雪天';
+                else if ([95,96,99].includes(code)) cwaWeather = '雷雨';
+            }
+        } catch(e) {}
+
+        // 1b. CWA 即時觀測（只取天氣描述，覆蓋 Open-Meteo 的描述）
         if (cwaId) {
             try {
                 const cwaUrl = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001?Authorization=CWA-A97184C6-D788-4CA8-AFDF-97B1CED79C9F&StationId=${cwaId}&format=JSON&limit=1`;
@@ -3870,34 +3887,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     const cwaData = await cwaRes.json();
                     const station = cwaData?.records?.Station?.[0];
                     if (station) {
-                        const we = station.WeatherElement;
-                        cwaWeather = we?.Weather || null;
-                        const cwaTemp = parseFloat(we?.AirTemperature);
-                        if (isFinite(cwaTemp) && cwaTemp > -90) temp = cwaTemp;
+                        const weather = station.WeatherElement?.Weather;
+                        if (weather && weather !== '-99') cwaWeather = weather;
                     }
                 }
             } catch(e) {}
         }
-
-        // 1b. Open-Meteo（溫度備援，天氣描述備援）
-        try {
-            const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&t=` + Date.now());
-            if (weatherRes.ok) {
-                const weatherData = await weatherRes.json();
-                if (temp === '--') temp = weatherData.current.temperature_2m;
-                if (!cwaWeather) {
-                    const code = weatherData.current.weather_code;
-                    cwaWeather = '晴天';
-                    if ([1,2].includes(code)) cwaWeather = '多雲';
-                    else if ([3].includes(code)) cwaWeather = '陰天';
-                    else if ([45,48].includes(code)) cwaWeather = '霧';
-                    else if ([51,53,55,56,57].includes(code)) cwaWeather = '多雲';
-                    else if ([61,63,65,66,67,80,81,82].includes(code)) cwaWeather = '雨天';
-                    else if ([71,73,75,77,85,86].includes(code)) cwaWeather = '雪天';
-                    else if ([95,96,99].includes(code)) cwaWeather = '雷雨';
-                }
-            }
-        } catch(e) {}
 
         weatherStr = cwaWeather || '更新中';
         elMain.innerHTML = `${weatherStr}${temp}°C`;
