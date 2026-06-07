@@ -1519,44 +1519,34 @@ select option {
                             </div>
                         </div>
                         <!-- 質押卡 -->
-                        <div class="dashboard-card" style="flex:1.4; min-width:200px; border-color:rgba(251,191,36,0.3);">
-                            <span class="label" style="color:#fbbf24;">質押金額</span>
+                        <div class="dashboard-card" style="flex:1.4; min-width:200px;">
+                            <span class="label">質押金額</span>
                             <div style="display:flex; align-items:center; margin-bottom:6px;">
                                 <span class="value-prefix" style="margin-right:4px;">$</span>
                                 <input type="number" id="stPledgeAmountInput" value="0" min="0" step="1" class="value-input">
                             </div>
-                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                                <span style="font-size:11px; color:var(--text-secondary);">質押設定</span>
-                                <div style="display:flex; align-items:center; gap:4px;">
-                                    <input type="number" id="stPledgeRateInput" value="4" min="0" step="0.1" style="width:48px; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:var(--text-primary); padding:2px 4px; text-align:right;">
-                                    <span style="font-size:11px; color:var(--text-secondary);">%</span>
-                                </div>
-                                <div style="display:flex; align-items:center; gap:4px;">
-                                    <input type="number" id="stPledgeDaysInput" value="180" min="1" step="1" style="width:52px; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:var(--text-primary); padding:2px 4px; text-align:right;">
-                                    <span style="font-size:11px; color:var(--text-secondary);">天</span>
-                                </div>
+                            <div style="display:flex; gap:6px; align-items:center;">
+                                <input type="number" id="stPledgeRateInput" value="4" min="0" step="0.001" style="width:52px; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:var(--text-primary); padding:2px 4px; text-align:right;">
+                                <span style="font-size:12px; color:var(--text-secondary);">%</span>
+                                <input type="number" id="stPledgeDaysInput" value="180" min="1" step="1" style="width:48px; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:var(--text-primary); padding:2px 4px; text-align:right;">
+                                <span style="font-size:12px; color:var(--text-secondary);">天</span>
+                                <span style="font-size:11px; color:var(--text-primary); margin-left:4px;" id="stPledgeInterestLabel">利息：$0</span>
                             </div>
-                            <div style="margin-top:4px; font-size:11px; color:#fbbf24;" id="stPledgeInterestLabel">利息：$0</div>
                         </div>
                         <!-- 借貸卡 -->
-                        <div class="dashboard-card" style="flex:1.4; min-width:200px; border-color:rgba(248,113,113,0.3);">
-                            <span class="label" style="color:#f87171;">借貸金額</span>
+                        <div class="dashboard-card" style="flex:1.4; min-width:200px;">
+                            <span class="label">借貸金額</span>
                             <div style="display:flex; align-items:center; margin-bottom:6px;">
                                 <span class="value-prefix" style="margin-right:4px;">$</span>
                                 <input type="number" id="stLoanAmountInput" value="0" min="0" step="1" class="value-input">
                             </div>
-                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                                <span style="font-size:11px; color:var(--text-secondary);">借款設定</span>
-                                <div style="display:flex; align-items:center; gap:4px;">
-                                    <input type="number" id="stLoanRateInput" value="3" min="0" step="0.1" style="width:48px; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:var(--text-primary); padding:2px 4px; text-align:right;">
-                                    <span style="font-size:11px; color:var(--text-secondary);">%</span>
-                                </div>
-                                <div style="display:flex; align-items:center; gap:4px;">
-                                    <input type="number" id="stLoanDaysInput" value="365" min="1" step="1" style="width:52px; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:var(--text-primary); padding:2px 4px; text-align:right;">
-                                    <span style="font-size:11px; color:var(--text-secondary);">天</span>
-                                </div>
+                            <div style="display:flex; gap:6px; align-items:center;">
+                                <input type="number" id="stLoanRateInput" value="3" min="0" step="0.001" style="width:52px; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:var(--text-primary); padding:2px 4px; text-align:right;">
+                                <span style="font-size:12px; color:var(--text-secondary);">%</span>
+                                <input type="number" id="stLoanDaysInput" value="365" min="1" step="1" style="width:48px; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:var(--text-primary); padding:2px 4px; text-align:right;">
+                                <span style="font-size:12px; color:var(--text-secondary);">天</span>
+                                <span style="font-size:11px; color:var(--text-primary); margin-left:4px;" id="stLoanInterestLabel">利息：$0</span>
                             </div>
-                            <div style="margin-top:4px; font-size:11px; color:#f87171;" id="stLoanInterestLabel">利息：$0</div>
                         </div>
                     </div>
                     <!-- 第二行：總付出成本、已實現損益、可動用資金（含質押/借貸分項） -->
@@ -1575,10 +1565,8 @@ select option {
                         <div class="dashboard-card" style="flex:1.6;">
                             <span class="label">剩餘可動用資金</span>
                             <span class="value" id="stRemainingFunds" style="color:#60a5fa;">0</span>
-                            <div style="margin-top:6px; display:flex; gap:12px; flex-wrap:wrap;">
-                                <span style="font-size:11px; color:var(--text-secondary);">含質押：<span id="stRemainingWithPledge" style="color:#fbbf24;">0</span></span>
-                                <span style="font-size:11px; color:var(--text-secondary);">含借貸：<span id="stRemainingWithLoan" style="color:#f87171;">0</span></span>
-                                <span style="font-size:11px; color:var(--text-secondary);">借貸總計（含息）：<span id="stTotalBorrowed" style="color:#a78bfa;">0</span></span>
+                            <div style="margin-top:5px; font-size:12px; color:var(--text-secondary);">
+                                負債總計（含息）：<span id="stTotalBorrowed" style="color:#fbbf24; font-weight:600;">0</span>
                             </div>
                         </div>
                     </div>
@@ -3132,7 +3120,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const capital = parseFloat(shortTermCapitalInput.value) || 0;
         const stRealized = parseFloat(stRealizedInput.value) || 0;
-        const remainingFunds = capital - totalCostAll + stRealized;
+        const pledgeAmt = parseFloat(document.getElementById('stPledgeAmountInput')?.value) || 0;
+        const loanAmt   = parseFloat(document.getElementById('stLoanAmountInput')?.value)   || 0;
+        const remainingFunds = capital + pledgeAmt + loanAmt - totalCostAll + stRealized;
 
         shortTermInventory.forEach(item => {
             let totalRevenue = item._tempRevenue;
@@ -3209,6 +3199,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         stRemainingFundsEl.textContent = formatCurrency(remainingFunds);
         stRemainingFundsEl.style.color = remainingFunds < 0 ? '#ef4444' : '#60a5fa';
+        stRemainingFundsEl.dataset.base = remainingFunds;
 
         // 同步質押/借貸分項
         if (typeof calcPledgeLoan === 'function') calcPledgeLoan();
@@ -3465,8 +3456,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const stLoanDaysInput     = document.getElementById('stLoanDaysInput');
     const stPledgeInterestLabel = document.getElementById('stPledgeInterestLabel');
     const stLoanInterestLabel   = document.getElementById('stLoanInterestLabel');
-    const stRemainingWithPledge = document.getElementById('stRemainingWithPledge');
-    const stRemainingWithLoan   = document.getElementById('stRemainingWithLoan');
     const stTotalBorrowed       = document.getElementById('stTotalBorrowed');
 
     function calcPledgeLoan() {
@@ -3483,13 +3472,20 @@ document.addEventListener('DOMContentLoaded', () => {
         if (stPledgeInterestLabel) stPledgeInterestLabel.textContent = `利息：$${formatCurrency(pledgeInterest)}`;
         if (stLoanInterestLabel)   stLoanInterestLabel.textContent   = `利息：$${formatCurrency(loanInterest)}`;
 
-        // 更新剩餘可動用資金分項
-        const base = parseFloat(stRemainingFundsEl?.textContent?.replace(/,/g, '')) || 0;
-        if (stRemainingWithPledge) stRemainingWithPledge.textContent = formatCurrency(base + pledgeAmt);
-        if (stRemainingWithLoan)   stRemainingWithLoan.textContent   = formatCurrency(base + loanAmt);
-        if (stTotalBorrowed)       stTotalBorrowed.textContent       = formatCurrency(pledgeAmt + loanAmt + pledgeInterest + loanInterest);
+        // 剩餘可動用資金 = 本金 + 質押本金 + 借貸本金 - 總付出成本 + 已實現損益
+        const capital    = parseFloat(shortTermCapitalInput?.value) || 0;
+        const totalCost  = parseFloat(stTotalCostEl?.textContent?.replace(/,/g, '')) || 0;
+        const stRealized = parseFloat(stRealizedInput?.value) || 0;
+        const remaining  = capital + pledgeAmt + loanAmt - totalCost + stRealized;
 
-        // 存到 localStorage
+        if (stRemainingFundsEl) {
+            stRemainingFundsEl.textContent = formatCurrency(remaining);
+            stRemainingFundsEl.style.color = remaining < 0 ? '#ef4444' : '#60a5fa';
+            stRemainingFundsEl.dataset.base = remaining;
+        }
+
+        if (stTotalBorrowed) stTotalBorrowed.textContent = formatCurrency(pledgeAmt + loanAmt + pledgeInterest + loanInterest);
+
         localStorage.setItem('stPledge', JSON.stringify({ amt: pledgeAmt, rate: pledgeRate, days: pledgeDays }));
         localStorage.setItem('stLoan',   JSON.stringify({ amt: loanAmt,   rate: loanRate,   days: loanDays   }));
     }
