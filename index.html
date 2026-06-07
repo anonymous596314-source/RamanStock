@@ -3906,7 +3906,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (waqiData.status === 'ok') {
                         aqi = waqiData.data.aqi;
                         const v = parseInt(aqi);
-                        aqiStatus = v > 150 ? '不健康' : (v > 100 ? '敏感不佳' : (v > 50 ? '普通' : '良好');
+                        aqiStatus = v > 150 ? '不健康' : (v > 100 ? '敏感不佳' : (v > 50 ? '普通' : '良好'));
                         success = true;
                     }
                 }
