@@ -2938,13 +2938,6 @@ document.addEventListener('DOMContentLoaded', () => {
                             <input type="number" step="1" min="0" value="${item.dividend}" data-id="${item.id}" class="live-dividend-input" style="outline:none;">
                         </div>
                     </div>
-                    <div class="inv-stat input-stat">
-                        <label>54C及除權換算</label>
-                        <div style="display:flex; align-items:center;">
-                            <span style="margin-right:2px; font-size:20px; font-weight:600; color:var(--text-primary);">$</span>
-                            <input type="number" step="1" min="0" value="${item.creditAmount || 0}" data-id="${item.id}" class="live-credit-input" style="outline:none;">
-                        </div>
-                    </div>
                     <div class="inv-stat">
                         <span>平均成本</span>
                         <div style="display:flex; align-items:center;">
@@ -2957,6 +2950,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div style="display:flex; align-items:center;">
                             <span style="margin-right:2px; font-size:20px; font-weight:600; color:var(--text-primary);">$</span>
                             <input type="number" step="1" min="0" value="${item.totalCost}" data-id="${item.id}" class="live-cost-input" style="outline:none;">
+                        </div>
+                    </div>
+                    <div class="inv-stat input-stat">
+                        <label>54C及除權換算</label>
+                        <div style="display:flex; align-items:center;">
+                            <span style="margin-right:2px; font-size:20px; font-weight:600; color:var(--text-primary);">$</span>
+                            <input type="number" step="1" min="0" value="${item.creditAmount || 0}" data-id="${item.id}" class="live-credit-input" style="outline:none;">
                         </div>
                     </div>
                 </div>
