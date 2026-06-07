@@ -1458,21 +1458,22 @@ select option {
                                 <span class="label">年度總領配息</span>
                                 <div style="display:flex; align-items:center;">
                                     <span class="value-prefix compact" style="margin-right:2px; font-size:11px;">$</span>
-                                    <input type="text" id="totalDividendVal" class="value-input compact" style="width:100%; font-size:16px;" value="0" inputmode="numeric">
+                                    <span id="totalDividendVal" class="value compact" style="font-size:16px;">0</span>
                                 </div>
                             </div>
                             <div style="flex:1;">
                                 <span class="label">可抵扣稅額</span>
                                 <div style="display:flex; align-items:center;">
                                     <span class="value-prefix compact" style="margin-right:2px; font-size:11px;">$</span>
-                                    <input type="text" id="dividendTaxOffsetVal" class="value-input compact" style="width:100%; font-size:16px;" value="0" inputmode="numeric">
+                                    <span id="dividendTaxOffsetVal" class="value compact" style="font-size:16px;">0</span>
                                 </div>
+                                <div style="font-size:10px; color:var(--text-secondary); margin-top:2px;">54C加總 × 8.5%，上限 $80,000</div>
                             </div>
                             <div style="flex:1;">
                                 <span class="label">合計</span>
                                 <div style="display:flex; align-items:center;">
                                     <span class="value-prefix compact" style="margin-right:2px; font-size:11px;">$</span>
-                                    <input type="text" id="dividendTotalBenefitVal" class="value-input compact" style="width:100%; font-size:16px;" value="0" inputmode="numeric">
+                                    <span id="dividendTotalBenefitVal" class="value compact" style="font-size:16px;">0</span>
                                 </div>
                             </div>
                         </div>
@@ -2855,11 +2856,14 @@ document.addEventListener('DOMContentLoaded', () => {
         let totalMarketVal = 0;
         let totalCostAll = 0;
         let totalDividendAll = 0;
+        let totalCreditAll = 0;
 
         // First pass: accumulate totals
         inventory.forEach(item => {
             item.dividend = parseFloat(item.dividend) || 0;
+            item.creditAmount = parseFloat(item.creditAmount) || 0;
             totalDividendAll += item.dividend;
+            totalCreditAll   += item.creditAmount;
             
             let sellFee = 0;
             let tax = 0;
@@ -2934,6 +2938,13 @@ document.addEventListener('DOMContentLoaded', () => {
                             <input type="number" step="1" min="0" value="${item.dividend}" data-id="${item.id}" class="live-dividend-input" style="outline:none;">
                         </div>
                     </div>
+                    <div class="inv-stat input-stat">
+                        <label>54C及除權換算</label>
+                        <div style="display:flex; align-items:center;">
+                            <span style="margin-right:2px; font-size:20px; font-weight:600; color:var(--text-primary);">$</span>
+                            <input type="number" step="1" min="0" value="${item.creditAmount || 0}" data-id="${item.id}" class="live-credit-input" style="outline:none;">
+                        </div>
+                    </div>
                     <div class="inv-stat">
                         <span>平均成本</span>
                         <div style="display:flex; align-items:center;">
@@ -3004,7 +3015,14 @@ document.addEventListener('DOMContentLoaded', () => {
             totalInventoryCostEl.textContent = formatCurrency(totalCostAll);
         }
 
-        // Annual dividend inputs are now manually editable and not auto-calculated.
+        // 自動計算：年度總領配息、可抵扣稅額（上限 80000）、合計
+        const totalDividendValEl      = document.getElementById('totalDividendVal');
+        const dividendTaxOffsetValEl  = document.getElementById('dividendTaxOffsetVal');
+        const dividendTotalBenefitValEl = document.getElementById('dividendTotalBenefitVal');
+        const taxOffset = Math.min(totalCreditAll * 0.085, 80000);
+        if (totalDividendValEl)       totalDividendValEl.textContent       = formatCurrency(totalDividendAll);
+        if (dividendTaxOffsetValEl)   dividendTaxOffsetValEl.textContent   = formatCurrency(taxOffset);
+        if (dividendTotalBenefitValEl) dividendTotalBenefitValEl.textContent = formatCurrency(totalDividendAll + taxOffset);
 
         // Bind events to new elements
         document.querySelectorAll('.live-price-input').forEach(input => {
@@ -3048,6 +3066,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (item && item.dividend !== parseFloat(e.target.value)) {
                     recordState();
                     item.dividend = parseFloat(e.target.value) || 0;
+                    saveInventory();
+                    renderInventory();
+                }
+            });
+        });
+
+        document.querySelectorAll('.live-credit-input').forEach(input => {
+            input.addEventListener('change', (e) => {
+                const id = e.target.getAttribute('data-id');
+                const item = inventory.find(i => i.id === id);
+                if (item && item.creditAmount !== parseFloat(e.target.value)) {
+                    recordState();
+                    item.creditAmount = parseFloat(e.target.value) || 0;
                     saveInventory();
                     renderInventory();
                 }
@@ -3555,9 +3586,7 @@ document.addEventListener('DOMContentLoaded', () => {
             localStorage.setItem(storageKey, String(safeVal));
         });
     }
-    bindDividendFormatting(document.getElementById('totalDividendVal'),      'twStockTotalDividend');
-    bindDividendFormatting(document.getElementById('dividendTaxOffsetVal'),  'twStockDividendTaxOffset');
-    bindDividendFormatting(document.getElementById('dividendTotalBenefitVal'),'twStockDividendTotalBenefit');
+    // totalDividendVal, dividendTaxOffsetVal, dividendTotalBenefitVal 已改為自動計算，不需要手動格式化綁定
     
     // --- Daily Stats Logic ---
     async function logDailyStats() {
