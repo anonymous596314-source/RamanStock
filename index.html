@@ -4652,6 +4652,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <span id="largeFontBtnText" class="btn-text-desktop">大字版</span>
                             <span class="btn-icon-mobile">🔍</span>
                         </button>
+                        <button id="deepAnalysisBtn" style="display:none; padding:4px 10px; font-size:12px; border-radius:6px; border:1px solid rgba(251,191,36,0.4); background:rgba(251,191,36,0.12); color:#fbbf24; cursor:pointer; white-space:nowrap;">深度分析</button>
                     </div>
                     <div id="analysisHeaderPrice" style="font-size:16px; font-weight:800; color:#fbbf24; white-space:nowrap;"></div>
                 </div>
@@ -4674,6 +4675,49 @@ document.addEventListener('DOMContentLoaded', () => {
                         // 更新按鈕啟動狀態樣式 (手機與電腦共用)
                         btn.classList.toggle('desktop-large-active', isLarge);
                         btn.classList.toggle('magnifier-active', isLarge);
+                    });
+                })();
+            </script>
+
+            <!-- 深度分析 iframe Modal -->
+            <div id="deepAnalysisModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.85); align-items:center; justify-content:center;">
+                <div style="position:relative; width:96vw; height:92vh; background:#0f172a; border-radius:12px; overflow:hidden; display:flex; flex-direction:column;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 16px; border-bottom:1px solid rgba(255,255,255,0.1); flex-shrink:0;">
+                        <span style="color:#fbbf24; font-weight:700; font-size:15px;">🔬 台積電 (2330) 法人全方位深度分析</span>
+                        <button id="closeDeepAnalysisBtn" style="background:none; border:none; color:#94a3b8; font-size:24px; cursor:pointer; line-height:1; padding:0 4px;">&times;</button>
+                    </div>
+                    <iframe src="https://anonymous596314-source.github.io/Raman2330/" style="flex:1; border:none; width:100%;" loading="lazy" id="deepAnalysisIframe"></iframe>
+                </div>
+            </div>
+
+            <script>
+                // 深度分析按鈕邏輯
+                (function() {
+                    const deepBtn   = document.getElementById('deepAnalysisBtn');
+                    const deepModal = document.getElementById('deepAnalysisModal');
+                    const closeBtn  = document.getElementById('closeDeepAnalysisBtn');
+                    const titleEl   = document.getElementById('analysisTitle');
+
+                    // 監聽 analysisTitle 文字變化，2330 才顯示按鈕
+                    const observer = new MutationObserver(() => {
+                        const is2330 = titleEl.textContent.includes('2330');
+                        deepBtn.style.display = is2330 ? '' : 'none';
+                    });
+                    observer.observe(titleEl, { childList: true, subtree: true, characterData: true });
+
+                    // 開啟深度分析
+                    deepBtn.addEventListener('click', () => {
+                        deepModal.style.display = 'flex';
+                    });
+
+                    // 關閉：X 按鈕
+                    closeBtn.addEventListener('click', () => {
+                        deepModal.style.display = 'none';
+                    });
+
+                    // 關閉：點背景
+                    deepModal.addEventListener('click', (e) => {
+                        if (e.target === deepModal) deepModal.style.display = 'none';
                     });
                 })();
             </script>
