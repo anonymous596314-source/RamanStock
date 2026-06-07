@@ -3889,9 +3889,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const aqiRes = await fetch(_workerUrl);
             if (aqiRes.ok) {
                 const aqiData = await aqiRes.json();
-                if (aqiData.records && aqiData.records.length > 0) {
-                    aqi = aqiData.records[0].aqi;
-                    aqiStatus = aqiData.records[0].status;
+                // API 可能回傳陣列或 {records:[...]} 兩種格式
+                const records = Array.isArray(aqiData) ? aqiData : (aqiData.records || []);
+                if (records.length > 0) {
+                    aqi = records[0].aqi;
+                    aqiStatus = records[0].status;
                     success = true;
                 }
             }
