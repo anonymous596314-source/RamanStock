@@ -3877,12 +3877,16 @@ document.addEventListener('DOMContentLoaded', () => {
         let aqiStatus = '待更新';
         let success = false;
 
-        // A. 環境部 MoENV — 有指定 sitename 就用 sitename，否則用 county 抓第一筆
+        // A. 環境部 MoENV — 走 Cloudflare Worker 繞過 CORS
         try {
             const filter = sitename
-                ? `filters=sitename,EQ,${sitename}`
-                : `filters=county,EQ,${county}`;
-            const aqiRes = await fetch(`https://data.moenv.gov.tw/api/v2/aqx_p_432?api_key=e8dd42e6-9b8b-43f8-991e-b3dee723a52d&limit=1&format=JSON&${filter}&t=` + Date.now());
+                ? `filters=sitename,EQ,${encodeURIComponent(sitename)}`
+                : `filters=county,EQ,${encodeURIComponent(county)}`;
+            const moenvUrl = `https://data.moenv.gov.tw/api/v2/aqx_p_432?api_key=e8dd42e6-9b8b-43f8-991e-b3dee723a52d&limit=1&format=JSON&${filter}&t=${Date.now()}`;
+            const _workerUrl = (typeof WORKER_PROXY_URL !== 'undefined' && WORKER_PROXY_URL)
+                ? `${WORKER_PROXY_URL}/?url=${encodeURIComponent(moenvUrl)}`
+                : moenvUrl;
+            const aqiRes = await fetch(_workerUrl);
             if (aqiRes.ok) {
                 const aqiData = await aqiRes.json();
                 if (aqiData.records && aqiData.records.length > 0) {
@@ -3953,7 +3957,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         
         const savedCity = localStorage.getItem('twStockPreferredCity');
-        if (savedCity) citySelector.value = savedCity;
+        // 檢查格式是否為新格式（4個欄位：county,sitename,lat,lon）
+        if (savedCity && savedCity.split(',').length === 4) {
+            citySelector.value = savedCity;
+        } else {
+            // 舊格式或無效，清除並使用預設（彰化市）
+            localStorage.removeItem('twStockPreferredCity');
+        }
         
         // 初次加載時調整寬度
         setTimeout(resizeCitySelector, 100);
