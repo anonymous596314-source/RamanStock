@@ -544,13 +544,17 @@
         font-size: 15px !important;
     }
 
-    /* === 取消手機版表頭鎖定 === */
+    /* === 手機版股票分析 全面修正 === */
+
+    /* 1. Modal 容器：完全禁止橫向捲動 */
     #analysisModal .modal-content {
         display: block !important;
         overflow-y: auto !important;
         overflow-x: hidden !important;
         max-width: 100vw !important;
         box-sizing: border-box !important;
+        padding-left: 12px !important;
+        padding-right: 12px !important;
     }
 
     #analysisModal .modal-body {
@@ -558,6 +562,7 @@
         overflow-x: hidden !important;
         height: auto !important;
         padding-right: 0 !important;
+        padding-left: 0 !important;
         width: 100% !important;
         max-width: 100% !important;
         box-sizing: border-box !important;
@@ -565,14 +570,15 @@
 
     #analysisModal .modal-header {
         position: relative !important;
-        margin-bottom: 20px !important;
+        margin-bottom: 16px !important;
     }
 
-    /* 防止卡片與格線超出手機寬度 */
+    /* 2. 卡片：收斂在螢幕內，不能溢出 */
     #analysisModal .analysis-grid {
         width: 100% !important;
         max-width: 100% !important;
         box-sizing: border-box !important;
+        overflow: hidden !important;
     }
 
     #analysisModal .analysis-card {
@@ -581,25 +587,100 @@
         box-sizing: border-box !important;
         overflow: hidden !important;
         min-width: 0 !important;
+        padding: 14px 12px !important;
     }
 
-    /* label 允許換行，不撐開容器 */
+    /* 3. 所有 inline 2欄/多欄 grid → 手機強制單欄
+       涵蓋季報卡片、內部人、ROE、現金流、估值河流等 */
+    #analysisModal [style*="grid-template-columns: 1fr 1fr"],
+    #analysisModal [style*="grid-template-columns:1fr 1fr"],
+    #analysisModal [style*="grid-template-columns: repeat(2"],
+    #analysisModal [style*="grid-template-columns:repeat(2"] {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* repeat(3) repeat(4) 縮為 1欄或 2欄 */
+    #analysisModal [style*="grid-template-columns: repeat(3"],
+    #analysisModal [style*="grid-template-columns:repeat(3"],
+    #analysisModal [style*="grid-template-columns: repeat(4"],
+    #analysisModal [style*="grid-template-columns:repeat(4"] {
+        grid-template-columns: 1fr 1fr !important;
+    }
+
+    /* 近中長期動能格子 repeat(3,1fr) → 2欄 */
+    #analysisModal [style*="grid-template-columns: repeat(3, 1fr)"] {
+        grid-template-columns: 1fr 1fr !important;
+    }
+
+    /* 4. Stat row：標籤可換行，數值靠右不截斷 */
+    #analysisModal .analysis-stat-row {
+        flex-wrap: nowrap !important;
+        align-items: flex-start !important;
+        gap: 6px !important;
+    }
+
     #analysisModal .analysis-label {
+        flex-shrink: 1 !important;
         white-space: normal !important;
         word-break: break-word !important;
-        max-width: 60% !important;
+        max-width: 58% !important;
+        font-size: 12px !important;
+        line-height: 1.4 !important;
     }
 
     #analysisModal .analysis-val {
+        flex-shrink: 0 !important;
         white-space: nowrap !important;
-        max-width: 40% !important;
+        max-width: 42% !important;
         text-align: right !important;
+        font-size: 13px !important;
+        word-break: keep-all !important;
     }
 
-    /* SVG 限制最大寬度，不超出卡片 */
+    /* 5. inline style 數值大字（如法人連買/連賣）不超寬 */
+    #analysisModal .analysis-card [style*="font-size:18px"],
+    #analysisModal .analysis-card [style*="font-size:20px"],
+    #analysisModal .analysis-card [style*="font-size:22px"],
+    #analysisModal .analysis-card [style*="font-size:24px"] {
+        font-size: 16px !important;
+        white-space: normal !important;
+        word-break: break-word !important;
+    }
+
+    /* 6. 標題文字（如「集保大戶 vs 散戶持股比例」）不強制 nowrap */
+    #analysisModal .analysis-card-title,
+    #analysisModal [style*="font-size:11px"][style*="color:#cbd5e1"],
+    #analysisModal [style*="font-size:11px"][style*="font-weight:700"] {
+        white-space: normal !important;
+        word-break: break-word !important;
+    }
+
+    /* 7. SVG 圖表寬度收斂 */
     #analysisModal svg {
         max-width: 100% !important;
         overflow: hidden !important;
+    }
+
+    /* 8. Volume Profile 張數行：確保 label 不換行 */
+    #analysisModal .vp-row {
+        flex-wrap: nowrap !important;
+    }
+
+    #analysisModal .vp-row > div:first-child {
+        min-width: 0 !important;
+        flex-shrink: 1 !important;
+    }
+
+    /* 9. 數值超長文字（如實收股本、發行股數）允許縮小 */
+    #analysisModal .analysis-val {
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+    }
+
+    /* 10. 融資趨勢等長標籤文字允許截斷 */
+    #analysisModal [style*="white-space:nowrap"] {
+        white-space: normal !important;
+        word-break: break-word !important;
     }
 }
 
