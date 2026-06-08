@@ -5949,6 +5949,8 @@ function renderSectorComparison(industry, stats) {
             </div>
         </div>
     `;
+    // 手機版：Volume Profile 觸控 tooltip
+    setTimeout(_initVPTouchTooltip, 0);
 }
 
 
@@ -6211,6 +6213,41 @@ function identifyWinnerBrokers(brokerData, currentPrice) {
 }
 
 /**
+ * 手機版 Volume Profile 觸控 tooltip
+ * 桌機用 title attribute (hover)，手機用此函式顯示浮動 div
+ */
+function _initVPTouchTooltip() {
+    if (!('ontouchstart' in window)) return; // 桌機完全不執行
+    const container = document.getElementById('vp-container');
+    if (!container) return;
+
+    // 建立浮動 tooltip div（若已存在則重用）
+    let tip = document.getElementById('vp-touch-tip');
+    if (!tip) {
+        tip = document.createElement('div');
+        tip.id = 'vp-touch-tip';
+        tip.style.cssText = 'position:fixed; background:rgba(15,23,42,0.95); color:#fff; font-size:12px; font-weight:700; padding:5px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); pointer-events:none; z-index:99999; display:none; white-space:nowrap;';
+        document.body.appendChild(tip);
+    }
+
+    const bars = container.querySelectorAll('[title]');
+    bars.forEach(bar => {
+        bar.addEventListener('touchstart', (e) => {
+            const txt = bar.getAttribute('title');
+            if (!txt) return;
+            tip.textContent = txt;
+            tip.style.display = 'block';
+            const t = e.touches[0];
+            tip.style.left = Math.min(t.clientX + 12, window.innerWidth - tip.offsetWidth - 8) + 'px';
+            tip.style.top  = Math.max(t.clientY - 36, 8) + 'px';
+        }, {passive: true});
+        bar.addEventListener('touchend', () => {
+            setTimeout(() => { tip.style.display = 'none'; }, 800);
+        }, {passive: true});
+    });
+}
+
+/**
  * 切換價格量能分佈 (Volume Profile) 的顯示行數
  */
 function toggleVP(btn) {
@@ -6428,6 +6465,9 @@ function showHoldingTrendChart(symbol, type) {
     svg.addEventListener('touchstart', (e) => {
         if (e.touches.length > 0) updateFocus(e.touches[0].clientX);
     }, {passive: true});
+    svg.addEventListener('touchmove', (e) => {
+        if (e.touches.length > 0) { e.preventDefault(); updateFocus(e.touches[0].clientX); }
+    }, {passive: false});
     svg.addEventListener('mouseleave', () => { focusGroup.style.visibility = 'hidden'; });
     svg.addEventListener('touchend', () => { focusGroup.style.visibility = 'hidden'; });
 
@@ -6634,6 +6674,39 @@ function showCCCTrendChart() {
         });
     });
     svg.addEventListener('mouseleave', () => { fg.style.visibility = 'hidden'; });
+
+    const _cccUpdate = (clientX) => {
+        const rect = svg.getBoundingClientRect();
+        const mx = (clientX - rect.left) * (width / rect.width);
+        let ni = 0, md = Infinity;
+        rawTrend.forEach((_, i) => { const dx = Math.abs(gx(i) - mx); if (dx < md) { md = dx; ni = i; } });
+        const pt = rawTrend[ni];
+        const x = gx(ni);
+        fg.style.visibility = 'visible';
+        document.getElementById('cccFL').setAttribute('x1', x); document.getElementById('cccFL').setAttribute('x2', x);
+        [['cccDso','dso'],['cccDio','dio'],['cccDpo','dpo'],['cccCcc','ccc']].forEach(([id,k]) => {
+            const el = document.getElementById(id);
+            if (el) { el.setAttribute('cx', x); el.setAttribute('cy', gy(pt[k] ?? 0)); }
+        });
+        const tx = (x + 8 > width - 126) ? x - 126 : x + 8;
+        const ty = Math.max(padT, gy(Math.max(pt.dso, pt.dio, pt.ccc ?? 0)) - 8);
+        const bg = document.getElementById('cccTBg');
+        if (bg) { bg.setAttribute('x', tx); bg.setAttribute('y', ty); }
+        [['cccTDate', 0, pt.date || ''], ['cccTDso', 1, `DSO: ${(pt.dso).toFixed(1)} 天`],
+         ['cccTDio',  2, `DIO: ${(pt.dio).toFixed(1)} 天`], ['cccTDpo', 3, `DPO: ${(pt.dpo).toFixed(1)} 天`],
+         ['cccTCcc',  4, `CCC: ${(pt.ccc ?? 0).toFixed(1)} 天`]
+        ].forEach(([id, row, txt]) => {
+            const el = document.getElementById(id);
+            if (el) { el.setAttribute('x', tx + 5); el.setAttribute('y', ty + 13 + row * 13); el.textContent = txt; }
+        });
+    };
+    svg.addEventListener('touchstart', (e) => {
+        if (e.touches.length > 0) _cccUpdate(e.touches[0].clientX);
+    }, {passive: true});
+    svg.addEventListener('touchmove', (e) => {
+        if (e.touches.length > 0) { e.preventDefault(); _cccUpdate(e.touches[0].clientX); }
+    }, {passive: false});
+    svg.addEventListener('touchend', () => { fg.style.visibility = 'hidden'; });
 }
 
 /**
@@ -6753,9 +6826,9 @@ function showHolderTrendChart() {
     const tl     = document.getElementById('hTL');
     const tr_el  = document.getElementById('hTR');
 
-    svg.addEventListener('mousemove', (e) => {
+    const _holderUpdate = (clientX) => {
         const rect = svg.getBoundingClientRect();
-        const mx = (e.clientX - rect.left) * (width / rect.width);
+        const mx = (clientX - rect.left) * (width / rect.width);
         let ni = 0, md = Infinity;
         sampled.forEach((_, i) => { const dx = Math.abs(gx(i) - mx); if (dx < md) { md = dx; ni = i; } });
         const pt = sampled[ni];
@@ -6770,8 +6843,16 @@ function showHolderTrendChart() {
         tdate.setAttribute('x', tx + 5); tdate.setAttribute('y', ty + 13); tdate.textContent = pt.date.substring(5);
         tl.setAttribute('x', tx + 5);   tl.setAttribute('y', ty + 28);   tl.textContent = `大戶: ${pt.large.toFixed(2)}%`;
         tr_el.setAttribute('x', tx + 5); tr_el.setAttribute('y', ty + 43); tr_el.textContent = `散戶: ${pt.retail.toFixed(2)}%`;
-    });
+    };
+    svg.addEventListener('mousemove', (e) => _holderUpdate(e.clientX));
+    svg.addEventListener('touchstart', (e) => {
+        if (e.touches.length > 0) _holderUpdate(e.touches[0].clientX);
+    }, {passive: true});
+    svg.addEventListener('touchmove', (e) => {
+        if (e.touches.length > 0) { e.preventDefault(); _holderUpdate(e.touches[0].clientX); }
+    }, {passive: false});
     svg.addEventListener('mouseleave', () => { fg.style.visibility = 'hidden'; });
+    svg.addEventListener('touchend', () => { fg.style.visibility = 'hidden'; });
 }
 
 /**
@@ -6989,6 +7070,9 @@ function showRevenueTrendChart(symbol, type) {
     svg.addEventListener('touchstart', (e) => {
         if (e.touches.length > 0) updateFocus(e.touches[0].clientX);
     }, {passive: true});
+    svg.addEventListener('touchmove', (e) => {
+        if (e.touches.length > 0) { e.preventDefault(); updateFocus(e.touches[0].clientX); }
+    }, {passive: false});
     svg.addEventListener('mouseleave', () => { focusGroup.style.visibility = 'hidden'; });
     svg.addEventListener('touchend', () => { focusGroup.style.visibility = 'hidden'; });
 
@@ -7153,6 +7237,7 @@ function showEPSTrendChart(symbol) {
         };
         svg.addEventListener('mousemove', (e) => update(e.clientX));
         svg.addEventListener('touchstart', (e) => { if (e.touches.length > 0) update(e.touches[0].clientX); }, {passive: true});
+        svg.addEventListener('touchmove', (e) => { if (e.touches.length > 0) { e.preventDefault(); update(e.touches[0].clientX); } }, {passive: false});
         svg.addEventListener('mouseleave', () => group.style.visibility = 'hidden');
         svg.addEventListener('touchend', () => group.style.visibility = 'hidden');
     };
