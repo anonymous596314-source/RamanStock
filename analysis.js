@@ -4358,13 +4358,14 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                                     <div style="width:75px; font-size:10px; color:${isPOC ? '#fbbf24' : (isCurrent ? '#ffffff' : '#94a3b8')}; letter-spacing:-0.5px; font-weight:${isCurrent ? '800' : '400'};">
                                                         ${label}
                                                     </div>
-                                                    <div style="flex:1; height:6px; background:rgba(255,255,255,0.05); border-radius:3px; position:relative; overflow:visible;" title="該區間成交量: ${Math.round(binVol / 1000).toLocaleString()} 張">
+                                                    <div style="flex:1; height:6px; background:rgba(255,255,255,0.05); border-radius:3px; position:relative; overflow:visible;">
                                                         <div style="position:absolute; left:0; top:0; bottom:0; width:${weight}%; background:${isPOC ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' : 'linear-gradient(90deg, #3b82f6, #2563eb)'}; opacity:${isPOC ? 1 : 0.6}; border-radius:3px;"></div>
                                                         ${isCurrent ? `
                                                             <div style="position:absolute; left:${Math.max(0, Math.min(100, (p - binFloor) / binStep * 100))}%; top:50%; transform:translate(-50%, -50%); width:6px; height:6px; background:#fff; border-radius:50%; box-shadow:0 0 5px #fff; z-index:10;"></div>
                                                             <div style="position:absolute; left:${Math.max(0, Math.min(100, (p - binFloor) / binStep * 100))}%; top:-12px; transform:translateX(-50%); font-size:10px; color:#fff; white-space:nowrap; font-weight:900; text-shadow:0 0 3px #000;">${p}</div>
                                                         ` : ''}
                                                     </div>
+                                                    <div style="width:52px; font-size:10px; color:${isPOC ? '#fbbf24' : '#64748b'}; text-align:right; flex-shrink:0;">${Math.round(binVol / 1000).toLocaleString()}張</div>
                                                 </div>
                                             `;
                                         }).join('');
