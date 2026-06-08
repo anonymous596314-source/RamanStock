@@ -6226,23 +6226,33 @@ function _initVPTouchTooltip() {
     if (!tip) {
         tip = document.createElement('div');
         tip.id = 'vp-touch-tip';
-        tip.style.cssText = 'position:fixed; background:rgba(15,23,42,0.95); color:#fff; font-size:12px; font-weight:700; padding:5px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); pointer-events:none; z-index:99999; display:none; white-space:nowrap;';
+        tip.style.cssText = 'position:fixed; background:rgba(15,23,42,0.95); color:#fff; font-size:13px; font-weight:700; padding:6px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); pointer-events:none; z-index:99999; display:none; white-space:nowrap;';
         document.body.appendChild(tip);
     }
 
-    const bars = container.querySelectorAll('[title]');
-    bars.forEach(bar => {
-        bar.addEventListener('touchstart', (e) => {
-            const txt = bar.getAttribute('title');
+    // 綁在每一個 row div（flex 整列，觸控面積夠大）
+    // title 在 row 內的 bar 子 div，從 row 往下找
+    const rows = container.querySelectorAll('div[style*="display:flex"], div[style*="display: flex"]');
+    rows.forEach(row => {
+        const barDiv = row.querySelector('[title]');
+        if (!barDiv) return;
+        row.style.cursor = 'pointer'; // 視覺提示
+        row.addEventListener('touchstart', (e) => {
+            const txt = barDiv.getAttribute('title');
             if (!txt) return;
             tip.textContent = txt;
             tip.style.display = 'block';
-            const t = e.touches[0];
-            tip.style.left = Math.min(t.clientX + 12, window.innerWidth - tip.offsetWidth - 8) + 'px';
-            tip.style.top  = Math.max(t.clientY - 36, 8) + 'px';
+            // 先顯示再計算寬度
+            requestAnimationFrame(() => {
+                const t = e.touches[0];
+                const tipW = tip.offsetWidth;
+                const left = Math.min(t.clientX + 16, window.innerWidth - tipW - 8);
+                tip.style.left = left + 'px';
+                tip.style.top  = Math.max(t.clientY - 44, 8) + 'px';
+            });
         }, {passive: true});
-        bar.addEventListener('touchend', () => {
-            setTimeout(() => { tip.style.display = 'none'; }, 800);
+        row.addEventListener('touchend', () => {
+            setTimeout(() => { tip.style.display = 'none'; }, 1000);
         }, {passive: true});
     });
 }
