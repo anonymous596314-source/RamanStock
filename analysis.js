@@ -4354,7 +4354,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                             const label     = getVPLabel(binFloor, binStep);
                                             
                                             return `
-                                                <div class="${isHidden ? 'vp-hidden-row' : ''}" style="display:${isHidden ? 'none' : 'flex'}; align-items:center; gap:8px; margin-bottom:4px; position:relative;">
+                                                <div class="vp-row${isHidden ? ' vp-hidden-row' : ''}" style="display:${isHidden ? 'none' : 'flex'}; align-items:center; gap:8px; margin-bottom:4px; position:relative;">
                                                     <div style="width:75px; font-size:10px; color:${isPOC ? '#fbbf24' : (isCurrent ? '#ffffff' : '#94a3b8')}; letter-spacing:-0.5px; font-weight:${isCurrent ? '800' : '400'};">
                                                         ${label}
                                                     </div>
@@ -5111,7 +5111,17 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         else             { ndColor = '#ef4444'; ndLabel = '⚠️ 危險'; }
                     }
                     const displayVal = nd !== null && nd !== undefined ? safeFix(nd, 1) + ' 倍' : 'N/A';
-                    return renderStatRow('淨負債/EBITDA', displayVal, null, `showTermExplainer('淨負債/EBITDA', '${displayVal}')`);
+                    return `
+                <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.1);">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span class="analysis-label has-info" style="font-size:12px; color:#cbd5e1;" onclick="showTermExplainer('淨負債/EBITDA', '${displayVal}')">淨負債/EBITDA</span>
+                        <span style="font-size:18px; font-weight:800; color:${ndColor};">${displayVal}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+                        <span style="font-size:10px; color:#94a3b8;">財務槓桿強度</span>
+                        <span style="font-size:11px; font-weight:700; color:${ndColor};">${ndLabel}</span>
+                    </div>
+                </div>`;
                 })()}
                 ${renderStatRow('利息保障倍數', finData?.interestCoverage !== undefined ? (finData?.interestCoverage >= 999 ? '無負債/極高' : safeFix(finData?.interestCoverage, 1) + ' 倍') : 'N/A')}
                 ${renderStatRow('獲利品質 (OCF/NI)', finData?.earningsQuality !== undefined ? safeFix(finData?.earningsQuality, 1) + '%' : 'N/A')}
@@ -5949,8 +5959,42 @@ function renderSectorComparison(industry, stats) {
             </div>
         </div>
     `;
-    // 手機版：Volume Profile 觸控 tooltip
     setTimeout(_initVPTouchTooltip, 0);
+}
+
+function _initVPTouchTooltip() {
+    if (!('ontouchstart' in window)) return;
+    const container = document.getElementById('vp-container');
+    if (!container) return;
+
+    let tip = document.getElementById('vp-touch-tip');
+    if (!tip) {
+        tip = document.createElement('div');
+        tip.id = 'vp-touch-tip';
+        tip.style.cssText = 'position:fixed;background:rgba(15,23,42,0.96);color:#fff;font-size:13px;font-weight:700;padding:6px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);pointer-events:none;z-index:99999;display:none;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+        document.body.appendChild(tip);
+    }
+
+    container.querySelectorAll('.vp-row').forEach(row => {
+        const barDiv = row.querySelector('[title]');
+        if (!barDiv) return;
+        row.addEventListener('touchstart', (e) => {
+            const txt = barDiv.getAttribute('title');
+            if (!txt) return;
+            e.stopPropagation();
+            tip.textContent = txt;
+            tip.style.display = 'block';
+            requestAnimationFrame(() => {
+                const t = e.touches[0];
+                const tipW = tip.offsetWidth;
+                tip.style.left = Math.min(t.clientX + 16, window.innerWidth - tipW - 8) + 'px';
+                tip.style.top  = Math.max(t.clientY - 48, 8) + 'px';
+            });
+        }, {passive: true});
+        row.addEventListener('touchend', () => {
+            setTimeout(() => { tip.style.display = 'none'; }, 1200);
+        }, {passive: true});
+    });
 }
 
 
@@ -6213,51 +6257,6 @@ function identifyWinnerBrokers(brokerData, currentPrice) {
 }
 
 /**
- * 手機版 Volume Profile 觸控 tooltip
- * 桌機用 title attribute (hover)，手機用此函式顯示浮動 div
- */
-function _initVPTouchTooltip() {
-    if (!('ontouchstart' in window)) return; // 桌機完全不執行
-    const container = document.getElementById('vp-container');
-    if (!container) return;
-
-    // 建立浮動 tooltip div（若已存在則重用）
-    let tip = document.getElementById('vp-touch-tip');
-    if (!tip) {
-        tip = document.createElement('div');
-        tip.id = 'vp-touch-tip';
-        tip.style.cssText = 'position:fixed; background:rgba(15,23,42,0.95); color:#fff; font-size:13px; font-weight:700; padding:6px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.2); pointer-events:none; z-index:99999; display:none; white-space:nowrap;';
-        document.body.appendChild(tip);
-    }
-
-    // 綁在每一個 row div（flex 整列，觸控面積夠大）
-    // title 在 row 內的 bar 子 div，從 row 往下找
-    const rows = container.querySelectorAll('div[style*="display:flex"], div[style*="display: flex"]');
-    rows.forEach(row => {
-        const barDiv = row.querySelector('[title]');
-        if (!barDiv) return;
-        row.style.cursor = 'pointer'; // 視覺提示
-        row.addEventListener('touchstart', (e) => {
-            const txt = barDiv.getAttribute('title');
-            if (!txt) return;
-            tip.textContent = txt;
-            tip.style.display = 'block';
-            // 先顯示再計算寬度
-            requestAnimationFrame(() => {
-                const t = e.touches[0];
-                const tipW = tip.offsetWidth;
-                const left = Math.min(t.clientX + 16, window.innerWidth - tipW - 8);
-                tip.style.left = left + 'px';
-                tip.style.top  = Math.max(t.clientY - 44, 8) + 'px';
-            });
-        }, {passive: true});
-        row.addEventListener('touchend', () => {
-            setTimeout(() => { tip.style.display = 'none'; }, 1000);
-        }, {passive: true});
-    });
-}
-
-/**
  * 切換價格量能分佈 (Volume Profile) 的顯示行數
  */
 function toggleVP(btn) {
@@ -6475,9 +6474,6 @@ function showHoldingTrendChart(symbol, type) {
     svg.addEventListener('touchstart', (e) => {
         if (e.touches.length > 0) updateFocus(e.touches[0].clientX);
     }, {passive: true});
-    svg.addEventListener('touchmove', (e) => {
-        if (e.touches.length > 0) { e.preventDefault(); updateFocus(e.touches[0].clientX); }
-    }, {passive: false});
     svg.addEventListener('mouseleave', () => { focusGroup.style.visibility = 'hidden'; });
     svg.addEventListener('touchend', () => { focusGroup.style.visibility = 'hidden'; });
 
@@ -6518,23 +6514,10 @@ function showCCCTrendChart() {
     const nTicks = 4;
     const step = range / nTicks;
     const yTicks = Array.from({ length: nTicks + 1 }, (_, i) => minV + step * i);
-    const xIdxs = (() => {
-        const step = Math.ceil(rawTrend.length / 5);
-        const acc = [];
-        for (let i = 0; i < rawTrend.length; i++) {
-            if (i % step === 0) acc.push(i);
-        }
-        // 末點保留最新日期，但若與前一個 tick 太近（距離 < step/2）則替換而非新增
-        const last = rawTrend.length - 1;
-        if (acc[acc.length - 1] !== last) {
-            if (last - acc[acc.length - 1] < Math.ceil(step / 2)) {
-                acc[acc.length - 1] = last; // 替換，避免重疊
-            } else {
-                acc.push(last);
-            }
-        }
+    const xIdxs = rawTrend.reduce((acc, _, i) => {
+        if (i % Math.ceil(rawTrend.length / 5) === 0 || i === rawTrend.length - 1) acc.push(i);
         return acc;
-    })();
+    }, []);
 
     // AI 診斷文字
     const diagParts = [];
@@ -6684,39 +6667,6 @@ function showCCCTrendChart() {
         });
     });
     svg.addEventListener('mouseleave', () => { fg.style.visibility = 'hidden'; });
-
-    const _cccUpdate = (clientX) => {
-        const rect = svg.getBoundingClientRect();
-        const mx = (clientX - rect.left) * (width / rect.width);
-        let ni = 0, md = Infinity;
-        rawTrend.forEach((_, i) => { const dx = Math.abs(gx(i) - mx); if (dx < md) { md = dx; ni = i; } });
-        const pt = rawTrend[ni];
-        const x = gx(ni);
-        fg.style.visibility = 'visible';
-        document.getElementById('cccFL').setAttribute('x1', x); document.getElementById('cccFL').setAttribute('x2', x);
-        [['cccDso','dso'],['cccDio','dio'],['cccDpo','dpo'],['cccCcc','ccc']].forEach(([id,k]) => {
-            const el = document.getElementById(id);
-            if (el) { el.setAttribute('cx', x); el.setAttribute('cy', gy(pt[k] ?? 0)); }
-        });
-        const tx = (x + 8 > width - 126) ? x - 126 : x + 8;
-        const ty = Math.max(padT, gy(Math.max(pt.dso, pt.dio, pt.ccc ?? 0)) - 8);
-        const bg = document.getElementById('cccTBg');
-        if (bg) { bg.setAttribute('x', tx); bg.setAttribute('y', ty); }
-        [['cccTDate', 0, pt.date || ''], ['cccTDso', 1, `DSO: ${(pt.dso).toFixed(1)} 天`],
-         ['cccTDio',  2, `DIO: ${(pt.dio).toFixed(1)} 天`], ['cccTDpo', 3, `DPO: ${(pt.dpo).toFixed(1)} 天`],
-         ['cccTCcc',  4, `CCC: ${(pt.ccc ?? 0).toFixed(1)} 天`]
-        ].forEach(([id, row, txt]) => {
-            const el = document.getElementById(id);
-            if (el) { el.setAttribute('x', tx + 5); el.setAttribute('y', ty + 13 + row * 13); el.textContent = txt; }
-        });
-    };
-    svg.addEventListener('touchstart', (e) => {
-        if (e.touches.length > 0) _cccUpdate(e.touches[0].clientX);
-    }, {passive: true});
-    svg.addEventListener('touchmove', (e) => {
-        if (e.touches.length > 0) { e.preventDefault(); _cccUpdate(e.touches[0].clientX); }
-    }, {passive: false});
-    svg.addEventListener('touchend', () => { fg.style.visibility = 'hidden'; });
 }
 
 /**
@@ -6836,9 +6786,9 @@ function showHolderTrendChart() {
     const tl     = document.getElementById('hTL');
     const tr_el  = document.getElementById('hTR');
 
-    const _holderUpdate = (clientX) => {
+    svg.addEventListener('mousemove', (e) => {
         const rect = svg.getBoundingClientRect();
-        const mx = (clientX - rect.left) * (width / rect.width);
+        const mx = (e.clientX - rect.left) * (width / rect.width);
         let ni = 0, md = Infinity;
         sampled.forEach((_, i) => { const dx = Math.abs(gx(i) - mx); if (dx < md) { md = dx; ni = i; } });
         const pt = sampled[ni];
@@ -6853,16 +6803,8 @@ function showHolderTrendChart() {
         tdate.setAttribute('x', tx + 5); tdate.setAttribute('y', ty + 13); tdate.textContent = pt.date.substring(5);
         tl.setAttribute('x', tx + 5);   tl.setAttribute('y', ty + 28);   tl.textContent = `大戶: ${pt.large.toFixed(2)}%`;
         tr_el.setAttribute('x', tx + 5); tr_el.setAttribute('y', ty + 43); tr_el.textContent = `散戶: ${pt.retail.toFixed(2)}%`;
-    };
-    svg.addEventListener('mousemove', (e) => _holderUpdate(e.clientX));
-    svg.addEventListener('touchstart', (e) => {
-        if (e.touches.length > 0) _holderUpdate(e.touches[0].clientX);
-    }, {passive: true});
-    svg.addEventListener('touchmove', (e) => {
-        if (e.touches.length > 0) { e.preventDefault(); _holderUpdate(e.touches[0].clientX); }
-    }, {passive: false});
+    });
     svg.addEventListener('mouseleave', () => { fg.style.visibility = 'hidden'; });
-    svg.addEventListener('touchend', () => { fg.style.visibility = 'hidden'; });
 }
 
 /**
@@ -7080,9 +7022,6 @@ function showRevenueTrendChart(symbol, type) {
     svg.addEventListener('touchstart', (e) => {
         if (e.touches.length > 0) updateFocus(e.touches[0].clientX);
     }, {passive: true});
-    svg.addEventListener('touchmove', (e) => {
-        if (e.touches.length > 0) { e.preventDefault(); updateFocus(e.touches[0].clientX); }
-    }, {passive: false});
     svg.addEventListener('mouseleave', () => { focusGroup.style.visibility = 'hidden'; });
     svg.addEventListener('touchend', () => { focusGroup.style.visibility = 'hidden'; });
 
@@ -7247,7 +7186,6 @@ function showEPSTrendChart(symbol) {
         };
         svg.addEventListener('mousemove', (e) => update(e.clientX));
         svg.addEventListener('touchstart', (e) => { if (e.touches.length > 0) update(e.touches[0].clientX); }, {passive: true});
-        svg.addEventListener('touchmove', (e) => { if (e.touches.length > 0) { e.preventDefault(); update(e.touches[0].clientX); } }, {passive: false});
         svg.addEventListener('mouseleave', () => group.style.visibility = 'hidden');
         svg.addEventListener('touchend', () => group.style.visibility = 'hidden');
     };
