@@ -645,15 +645,20 @@
         text-overflow: ellipsis !important;
     }
 
-    /* 5. 估值河流圖（chart-internal）：保護內部 flex 結構不被覆蓋
-       legend-horizontal 的 span 絕對不能換行 */
-    #analysisModal .chart-internal {
-        width: 100% !important;
-        box-sizing: border-box !important;
+    /* 5. 估值河流圖（chart-internal）內部保護：label 絕對不垂直 */
+    #analysisModal .chart-internal .analysis-label {
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        flex-shrink: 1 !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        font-size: 12px !important;
     }
 
-    #analysisModal .chart-internal > [style*="display:flex"],
-    #analysisModal .chart-internal > [style*="display: flex"] {
+    #analysisModal .chart-internal [style*="display:flex"],
+    #analysisModal .chart-internal [style*="display: flex"] {
         flex-wrap: nowrap !important;
     }
 
@@ -702,10 +707,16 @@
         font-size: 18px !important;
     }
 
-    /* 10. SVG 圖表限制寬度 */
+    /* 10. SVG 圖表：overflow:visible 讓標籤不被截斷，外層容器也要 visible */
     #analysisModal svg {
         max-width: 100% !important;
-        overflow: hidden !important;
+        overflow: visible !important;
+    }
+
+    /* 圖表外層容器不要裁切 SVG 的 overflow:visible 內容 */
+    #analysisModal .analysis-card > div[style*="overflow:hidden"],
+    #analysisModal .analysis-card > div[style*="overflow: hidden"] {
+        overflow: visible !important;
     }
 
     /* 11. VP row 確保 label 不換行 */

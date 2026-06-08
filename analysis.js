@@ -5824,9 +5824,9 @@ function renderValuationRiverMap(label, current, percentile, bands) {
     
     return `
         <div class="analysis-stat-row chart-internal" style="flex-direction: column; align-items: flex-start; gap: 6px; padding: 10px 0;">
-            <div style="display:flex; justify-content:space-between; width:100%; font-size:12px;">
-                <span class="${labelClass}" ${clickAttr}>${label}: <b style="color:#ffffff;">${safeFix(current, 2)}</b></span>
-                <span style="color:${color}; font-weight:800;">${safeFix(percentile, 1)}% (位階)</span>
+            <div style="display:flex; justify-content:space-between; align-items:center; width:100%; gap:8px; font-size:12px; flex-wrap:nowrap;">
+                <span class="${labelClass}" style="white-space:nowrap; flex-shrink:1; min-width:0; overflow:hidden; text-overflow:ellipsis;" ${clickAttr}>${label}: <b style="color:#ffffff;">${safeFix(current, 2)}</b></span>
+                <span style="color:${color}; font-weight:800; white-space:nowrap; flex-shrink:0;">${safeFix(percentile, 1)}% (位階)</span>
             </div>
             <div class="river-map-container" style="width:100%; height:14px; background:rgba(255,255,255,0.05); border-radius:7px; position:relative; margin:10px 0 -2px; border:1px solid rgba(255,255,255,0.1);">
                 <!-- Scale markers -->
@@ -6474,6 +6474,9 @@ function showHoldingTrendChart(symbol, type) {
     svg.addEventListener('touchstart', (e) => {
         if (e.touches.length > 0) updateFocus(e.touches[0].clientX);
     }, {passive: true});
+    svg.addEventListener('touchmove', (e) => {
+        if (e.touches.length > 0) { e.preventDefault(); updateFocus(e.touches[0].clientX); }
+    }, {passive: false});
     svg.addEventListener('mouseleave', () => { focusGroup.style.visibility = 'hidden'; });
     svg.addEventListener('touchend', () => { focusGroup.style.visibility = 'hidden'; });
 
@@ -6638,9 +6641,9 @@ function showCCCTrendChart() {
     // Tooltip 互動
     const svg = document.getElementById('cccSvg');
     const fg  = document.getElementById('cccFG');
-    svg.addEventListener('mousemove', (e) => {
+    const _cccUpdate = (clientX) => {
         const rect = svg.getBoundingClientRect();
-        const mx = (e.clientX - rect.left) * (width / rect.width);
+        const mx = (clientX - rect.left) * (width / rect.width);
         let ni = 0, md = Infinity;
         rawTrend.forEach((_, i) => { const dx = Math.abs(gx(i) - mx); if (dx < md) { md = dx; ni = i; } });
         const pt = rawTrend[ni];
@@ -6665,8 +6668,12 @@ function showCCCTrendChart() {
             el.setAttribute('x', tx + 5); el.setAttribute('y', ty + 13 + row * 13);
             el.textContent = txt;
         });
-    });
+    };
+    svg.addEventListener('mousemove', (e) => _cccUpdate(e.clientX));
+    svg.addEventListener('touchstart', (e) => { if (e.touches.length > 0) _cccUpdate(e.touches[0].clientX); }, {passive: true});
+    svg.addEventListener('touchmove', (e) => { if (e.touches.length > 0) { e.preventDefault(); _cccUpdate(e.touches[0].clientX); } }, {passive: false});
     svg.addEventListener('mouseleave', () => { fg.style.visibility = 'hidden'; });
+    svg.addEventListener('touchend', () => { fg.style.visibility = 'hidden'; });
 }
 
 /**
@@ -6786,9 +6793,9 @@ function showHolderTrendChart() {
     const tl     = document.getElementById('hTL');
     const tr_el  = document.getElementById('hTR');
 
-    svg.addEventListener('mousemove', (e) => {
+    const _holderUpdate = (clientX) => {
         const rect = svg.getBoundingClientRect();
-        const mx = (e.clientX - rect.left) * (width / rect.width);
+        const mx = (clientX - rect.left) * (width / rect.width);
         let ni = 0, md = Infinity;
         sampled.forEach((_, i) => { const dx = Math.abs(gx(i) - mx); if (dx < md) { md = dx; ni = i; } });
         const pt = sampled[ni];
@@ -6803,8 +6810,12 @@ function showHolderTrendChart() {
         tdate.setAttribute('x', tx + 5); tdate.setAttribute('y', ty + 13); tdate.textContent = pt.date.substring(5);
         tl.setAttribute('x', tx + 5);   tl.setAttribute('y', ty + 28);   tl.textContent = `大戶: ${pt.large.toFixed(2)}%`;
         tr_el.setAttribute('x', tx + 5); tr_el.setAttribute('y', ty + 43); tr_el.textContent = `散戶: ${pt.retail.toFixed(2)}%`;
-    });
+    };
+    svg.addEventListener('mousemove', (e) => _holderUpdate(e.clientX));
+    svg.addEventListener('touchstart', (e) => { if (e.touches.length > 0) _holderUpdate(e.touches[0].clientX); }, {passive: true});
+    svg.addEventListener('touchmove', (e) => { if (e.touches.length > 0) { e.preventDefault(); _holderUpdate(e.touches[0].clientX); } }, {passive: false});
     svg.addEventListener('mouseleave', () => { fg.style.visibility = 'hidden'; });
+    svg.addEventListener('touchend', () => { fg.style.visibility = 'hidden'; });
 }
 
 /**
@@ -7022,6 +7033,9 @@ function showRevenueTrendChart(symbol, type) {
     svg.addEventListener('touchstart', (e) => {
         if (e.touches.length > 0) updateFocus(e.touches[0].clientX);
     }, {passive: true});
+    svg.addEventListener('touchmove', (e) => {
+        if (e.touches.length > 0) { e.preventDefault(); updateFocus(e.touches[0].clientX); }
+    }, {passive: false});
     svg.addEventListener('mouseleave', () => { focusGroup.style.visibility = 'hidden'; });
     svg.addEventListener('touchend', () => { focusGroup.style.visibility = 'hidden'; });
 
@@ -7186,6 +7200,7 @@ function showEPSTrendChart(symbol) {
         };
         svg.addEventListener('mousemove', (e) => update(e.clientX));
         svg.addEventListener('touchstart', (e) => { if (e.touches.length > 0) update(e.touches[0].clientX); }, {passive: true});
+        svg.addEventListener('touchmove', (e) => { if (e.touches.length > 0) { e.preventDefault(); update(e.touches[0].clientX); } }, {passive: false});
         svg.addEventListener('mouseleave', () => group.style.visibility = 'hidden');
         svg.addEventListener('touchend', () => group.style.visibility = 'hidden');
     };
