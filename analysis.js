@@ -4355,8 +4355,8 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                             
                                             return `
                                                 <div class="vp-row${isHidden ? ' vp-hidden-row' : ''}" style="display:${isHidden ? 'none' : 'flex'}; align-items:center; gap:8px; margin-bottom:4px; position:relative;">
-                                                    <div style="width:75px; font-size:10px; color:${isPOC ? '#fbbf24' : (isCurrent ? '#ffffff' : '#94a3b8')}; letter-spacing:-0.5px; font-weight:${isCurrent ? '800' : '400'};">
-                                                        ${label}
+                                                    <div style="width:75px; font-size:10px; color:${isPOC ? '#fbbf24' : (isCurrent ? '#ffffff' : '#94a3b8')}; letter-spacing:-0.5px; font-weight:${isCurrent ? '800' : '400'}; line-height:1.3;">
+                                                        ${label}<br><span style="font-size:9px; color:${isPOC ? '#fbbf24' : '#475569'}; font-weight:400;">${Math.round(binVol / 1000).toLocaleString()}張</span>
                                                     </div>
                                                     <div style="flex:1; height:6px; background:rgba(255,255,255,0.05); border-radius:3px; position:relative; overflow:visible;">
                                                         <div style="position:absolute; left:0; top:0; bottom:0; width:${weight}%; background:${isPOC ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' : 'linear-gradient(90deg, #3b82f6, #2563eb)'}; opacity:${isPOC ? 1 : 0.6}; border-radius:3px;"></div>
@@ -4365,7 +4365,6 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                                             <div style="position:absolute; left:${Math.max(0, Math.min(100, (p - binFloor) / binStep * 100))}%; top:-12px; transform:translateX(-50%); font-size:10px; color:#fff; white-space:nowrap; font-weight:900; text-shadow:0 0 3px #000;">${p}</div>
                                                         ` : ''}
                                                     </div>
-                                                    <div style="width:52px; font-size:10px; color:${isPOC ? '#fbbf24' : '#64748b'}; text-align:right; flex-shrink:0;">${Math.round(binVol / 1000).toLocaleString()}張</div>
                                                 </div>
                                             `;
                                         }).join('');
