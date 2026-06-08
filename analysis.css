@@ -557,7 +557,27 @@
         font-size: 15px !important;
     }
 
-    /* === 手機版股票分析 全面修正 v3 === */
+    /* === 手機版股票分析 全面修正 v4 === */
+
+    /* 0. 全域字體微放大 (+3px)，圖表內不動 */
+    #analysisModal .analysis-label {
+        font-size: 15px !important;
+    }
+    #analysisModal .analysis-val {
+        font-size: 17px !important;
+    }
+    #analysisModal .analysis-card-title {
+        font-size: 15px !important;
+    }
+    /* 一般說明文字 10px→13px, 11px→14px, 12px→15px */
+    #analysisModal .analysis-card div[style*="font-size:10px"],
+    #analysisModal .analysis-card span[style*="font-size:10px"] { font-size: 13px !important; }
+    #analysisModal .analysis-card div[style*="font-size:11px"],
+    #analysisModal .analysis-card span[style*="font-size:11px"] { font-size: 14px !important; }
+    #analysisModal .analysis-card div[style*="font-size:12px"],
+    #analysisModal .analysis-card span[style*="font-size:12px"] { font-size: 15px !important; }
+    #analysisModal .analysis-card div[style*="font-size:13px"],
+    #analysisModal .analysis-card span[style*="font-size:13px"] { font-size: 16px !important; }
 
     /* 1. Modal 容器：完全禁止橫向捲動 */
     #analysisModal .modal-content {
@@ -688,15 +708,32 @@
         white-space: normal !important;
     }
 
-    /* 8. 動能格子（近10日/近一月等）：3欄保留，允許2欄，絕不排成1欄 */
+    /* 8. 動能格子：強制 3欄，文字縮小防溢出 */
     #analysisModal [style*="grid-template-columns: repeat(3, 1fr)"],
-    #analysisModal [style*="grid-template-columns:repeat(3, 1fr)"] {
-        grid-template-columns: 1fr 1fr 1fr !important;
+    #analysisModal [style*="grid-template-columns:repeat(3, 1fr)"],
+    #analysisModal [style*="grid-template-columns: repeat(3,1fr)"],
+    #analysisModal [style*="grid-template-columns:repeat(3,1fr)"] {
+        grid-template-columns: repeat(3, 1fr) !important;
+    }
+    /* 動能格子內的標籤和數值縮小，確保3欄不溢出 */
+    #analysisModal [style*="grid-template-columns: repeat(3"] > div,
+    #analysisModal [style*="grid-template-columns:repeat(3"] > div {
+        min-width: 0 !important;
+        overflow: hidden !important;
+    }
+    #analysisModal [style*="grid-template-columns: repeat(3"] > div [style*="font-size:9px"],
+    #analysisModal [style*="grid-template-columns:repeat(3"] > div [style*="font-size:9px"] {
+        font-size: 10px !important;
+        white-space: nowrap !important;
+    }
+    #analysisModal [style*="grid-template-columns: repeat(3"] > div [style*="font-size:13px"],
+    #analysisModal [style*="grid-template-columns:repeat(3"] > div [style*="font-size:13px"] {
+        font-size: 13px !important;
     }
     /* 5欄動能 → 3欄 */
     #analysisModal [style*="grid-template-columns: repeat(5"],
     #analysisModal [style*="grid-template-columns:repeat(5"] {
-        grid-template-columns: 1fr 1fr 1fr !important;
+        grid-template-columns: repeat(3, 1fr) !important;
     }
 
     /* 9. 大數字（法人連買/賣等）允許縮小，不撐開 */

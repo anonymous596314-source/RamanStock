@@ -5823,11 +5823,12 @@ function renderValuationRiverMap(label, current, percentile, bands) {
     const pos = Math.max(0, Math.min(100, percentile));
     
     return `
-        <div class="analysis-stat-row chart-internal" style="flex-direction: column; align-items: flex-start; gap: 6px; padding: 10px 0;">
+        <div class="analysis-stat-row chart-internal" style="flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px 0;">
             <div style="display:flex; justify-content:space-between; align-items:center; width:100%; gap:8px; font-size:12px; flex-wrap:nowrap;">
                 <span class="${labelClass}" style="white-space:nowrap; flex-shrink:1; min-width:0; overflow:hidden; text-overflow:ellipsis;" ${clickAttr}>${label}: <b style="color:#ffffff;">${safeFix(current, 2)}</b></span>
                 <span style="color:${color}; font-weight:800; white-space:nowrap; flex-shrink:0;">${safeFix(percentile, 1)}% (位階)</span>
             </div>
+            <div style="width:100%;">
             <div class="river-map-container" style="width:100%; height:14px; background:rgba(255,255,255,0.05); border-radius:7px; position:relative; margin:10px 0 -2px; border:1px solid rgba(255,255,255,0.1);">
                 <!-- Scale markers -->
                 <div style="position:absolute; left:0%; top:-12px; font-size:8px; color:#94a3b8;">${bands ? safeFix(bands.min, 1) : '極低'}</div>
@@ -5847,6 +5848,7 @@ function renderValuationRiverMap(label, current, percentile, bands) {
                 <span>低估</span>
                 <span>合理</span>
                 <span>昂貴</span>
+            </div>
             </div>
         </div>
     `;
