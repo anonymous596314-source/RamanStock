@@ -4356,7 +4356,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                             return `
                                                 <div class="vp-row${isHidden ? ' vp-hidden-row' : ''}" style="display:${isHidden ? 'none' : 'flex'}; align-items:center; gap:8px; margin-bottom:4px; position:relative;">
                                                     <div style="width:75px; font-size:10px; color:${isPOC ? '#fbbf24' : (isCurrent ? '#ffffff' : '#94a3b8')}; letter-spacing:-0.5px; font-weight:${isCurrent ? '800' : '400'}; line-height:1.3;">
-                                                        ${label}<br><span style="font-size:9px; color:${isPOC ? '#fbbf24' : '#475569'}; font-weight:400;">${Math.round(binVol / 1000).toLocaleString()}張</span>
+                                                        ${label}<br><span style="font-size:9px; color:${isPOC ? '#fbbf24' : '#ffffff'}; font-weight:400;">${Math.round(binVol / 1000).toLocaleString()}張</span>
                                                     </div>
                                                     <div style="flex:1; height:6px; background:rgba(255,255,255,0.05); border-radius:3px; position:relative; overflow:visible;">
                                                         <div style="position:absolute; left:0; top:0; bottom:0; width:${weight}%; background:${isPOC ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' : 'linear-gradient(90deg, #3b82f6, #2563eb)'}; opacity:${isPOC ? 1 : 0.6}; border-radius:3px;"></div>
@@ -4818,7 +4818,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 <!-- RSR 相對強弱度 -->
                 <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.08);">
                     <div style="display:flex; align-items:center; margin-bottom:8px;">
-                        <span class="analysis-label has-info" onclick="showTermExplainer('相對強弱 (RSR)', '20日: ${riskMetrics?.rsr20 || 'N/A'}x / 60日: ${riskMetrics?.rsr60 || 'N/A'}x')" style="font-size:11px; color:#cbd5e1; font-weight:700; cursor:pointer;">📊 相對強弱 (RSR) 💡</span>
+                        <span class="analysis-label has-info" onclick="showTermExplainer('相對強弱 (RSR)', '20日: ${riskMetrics?.rsr20 || 'N/A'}x / 60日: ${riskMetrics?.rsr60 || 'N/A'}x')" style="font-size:11px; color:#cbd5e1; font-weight:700; cursor:pointer;">📊 相對強弱 (RSR)</span>
                     </div>
                     <div style="display:flex; gap:16px; font-size:13px; font-weight:800;">
                         <span style="color:#94a3b8;">20日: <span style="color:${riskMetrics?.rsr20 >= 1 ? '#ef4444' : '#4ade80'};">${riskMetrics?.rsr20 ? (riskMetrics.rsr20 > 0 ? '+' : '') + riskMetrics.rsr20 + 'x' : 'N/A'}</span></span>
