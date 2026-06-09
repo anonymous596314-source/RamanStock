@@ -4622,12 +4622,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     window.lotDateFormat = function(input) {
+        // 只取數字，最多8碼
         let v = input.value.replace(/\D/g, '');
         if (v.length > 8) v = v.slice(0, 8);
+        // 格式化顯示：加斜線
         let display = v;
-        if (v.length > 4) display = v.slice(0,4) + '/' + v.slice(4);
-        if (v.length > 6) display = v.slice(0,4) + '/' + v.slice(4,6) + '/' + v.slice(6);
+        if (v.length > 6)      display = v.slice(0,4) + '/' + v.slice(4,6) + '/' + v.slice(6);
+        else if (v.length > 4) display = v.slice(0,4) + '/' + v.slice(4);
+        // 記住游標位置（斜線不影響輸入位置）
         input.value = display;
+        // 打完8碼數字自動跳股數
         if (v.length === 8) document.getElementById('lotSharesInput').focus();
     };
 
@@ -4960,7 +4964,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:10px;">
         <div>
           <div style="font-size:10px; color:#64748b; margin-bottom:4px;">買入日期</div>
-          <input id="lotDateInput" type="text" inputmode="numeric" placeholder="20240701" maxlength="8"
+          <input id="lotDateInput" type="text" inputmode="numeric" placeholder="20240701"
             style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); border-radius:6px; color:#f1f5f9; padding:6px 8px; font-size:12px; box-sizing:border-box;"
             oninput="lotDateFormat(this)">
         </div>
