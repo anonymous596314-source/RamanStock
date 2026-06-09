@@ -3935,7 +3935,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                             <span style="font-size:11px; color:#60a5fa; font-weight:bold;">🔭 未來 12 個月成長預測</span>
                             <span style="font-size:9px; color:#94a3b8; background:rgba(255,255,255,0.05); padding:2px 6px; border-radius:4px;">依近半年營收動能</span>
                         </div>
-                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                        <div class="no-mobile-collapse" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
                             <div>
                                 <div style="font-size:9px; color:#cbd5e1; margin-bottom:2px;">預估 Forward EPS</div>
                                 <div style="font-size:16px; font-weight:800; color:#ffffff;">${safeFix(forwardEPS, 2)} <span style="font-size:10px; font-weight:400; color:${growthColor};">(${revGrowth >= 0 ? '+' : ''}${safeFix(revGrowth, 1)}%)</span></div>
@@ -4816,10 +4816,12 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 </div>
 
                 <!-- RSR 相對強弱度 -->
-                <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border:1px solid rgba(255,255,255,0.08);">
-                    <span class="analysis-label has-info" onclick="showTermExplainer('相對強弱 (RSR)', '20日: ${riskMetrics?.rsr20 || 'N/A'}x / 60日: ${riskMetrics?.rsr60 || 'N/A'}x')" style="font-size:11px; color:#cbd5e1; font-weight:700; cursor:pointer;">📊 相對強弱 (RSR)</span>
-                    <div style="font-size:13px; font-weight:800;">
-                        <span style="margin-right:8px; color:#94a3b8;">20日: <span style="color:${riskMetrics?.rsr20 >= 1 ? '#ef4444' : '#4ade80'};">${riskMetrics?.rsr20 ? (riskMetrics.rsr20 > 0 ? '+' : '') + riskMetrics.rsr20 + 'x' : 'N/A'}</span></span>
+                <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.08);">
+                    <div style="display:flex; align-items:center; margin-bottom:8px;">
+                        <span class="analysis-label has-info" onclick="showTermExplainer('相對強弱 (RSR)', '20日: ${riskMetrics?.rsr20 || 'N/A'}x / 60日: ${riskMetrics?.rsr60 || 'N/A'}x')" style="font-size:11px; color:#cbd5e1; font-weight:700; cursor:pointer;">📊 相對強弱 (RSR) 💡</span>
+                    </div>
+                    <div style="display:flex; gap:16px; font-size:13px; font-weight:800;">
+                        <span style="color:#94a3b8;">20日: <span style="color:${riskMetrics?.rsr20 >= 1 ? '#ef4444' : '#4ade80'};">${riskMetrics?.rsr20 ? (riskMetrics.rsr20 > 0 ? '+' : '') + riskMetrics.rsr20 + 'x' : 'N/A'}</span></span>
                         <span style="color:#94a3b8;">60日: <span style="color:${riskMetrics?.rsr60 >= 1 ? '#ef4444' : '#4ade80'};">${riskMetrics?.rsr60 ? (riskMetrics.rsr60 > 0 ? '+' : '') + riskMetrics.rsr60 + 'x' : 'N/A'}</span></span>
                     </div>
                 </div>

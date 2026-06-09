@@ -624,11 +624,11 @@
     }
 
     /* 3. 季報/ROE/內部人/FCF等 2欄 grid → 單欄
-       ⚠️ chart-internal 除外（估值河流圖內部 flex 不能被覆蓋） */
-    #analysisModal [style*="grid-template-columns: 1fr 1fr"]:not(.chart-internal),
-    #analysisModal [style*="grid-template-columns:1fr 1fr"]:not(.chart-internal),
-    #analysisModal [style*="grid-template-columns: repeat(2"]:not(.chart-internal),
-    #analysisModal [style*="grid-template-columns:repeat(2"]:not(.chart-internal) {
+       ⚠️ chart-internal 和 no-mobile-collapse 除外 */
+    #analysisModal [style*="grid-template-columns: 1fr 1fr"]:not(.chart-internal):not(.no-mobile-collapse),
+    #analysisModal [style*="grid-template-columns:1fr 1fr"]:not(.chart-internal):not(.no-mobile-collapse),
+    #analysisModal [style*="grid-template-columns: repeat(2"]:not(.chart-internal):not(.no-mobile-collapse),
+    #analysisModal [style*="grid-template-columns:repeat(2"]:not(.chart-internal):not(.no-mobile-collapse) {
         grid-template-columns: 1fr !important;
     }
 
