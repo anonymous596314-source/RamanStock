@@ -5113,17 +5113,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         else             { ndColor = '#ef4444'; ndLabel = '⚠️ 危險'; }
                     }
                     const displayVal = nd !== null && nd !== undefined ? safeFix(nd, 1) + ' 倍' : 'N/A';
-                    return `
-                <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.1);">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span class="analysis-label has-info" style="font-size:12px; color:#cbd5e1;" onclick="showTermExplainer('淨負債/EBITDA', '${displayVal}')">淨負債/EBITDA</span>
-                        <span style="font-size:18px; font-weight:800; color:${ndColor};">${displayVal}</span>
-                    </div>
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
-                        <span style="font-size:10px; color:#94a3b8;">財務槓桿強度</span>
-                        <span style="font-size:11px; font-weight:700; color:${ndColor};">${ndLabel}</span>
-                    </div>
-                </div>`;
+                    return renderStatRow('淨負債/EBITDA', displayVal, null, `showTermExplainer('淨負債/EBITDA', '${displayVal}')`);
                 })()}
                 ${renderStatRow('利息保障倍數', finData?.interestCoverage !== undefined ? (finData?.interestCoverage >= 999 ? '無負債/極高' : safeFix(finData?.interestCoverage, 1) + ' 倍') : 'N/A')}
                 ${renderStatRow('獲利品質 (OCF/NI)', finData?.earningsQuality !== undefined ? safeFix(finData?.earningsQuality, 1) + '%' : 'N/A')}
