@@ -4462,21 +4462,22 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addLot = function() {
         const item = inventory.find(i => i.id === _lotsItemId);
         if (!item) return;
-        const date   = document.getElementById('lotDateInput').value;
-        const shares = parseInt(document.getElementById('lotSharesInput').value);
-        const amount = parseFloat(document.getElementById('lotAmountInput').value);
-        if (!date || !shares || shares <= 0 || !amount || amount <= 0) {
-            alert('請填寫完整的日期、股數和金額');
+        const dateRaw = document.getElementById('lotDateInput').value.replace(/\//g, '-');
+        const shares  = parseInt(document.getElementById('lotSharesInput').value);
+        const amount  = parseFloat(document.getElementById('lotAmountInput').value);
+        if (!dateRaw || !/^\d{4}-\d{2}-\d{2}$/.test(dateRaw) || !shares || shares <= 0 || !amount || amount <= 0) {
+            alert('請填寫完整的日期（格式 YYYY/MM/DD）、股數和金額');
             return;
         }
         if (!item.lots) item.lots = [];
-        item.lots.push({ id: Date.now().toString(), date, shares, amount });
+        item.lots.push({ id: Date.now().toString(), date: dateRaw, shares, amount });
         item.lots.sort((a, b) => a.date.localeCompare(b.date));
         saveInventory();
         renderLotsTable();
         document.getElementById('lotDateInput').value = '';
         document.getElementById('lotSharesInput').value = '';
         document.getElementById('lotAmountInput').value = '';
+        document.getElementById('lotDateInput').focus();
     };
 
     window.deleteLot = function(lotId) {
@@ -4495,16 +4496,22 @@ document.addEventListener('DOMContentLoaded', () => {
         const tbody = document.getElementById('lotsTableBody');
         const tfoot = document.getElementById('lotsTFoot');
 
+        // 累加計算（均成本/累加成本用累加，損益/報酬率用單行）
         let cumShares = 0, cumAmount = 0;
         const rows = lots.map(lot => {
             cumShares += lot.shares;
             cumAmount += lot.amount;
             const avgCost  = cumShares > 0 ? cumAmount / cumShares : 0;
-            const mktVal   = currentPrice * cumShares;
-            const pnl      = mktVal - cumAmount;
-            const pnlRate  = cumAmount > 0 ? (pnl / cumAmount * 100) : 0;
-            const pnlColor = pnl >= 0 ? '#4ade80' : '#f87171';
-            return { lot, cumShares, cumAmount, avgCost, mktVal, pnl, pnlRate, pnlColor };
+            // 單行損益：只看這筆的股數和買入金額
+            const rowMktVal = currentPrice * lot.shares;
+            const rowPnl    = rowMktVal - lot.amount;
+            const rowRate   = lot.amount > 0 ? (rowPnl / lot.amount * 100) : 0;
+            const pnlColor  = rowPnl >= 0 ? '#4ade80' : '#f87171';
+            // 合計損益仍用累計（供 tfoot 用）
+            const cumMktVal = currentPrice * cumShares;
+            const cumPnl    = cumMktVal - cumAmount;
+            const cumRate   = cumAmount > 0 ? (cumPnl / cumAmount * 100) : 0;
+            return { lot, cumShares, cumAmount, avgCost, rowPnl, rowRate, pnlColor, cumPnl, cumRate };
         });
 
         tbody.innerHTML = rows.map(r => `
@@ -4514,31 +4521,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td style="padding:7px 4px; text-align:right; color:#f1f5f9;">${Math.round(r.lot.amount).toLocaleString()}</td>
                 <td style="padding:7px 4px; text-align:right; color:#94a3b8;">${Math.round(r.cumAmount).toLocaleString()}</td>
                 <td style="padding:7px 4px; text-align:right; color:#fbbf24;">${r.avgCost.toFixed(2)}</td>
-                <td style="padding:7px 4px; text-align:right; color:${r.pnlColor};">${r.pnl >= 0 ? '+' : ''}${Math.round(r.pnl).toLocaleString()}</td>
-                <td style="padding:7px 4px; text-align:right; color:${r.pnlColor};">${r.pnlRate >= 0 ? '+' : ''}${r.pnlRate.toFixed(2)}%</td>
+                <td style="padding:7px 4px; text-align:right; color:${r.pnlColor};">${r.rowPnl >= 0 ? '+' : ''}${Math.round(r.rowPnl).toLocaleString()}</td>
+                <td style="padding:7px 4px; text-align:right; color:${r.pnlColor};">${r.rowRate >= 0 ? '+' : ''}${r.rowRate.toFixed(2)}%</td>
                 <td style="padding:7px 4px; text-align:center;">
                     <button onclick="deleteLot('${r.lot.id}')" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:13px;">✕</button>
                 </td>
             </tr>
         `).join('');
 
+        // 合計列：金額欄空白，損益/報酬率用累計總和
         if (rows.length > 0) {
             const last = rows[rows.length - 1];
+            const totColor = last.cumPnl >= 0 ? '#4ade80' : '#f87171';
             tfoot.innerHTML = `
                 <tr>
                     <td style="padding:8px 4px; color:#94a3b8; font-weight:700;">合計</td>
                     <td style="padding:8px 4px; text-align:right; color:#f1f5f9; font-weight:700;">${last.cumShares.toLocaleString()}</td>
-                    <td style="padding:8px 4px; text-align:right; color:#f1f5f9; font-weight:700;">${Math.round(last.lot.amount).toLocaleString()}</td>
+                    <td style="padding:8px 4px;"></td>
                     <td style="padding:8px 4px; text-align:right; color:#94a3b8; font-weight:700;">${Math.round(last.cumAmount).toLocaleString()}</td>
                     <td style="padding:8px 4px; text-align:right; color:#fbbf24; font-weight:700;">${last.avgCost.toFixed(2)}</td>
-                    <td style="padding:8px 4px; text-align:right; color:${last.pnlColor}; font-weight:700;">${last.pnl >= 0 ? '+' : ''}${Math.round(last.pnl).toLocaleString()}</td>
-                    <td style="padding:8px 4px; text-align:right; color:${last.pnlColor}; font-weight:700;">${last.pnlRate >= 0 ? '+' : ''}${last.pnlRate.toFixed(2)}%</td>
+                    <td style="padding:8px 4px; text-align:right; color:${totColor}; font-weight:700;">${last.cumPnl >= 0 ? '+' : ''}${Math.round(last.cumPnl).toLocaleString()}</td>
+                    <td style="padding:8px 4px; text-align:right; color:${totColor}; font-weight:700;">${last.cumRate >= 0 ? '+' : ''}${last.cumRate.toFixed(2)}%</td>
                     <td></td>
                 </tr>`;
         } else {
             tfoot.innerHTML = '';
         }
 
+        // 年化報酬率
         const annualEl = document.getElementById('lotsAnnualVal');
         const detailEl = document.getElementById('lotsAnnualDetail');
         if (lots.length === 0 || currentPrice <= 0) {
@@ -4562,6 +4572,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const totalDays = Math.floor((today - new Date(lots[0].date)) / 86400000);
         detailEl.textContent = `最早持倉 ${lots[0].date}，已持有 ${totalDays} 天`;
     }
+
+    window.lotDateFormat = function(input) {
+        // 只保留數字
+        let v = input.value.replace(/\D/g, '');
+        if (v.length > 8) v = v.slice(0, 8);
+        // 顯示格式：YYYY/MM/DD
+        let display = v;
+        if (v.length > 4) display = v.slice(0,4) + '/' + v.slice(4);
+        if (v.length > 6) display = v.slice(0,4) + '/' + v.slice(4,6) + '/' + v.slice(6);
+        input.value = display;
+        // 打完8碼自動跳股數
+        if (v.length === 8) document.getElementById('lotSharesInput').focus();
+    };
 
     function bindLotsButtons() {} // no-op，改用事件委派
 });  
@@ -4892,15 +4915,21 @@ document.addEventListener('DOMContentLoaded', () => {
       <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:10px;">
         <div>
           <div style="font-size:10px; color:#64748b; margin-bottom:4px;">買入日期</div>
-          <input id="lotDateInput" type="date" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); border-radius:6px; color:#f1f5f9; padding:6px 8px; font-size:12px; box-sizing:border-box;">
+          <input id="lotDateInput" type="text" inputmode="numeric" placeholder="20240701" maxlength="8"
+            style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); border-radius:6px; color:#f1f5f9; padding:6px 8px; font-size:12px; box-sizing:border-box;"
+            oninput="lotDateFormat(this)">
         </div>
         <div>
           <div style="font-size:10px; color:#64748b; margin-bottom:4px;">買入股數</div>
-          <input id="lotSharesInput" type="number" min="1" placeholder="1000" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); border-radius:6px; color:#f1f5f9; padding:6px 8px; font-size:12px; box-sizing:border-box;">
+          <input id="lotSharesInput" type="number" min="1" placeholder="1000"
+            style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); border-radius:6px; color:#f1f5f9; padding:6px 8px; font-size:12px; box-sizing:border-box;"
+            onkeydown="if(event.key==='Enter'||event.key==='Tab'){event.preventDefault();document.getElementById('lotAmountInput').focus();}">
         </div>
         <div>
           <div style="font-size:10px; color:#64748b; margin-bottom:4px;">買入金額(元)</div>
-          <input id="lotAmountInput" type="number" min="1" placeholder="100000" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); border-radius:6px; color:#f1f5f9; padding:6px 8px; font-size:12px; box-sizing:border-box;">
+          <input id="lotAmountInput" type="number" min="1" placeholder="100000"
+            style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); border-radius:6px; color:#f1f5f9; padding:6px 8px; font-size:12px; box-sizing:border-box;"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();addLot();}">
         </div>
       </div>
       <button onclick="addLot()" style="width:100%; padding:8px; background:rgba(167,139,250,0.2); color:#a78bfa; border:1px solid rgba(167,139,250,0.4); border-radius:8px; font-size:13px; font-weight:700; cursor:pointer;">新增</button>
