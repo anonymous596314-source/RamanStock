@@ -2742,54 +2742,44 @@ document.addEventListener('DOMContentLoaded', () => {
             return num;
         }
 
-        // --- Step 0: Yahoo Finance 盤中即時報價（最優先）---
-        // regularMarketPrice 盤中即時更新，收盤後也有當日收盤價
+        // --- Step 0: TWSE/TPEX 盤中即時報價（mis.twse.com.tw，最優先）---
         try {
             const allItems0 = [...inventory, ...shortTermInventory];
-            const symbols = [...new Set(allItems0.map(item => {
-                const code = item.code.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
-                return code + '.TW';
-            }))];
+            const codes = [...new Set(allItems0.map(item =>
+                item.code.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '')
+            ))];
 
-            const chunkSize = 10;
-            for (let i = 0; i < symbols.length; i += chunkSize) {
-                const chunk = symbols.slice(i, i + chunkSize).join(',');
-                const yahooUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(chunk)}&fields=regularMarketPrice,symbol`;
-                try {
-                    const json = await fetchWithProxy(yahooUrl, true);
-                    const quotes = json?.quoteResponse?.result || [];
-                    quotes.forEach(q => {
-                        const code = q.symbol.replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
-                        const price = validatePrice(q.regularMarketPrice);
-                        if (price !== null) marketDataMap[code] = price;
-                    });
-                } catch(e) {
-                    console.warn('[Yahoo .TW] chunk failed:', e.message);
-                }
-            }
+            // TWSE 上市：ex_ch=tse_2330.tw|tse_2317.tw|...
+            // TPEX 上櫃：ex_ch=otc_6271.tw|...
+            // mis API 一次最多約 50 個，不需 proxy（同網域或開放 CORS）
+            const tseSymbols = codes.map(c => `tse_${c}.tw`).join('|');
+            const otcSymbols = codes.map(c => `otc_${c}.tw`).join('|');
 
-            // 也查 .TWO（上櫃股）
-            const symbolsTWO = [...new Set(allItems0.map(item => {
-                const code = item.code.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
-                return code + '.TWO';
-            }))];
-            for (let i = 0; i < symbolsTWO.length; i += chunkSize) {
-                const chunk = symbolsTWO.slice(i, i + chunkSize).join(',');
-                const yahooUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(chunk)}&fields=regularMarketPrice,symbol`;
-                try {
-                    const json = await fetchWithProxy(yahooUrl, true);
-                    const quotes = json?.quoteResponse?.result || [];
-                    quotes.forEach(q => {
-                        const code = q.symbol.replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
-                        const price = validatePrice(q.regularMarketPrice);
-                        if (price !== null && !marketDataMap[code]) marketDataMap[code] = price;
-                    });
-                } catch(e) {
-                    console.warn('[Yahoo .TWO] chunk failed:', e.message);
-                }
-            }
+            const misBase = 'https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=';
+            const timestamp = Date.now();
+
+            const [tseRes, otcRes] = await Promise.all([
+                fetch(`${misBase}${encodeURIComponent(tseSymbols)}&_=${timestamp}`).catch(() => null),
+                fetch(`${misBase}${encodeURIComponent(otcSymbols)}&_=${timestamp}`).catch(() => null),
+            ]);
+
+            const parseMIS = (json) => {
+                const items = json?.msgArray || [];
+                items.forEach(item => {
+                    // z = 最新成交價（盤中），tv = 成交量，若盤前/收盤後 z 為 '-' 則取 y（昨收）
+                    const code = (item.c || '').trim();
+                    const raw = item.z && item.z !== '-' ? item.z : item.y;
+                    const price = validatePrice(raw);
+                    if (code && price !== null) marketDataMap[code] = price;
+                });
+            };
+
+            if (tseRes?.ok) parseMIS(await tseRes.json());
+            if (otcRes?.ok) parseMIS(await otcRes.json());
+
+            console.log(`[MIS] 取得 ${Object.keys(marketDataMap).length} 檔即時報價`);
         } catch(e) {
-            console.warn('[Yahoo Step 0] Error:', e.message);
+            console.warn('[MIS Step 0] Error:', e.message);
         }
 
         // --- Step 1: Bulk Fetch from Official OpenData (收盤後備援，不覆蓋 Step 0 已抓到的盤中價) ---
