@@ -6511,10 +6511,22 @@ function showCCCTrendChart() {
     const nTicks = 4;
     const step = range / nTicks;
     const yTicks = Array.from({ length: nTicks + 1 }, (_, i) => minV + step * i);
-    const xIdxs = rawTrend.reduce((acc, _, i) => {
-        if (i % Math.ceil(rawTrend.length / 5) === 0 || i === rawTrend.length - 1) acc.push(i);
+    const xIdxs = (() => {
+        const step = Math.ceil(rawTrend.length / 5);
+        const acc = [];
+        for (let i = 0; i < rawTrend.length; i++) {
+            if (i % step === 0) acc.push(i);
+        }
+        const last = rawTrend.length - 1;
+        if (acc[acc.length - 1] !== last) {
+            if (last - acc[acc.length - 1] < Math.ceil(step / 2)) {
+                acc[acc.length - 1] = last;
+            } else {
+                acc.push(last);
+            }
+        }
         return acc;
-    }, []);
+    })();
 
     // AI 診斷文字
     const diagParts = [];
