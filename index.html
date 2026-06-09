@@ -2748,31 +2748,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const allItems0 = [...inventory, ...shortTermInventory];
             const symbols = [...new Set(allItems0.map(item => {
                 const code = item.code.trim().replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
-                // 判斷上市(TW)或上櫃(TWO)—先嘗試 .TW，FinMind 失敗再說
                 return code + '.TW';
             }))];
 
-            // Yahoo Finance 最多一次查 10 個 symbol
             const chunkSize = 10;
             for (let i = 0; i < symbols.length; i += chunkSize) {
                 const chunk = symbols.slice(i, i + chunkSize).join(',');
                 const yahooUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(chunk)}&fields=regularMarketPrice,symbol`;
                 try {
-                    const _url = (typeof WORKER_PROXY_URL !== 'undefined' && WORKER_PROXY_URL)
-                        ? `${WORKER_PROXY_URL}/?url=${encodeURIComponent(yahooUrl)}`
-                        : yahooUrl;
-                    const res = await fetch(_url);
-                    if (res.ok) {
-                        const json = await res.json();
-                        const quotes = json?.quoteResponse?.result || [];
-                        quotes.forEach(q => {
-                            const code = q.symbol.replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
-                            const price = validatePrice(q.regularMarketPrice);
-                            if (price !== null) marketDataMap[code] = price;
-                        });
-                    }
+                    const json = await fetchWithProxy(yahooUrl, true);
+                    const quotes = json?.quoteResponse?.result || [];
+                    quotes.forEach(q => {
+                        const code = q.symbol.replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
+                        const price = validatePrice(q.regularMarketPrice);
+                        if (price !== null) marketDataMap[code] = price;
+                    });
                 } catch(e) {
-                    console.warn('[Yahoo] chunk failed:', e.message);
+                    console.warn('[Yahoo .TW] chunk failed:', e.message);
                 }
             }
 
@@ -2785,21 +2777,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 const chunk = symbolsTWO.slice(i, i + chunkSize).join(',');
                 const yahooUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(chunk)}&fields=regularMarketPrice,symbol`;
                 try {
-                    const _url = (typeof WORKER_PROXY_URL !== 'undefined' && WORKER_PROXY_URL)
-                        ? `${WORKER_PROXY_URL}/?url=${encodeURIComponent(yahooUrl)}`
-                        : yahooUrl;
-                    const res = await fetch(_url);
-                    if (res.ok) {
-                        const json = await res.json();
-                        const quotes = json?.quoteResponse?.result || [];
-                        quotes.forEach(q => {
-                            const code = q.symbol.replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
-                            // 只有 .TWO 有回傳有效價格時才覆蓋（避免 .TW 已經有了）
-                            const price = validatePrice(q.regularMarketPrice);
-                            if (price !== null && !marketDataMap[code]) marketDataMap[code] = price;
-                        });
-                    }
-                } catch(e) {}
+                    const json = await fetchWithProxy(yahooUrl, true);
+                    const quotes = json?.quoteResponse?.result || [];
+                    quotes.forEach(q => {
+                        const code = q.symbol.replace(/\.TW$/i, '').replace(/\.TWO$/i, '');
+                        const price = validatePrice(q.regularMarketPrice);
+                        if (price !== null && !marketDataMap[code]) marketDataMap[code] = price;
+                    });
+                } catch(e) {
+                    console.warn('[Yahoo .TWO] chunk failed:', e.message);
+                }
             }
         } catch(e) {
             console.warn('[Yahoo Step 0] Error:', e.message);
