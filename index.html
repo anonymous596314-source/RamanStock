@@ -4433,7 +4433,138 @@ document.addEventListener('DOMContentLoaded', () => {
     calculate();
     loadInventory();
     updateDateDisplay();
-});
+
+    // ===== 明細 (Lots) 功能 =====
+    let _lotsItemId = null;
+
+    document.addEventListener('click', function(e) {
+        const btn = e.target.closest('.btn-lots');
+        if (btn) openLots(btn.dataset.id);
+    });
+
+    function openLots(itemId) {
+        const item = inventory.find(i => i.id === itemId);
+        if (!item) return;
+        _lotsItemId = itemId;
+        if (!item.lots) item.lots = [];
+        document.getElementById('lotsModalTitle').textContent = `${item.name}（${item.code}）`;
+        document.getElementById('lotsModal').style.display = 'block';
+        document.body.style.overflow = 'hidden';
+        renderLotsTable();
+    }
+
+    window.closeLots = function() {
+        document.getElementById('lotsModal').style.display = 'none';
+        document.body.style.overflow = '';
+        _lotsItemId = null;
+    };
+
+    window.addLot = function() {
+        const item = inventory.find(i => i.id === _lotsItemId);
+        if (!item) return;
+        const date   = document.getElementById('lotDateInput').value;
+        const shares = parseInt(document.getElementById('lotSharesInput').value);
+        const amount = parseFloat(document.getElementById('lotAmountInput').value);
+        if (!date || !shares || shares <= 0 || !amount || amount <= 0) {
+            alert('請填寫完整的日期、股數和金額');
+            return;
+        }
+        if (!item.lots) item.lots = [];
+        item.lots.push({ id: Date.now().toString(), date, shares, amount });
+        item.lots.sort((a, b) => a.date.localeCompare(b.date));
+        saveInventory();
+        renderLotsTable();
+        document.getElementById('lotDateInput').value = '';
+        document.getElementById('lotSharesInput').value = '';
+        document.getElementById('lotAmountInput').value = '';
+    };
+
+    window.deleteLot = function(lotId) {
+        const item = inventory.find(i => i.id === _lotsItemId);
+        if (!item) return;
+        item.lots = (item.lots || []).filter(l => l.id !== lotId);
+        saveInventory();
+        renderLotsTable();
+    };
+
+    function renderLotsTable() {
+        const item = inventory.find(i => i.id === _lotsItemId);
+        if (!item) return;
+        const lots = item.lots || [];
+        const currentPrice = item.currentPrice || 0;
+        const tbody = document.getElementById('lotsTableBody');
+        const tfoot = document.getElementById('lotsTFoot');
+
+        let cumShares = 0, cumAmount = 0;
+        const rows = lots.map(lot => {
+            cumShares += lot.shares;
+            cumAmount += lot.amount;
+            const avgCost  = cumShares > 0 ? cumAmount / cumShares : 0;
+            const mktVal   = currentPrice * cumShares;
+            const pnl      = mktVal - cumAmount;
+            const pnlRate  = cumAmount > 0 ? (pnl / cumAmount * 100) : 0;
+            const pnlColor = pnl >= 0 ? '#4ade80' : '#f87171';
+            return { lot, cumShares, cumAmount, avgCost, mktVal, pnl, pnlRate, pnlColor };
+        });
+
+        tbody.innerHTML = rows.map(r => `
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                <td style="padding:7px 4px; color:#cbd5e1;">${r.lot.date}</td>
+                <td style="padding:7px 4px; text-align:right; color:#f1f5f9;">${r.lot.shares.toLocaleString()}</td>
+                <td style="padding:7px 4px; text-align:right; color:#f1f5f9;">${Math.round(r.lot.amount).toLocaleString()}</td>
+                <td style="padding:7px 4px; text-align:right; color:#94a3b8;">${Math.round(r.cumAmount).toLocaleString()}</td>
+                <td style="padding:7px 4px; text-align:right; color:#fbbf24;">${r.avgCost.toFixed(2)}</td>
+                <td style="padding:7px 4px; text-align:right; color:${r.pnlColor};">${r.pnl >= 0 ? '+' : ''}${Math.round(r.pnl).toLocaleString()}</td>
+                <td style="padding:7px 4px; text-align:right; color:${r.pnlColor};">${r.pnlRate >= 0 ? '+' : ''}${r.pnlRate.toFixed(2)}%</td>
+                <td style="padding:7px 4px; text-align:center;">
+                    <button onclick="deleteLot('${r.lot.id}')" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:13px;">✕</button>
+                </td>
+            </tr>
+        `).join('');
+
+        if (rows.length > 0) {
+            const last = rows[rows.length - 1];
+            tfoot.innerHTML = `
+                <tr>
+                    <td style="padding:8px 4px; color:#94a3b8; font-weight:700;">合計</td>
+                    <td style="padding:8px 4px; text-align:right; color:#f1f5f9; font-weight:700;">${last.cumShares.toLocaleString()}</td>
+                    <td style="padding:8px 4px; text-align:right; color:#f1f5f9; font-weight:700;">${Math.round(last.lot.amount).toLocaleString()}</td>
+                    <td style="padding:8px 4px; text-align:right; color:#94a3b8; font-weight:700;">${Math.round(last.cumAmount).toLocaleString()}</td>
+                    <td style="padding:8px 4px; text-align:right; color:#fbbf24; font-weight:700;">${last.avgCost.toFixed(2)}</td>
+                    <td style="padding:8px 4px; text-align:right; color:${last.pnlColor}; font-weight:700;">${last.pnl >= 0 ? '+' : ''}${Math.round(last.pnl).toLocaleString()}</td>
+                    <td style="padding:8px 4px; text-align:right; color:${last.pnlColor}; font-weight:700;">${last.pnlRate >= 0 ? '+' : ''}${last.pnlRate.toFixed(2)}%</td>
+                    <td></td>
+                </tr>`;
+        } else {
+            tfoot.innerHTML = '';
+        }
+
+        const annualEl = document.getElementById('lotsAnnualVal');
+        const detailEl = document.getElementById('lotsAnnualDetail');
+        if (lots.length === 0 || currentPrice <= 0) {
+            annualEl.textContent = '—';
+            detailEl.textContent = lots.length === 0 ? '尚無明細' : '無現價資料';
+            return;
+        }
+        const today = new Date();
+        let weightedAnnual = 0, totalW = 0;
+        lots.forEach(lot => {
+            const days = Math.max(1, Math.floor((today - new Date(lot.date)) / 86400000));
+            const lotReturn = (currentPrice * lot.shares - lot.amount) / lot.amount;
+            const annual = Math.pow(1 + lotReturn, 365 / days) - 1;
+            weightedAnnual += annual * lot.amount;
+            totalW += lot.amount;
+        });
+        const annualReturn = totalW > 0 ? weightedAnnual / totalW : 0;
+        const color = annualReturn >= 0 ? '#4ade80' : '#f87171';
+        annualEl.style.color = color;
+        annualEl.textContent = (annualReturn >= 0 ? '+' : '') + (annualReturn * 100).toFixed(2) + '%';
+        const totalDays = Math.floor((today - new Date(lots[0].date)) / 86400000);
+        detailEl.textContent = `最早持倉 ${lots[0].date}，已持有 ${totalDays} 天`;
+    }
+
+    function bindLotsButtons() {} // no-op，改用事件委派
+});  
 
 
     // ===== Mobile Tab Switching =====
@@ -4779,143 +4910,6 @@ document.addEventListener('DOMContentLoaded', () => {
   </div>
 </div>
 
-<script>
-// ===== 明細 (Lots) 功能 =====
-let _lotsItemId = null;
-
-// 事件委派，不依賴 render 時機
-document.addEventListener('click', function(e) {
-    const btn = e.target.closest('.btn-lots');
-    if (btn) openLots(btn.dataset.id);
-});
-
-function openLots(itemId) {
-    const item = inventory.find(i => i.id === itemId);
-    if (!item) return;
-    _lotsItemId = itemId;
-    if (!item.lots) item.lots = [];
-    document.getElementById('lotsModalTitle').textContent = `${item.name}（${item.code}）`;
-    document.getElementById('lotsModal').style.display = 'block';
-    document.body.style.overflow = 'hidden';
-    renderLotsTable();
-}
-
-function closeLots() {
-    document.getElementById('lotsModal').style.display = 'none';
-    document.body.style.overflow = '';
-    _lotsItemId = null;
-}
-
-function addLot() {
-    const item = inventory.find(i => i.id === _lotsItemId);
-    if (!item) return;
-    const date   = document.getElementById('lotDateInput').value;
-    const shares = parseInt(document.getElementById('lotSharesInput').value);
-    const amount = parseFloat(document.getElementById('lotAmountInput').value);
-    if (!date || !shares || shares <= 0 || !amount || amount <= 0) {
-        alert('請填寫完整的日期、股數和金額');
-        return;
-    }
-    if (!item.lots) item.lots = [];
-    item.lots.push({ id: Date.now().toString(), date, shares, amount });
-    item.lots.sort((a, b) => a.date.localeCompare(b.date));
-    saveInventory();
-    renderLotsTable();
-    document.getElementById('lotDateInput').value = '';
-    document.getElementById('lotSharesInput').value = '';
-    document.getElementById('lotAmountInput').value = '';
-}
-
-function deleteLot(lotId) {
-    const item = inventory.find(i => i.id === _lotsItemId);
-    if (!item) return;
-    item.lots = (item.lots || []).filter(l => l.id !== lotId);
-    saveInventory();
-    renderLotsTable();
-}
-
-function renderLotsTable() {
-    const item = inventory.find(i => i.id === _lotsItemId);
-    if (!item) return;
-    const lots = item.lots || [];
-    const currentPrice = item.currentPrice || 0;
-    const tbody = document.getElementById('lotsTableBody');
-    const tfoot = document.getElementById('lotsTFoot');
-
-    // 累加計算
-    let cumShares = 0, cumAmount = 0;
-    const rows = lots.map(lot => {
-        cumShares += lot.shares;
-        cumAmount += lot.amount;
-        const avgCost  = cumShares > 0 ? cumAmount / cumShares : 0;
-        const mktVal   = currentPrice * cumShares;
-        const pnl      = mktVal - cumAmount;
-        const pnlRate  = cumAmount > 0 ? (pnl / cumAmount * 100) : 0;
-        const pnlColor = pnl >= 0 ? '#4ade80' : '#f87171';
-        return { lot, cumShares, cumAmount, avgCost, mktVal, pnl, pnlRate, pnlColor };
-    });
-
-    tbody.innerHTML = rows.map(r => `
-        <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-            <td style="padding:7px 4px; color:#cbd5e1;">${r.lot.date}</td>
-            <td style="padding:7px 4px; text-align:right; color:#f1f5f9;">${r.lot.shares.toLocaleString()}</td>
-            <td style="padding:7px 4px; text-align:right; color:#f1f5f9;">${Math.round(r.lot.amount).toLocaleString()}</td>
-            <td style="padding:7px 4px; text-align:right; color:#94a3b8;">${Math.round(r.cumAmount).toLocaleString()}</td>
-            <td style="padding:7px 4px; text-align:right; color:#fbbf24;">${r.avgCost.toFixed(2)}</td>
-            <td style="padding:7px 4px; text-align:right; color:${r.pnlColor};">${r.pnl >= 0 ? '+' : ''}${Math.round(r.pnl).toLocaleString()}</td>
-            <td style="padding:7px 4px; text-align:right; color:${r.pnlColor};">${r.pnlRate >= 0 ? '+' : ''}${r.pnlRate.toFixed(2)}%</td>
-            <td style="padding:7px 4px; text-align:center;">
-                <button onclick="deleteLot('${r.lot.id}')" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:13px;">✕</button>
-            </td>
-        </tr>
-    `).join('');
-
-    // 合計列
-    if (rows.length > 0) {
-        const last = rows[rows.length - 1];
-        tfoot.innerHTML = `
-            <tr>
-                <td style="padding:8px 4px; color:#94a3b8;">合計</td>
-                <td style="padding:8px 4px; text-align:right; color:#f1f5f9;">${last.cumShares.toLocaleString()}</td>
-                <td style="padding:8px 4px; text-align:right; color:#f1f5f9;">${Math.round(last.lot.amount).toLocaleString()}</td>
-                <td style="padding:8px 4px; text-align:right; color:#94a3b8;">${Math.round(last.cumAmount).toLocaleString()}</td>
-                <td style="padding:8px 4px; text-align:right; color:#fbbf24;">${last.avgCost.toFixed(2)}</td>
-                <td style="padding:8px 4px; text-align:right; color:${last.pnlColor};">${last.pnl >= 0 ? '+' : ''}${Math.round(last.pnl).toLocaleString()}</td>
-                <td style="padding:8px 4px; text-align:right; color:${last.pnlColor};">${last.pnlRate >= 0 ? '+' : ''}${last.pnlRate.toFixed(2)}%</td>
-                <td></td>
-            </tr>`;
-    } else {
-        tfoot.innerHTML = '';
-    }
-
-    // 年化報酬率（加權平均持有天數）
-    const annualEl = document.getElementById('lotsAnnualVal');
-    const detailEl = document.getElementById('lotsAnnualDetail');
-    if (lots.length === 0 || currentPrice <= 0) {
-        annualEl.textContent = '—';
-        detailEl.textContent = lots.length === 0 ? '尚無明細' : '無現價資料';
-        return;
-    }
-    const today = new Date();
-    let weightedAnnual = 0, totalW = 0;
-    lots.forEach(lot => {
-        const days = Math.max(1, Math.floor((today - new Date(lot.date)) / 86400000));
-        const lotReturn = (currentPrice * lot.shares - lot.amount) / lot.amount;
-        const annual = Math.pow(1 + lotReturn, 365 / days) - 1;
-        weightedAnnual += annual * lot.amount;
-        totalW += lot.amount;
-    });
-    const annualReturn = totalW > 0 ? weightedAnnual / totalW : 0;
-    const color = annualReturn >= 0 ? '#4ade80' : '#f87171';
-    annualEl.style.color = color;
-    annualEl.textContent = (annualReturn >= 0 ? '+' : '') + (annualReturn * 100).toFixed(2) + '%';
-    const firstDate = new Date(lots[0].date);
-    const totalDays = Math.floor((today - firstDate) / 86400000);
-    detailEl.textContent = `最早持倉 ${lots[0].date}，已持有 ${totalDays} 天`;
-}
-
-function bindLotsButtons() {} // 保留空函式避免呼叫錯誤
-</script>
 </body>
 
 </html>
