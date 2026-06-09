@@ -2699,7 +2699,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const proxyUrl = proxy.url(targetUrl);
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒 timeout
+                const timeoutId = setTimeout(() => controller.abort(), 5000); // 5秒 timeout
                 const res = await fetch(proxyUrl, { signal: controller.signal });
                 clearTimeout(timeoutId);
 
@@ -2792,7 +2792,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.warn('[Yahoo Step 0] Error:', e.message);
         }
 
-        // --- Step 1: Bulk Fetch from Official OpenData (收盤後備援) ---
+        // --- Step 1: Bulk Fetch from Official OpenData (收盤後備援，不覆蓋 Step 0 已抓到的盤中價) ---
         try {
             const [twseRes, tpexRes] = await Promise.all([
                 fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL').catch(() => null),
@@ -2803,14 +2803,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await twseRes.json();
                 data.forEach(dt => {
                     const p = validatePrice(dt.ClosingPrice);
-                    if (p !== null) marketDataMap[dt.Code] = p;
+                    // 只填補 Step 0 沒抓到的，不覆蓋盤中即時價
+                    if (p !== null && !marketDataMap[dt.Code]) marketDataMap[dt.Code] = p;
                 });
             }
             if (tpexRes && tpexRes.ok) {
                 const data = await tpexRes.json();
                 data.forEach(dt => {
                     const p = validatePrice(dt.Close);
-                    if (p !== null && dt.SecuritiesCompanyCode) marketDataMap[dt.SecuritiesCompanyCode] = p;
+                    if (p !== null && dt.SecuritiesCompanyCode && !marketDataMap[dt.SecuritiesCompanyCode])
+                        marketDataMap[dt.SecuritiesCompanyCode] = p;
                 });
             }
         } catch (e) {
