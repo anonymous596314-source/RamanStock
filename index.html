@@ -4484,12 +4484,17 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('請填寫正確日期格式（如 20240701）');
             return;
         }
-        if (!shares || shares <= 0) {
-            alert('請填寫有效的買入股數');
+        if (!shares && shares !== 0 || shares < 0) {
+            alert('請填寫有效的買入股數（當沖只有損益時可填 0）');
             return;
         }
         if (amount === null || isNaN(amount)) {
             alert('請填寫買入金額（配股請填 0，當沖獲利填負數如 -1990）');
+            return;
+        }
+        // 金額=0 且 股數=0 → 無意義
+        if (amount === 0 && shares === 0) {
+            alert('金額和股數不能同時為 0');
             return;
         }
 
@@ -4970,7 +4975,7 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
         <div>
           <div style="font-size:10px; color:#64748b; margin-bottom:4px;">買入股數</div>
-          <input id="lotSharesInput" type="number" min="1" placeholder="1000"
+          <input id="lotSharesInput" type="number" min="0" placeholder="1000（當沖只有損益填0）"
             style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); border-radius:6px; color:#f1f5f9; padding:6px 8px; font-size:12px; box-sizing:border-box;"
             onkeydown="if(event.key==='Enter'||event.key==='Tab'){event.preventDefault();document.getElementById('lotAmountInput').focus();}">
         </div>
