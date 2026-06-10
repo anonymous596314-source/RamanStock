@@ -4447,6 +4447,58 @@ document.addEventListener('DOMContentLoaded', () => {
         else saveInventory();
     }
 
+    // 計算某筆明細「分割後有效股數」
+    // splits 陣列已按日期排序，找出所有晚於 lotDate 的分割事件，連乘比例
+    function calcEffectiveShares(lotDate, originalShares, splits) {
+        if (!splits || splits.length === 0) return originalShares;
+        let ratio = 1;
+        splits.forEach(s => {
+            if (s.date > lotDate) ratio *= s.ratio;
+        });
+        return Math.round(originalShares * ratio);
+    }
+
+    window.addSplit = function() {
+        const arr = _getLotsArray();
+        const item = arr.find(i => i.id === _lotsItemId);
+        if (!item) return;
+        const dateRaw = document.getElementById('splitDateInput').value.replace(/\//g, '-');
+        const ratio   = parseFloat(document.getElementById('splitRatioInput').value);
+        if (!dateRaw || !/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) { alert('請填寫正確分割日期'); return; }
+        if (!ratio || ratio < 2) { alert('分割比例至少為 2（1股變2股）'); return; }
+        if (!item.splits) item.splits = [];
+        // 避免同日重複
+        if (item.splits.find(s => s.date === dateRaw)) { alert('該日期已有分割記錄'); return; }
+        item.splits.push({ id: Date.now().toString(), date: dateRaw, ratio });
+        item.splits.sort((a, b) => a.date.localeCompare(b.date));
+        _saveLotsArray();
+        renderLotsTable();
+        document.getElementById('splitDateInput').value = '';
+        document.getElementById('splitRatioInput').value = '';
+    };
+
+    window.deleteSplit = function(splitId) {
+        const arr = _getLotsArray();
+        const item = arr.find(i => i.id === _lotsItemId);
+        if (!item) return;
+        item.splits = (item.splits || []).filter(s => s.id !== splitId);
+        _saveLotsArray();
+        renderLotsTable();
+    };
+
+    function renderSplitsList(splits) {
+        const el = document.getElementById('splitsList');
+        if (!splits || splits.length === 0) {
+            el.innerHTML = '<div style="font-size:11px; color:#475569; padding:2px 0;">尚無分割記錄</div>';
+            return;
+        }
+        el.innerHTML = splits.map(s => `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
+                <span style="font-size:12px; color:#fbbf24;">${s.date}　1股 → ${s.ratio}股</span>
+                <button onclick="deleteSplit('${s.id}')" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:12px;">✕</button>
+            </div>`).join('');
+    }
+
     document.addEventListener('click', function(e) {
         const btn = e.target.closest('.btn-lots');
         if (btn) { _lotsSource = 'inventory'; openLots(btn.dataset.id); return; }
@@ -4520,37 +4572,48 @@ document.addEventListener('DOMContentLoaded', () => {
         const arr = _getLotsArray();
         const item = arr.find(i => i.id === _lotsItemId);
         if (!item) return;
-        const lots = item.lots || [];
+        const lots   = item.lots   || [];
+        const splits = item.splits || [];
         const currentPrice = item.currentPrice || 0;
         const tbody = document.getElementById('lotsTableBody');
         const tfoot = document.getElementById('lotsTFoot');
+
+        renderSplitsList(splits);
+
         let cumShares = 0, cumAmount = 0;
         const rows = lots.map(lot => {
-            cumShares += lot.shares;
+            const effShares = calcEffectiveShares(lot.date, lot.shares, splits);
+            cumShares += effShares;
             cumAmount += lot.amount;
             const avgCost  = cumShares > 0 && cumAmount > 0 ? cumAmount / cumShares : 0;
             const special  = isSpecialLot(lot);
             const tag      = getLotTag(lot);
             let rowPnl = null, rowRate = null, pnlColor = '#94a3b8';
             if (!special) {
-                rowPnl   = currentPrice * lot.shares - lot.amount;
+                rowPnl   = currentPrice * effShares - lot.amount;
                 rowRate  = lot.amount > 0 ? (rowPnl / lot.amount * 100) : 0;
                 pnlColor = rowPnl >= 0 ? '#4ade80' : '#f87171';
             }
             const cumMktVal = currentPrice * cumShares;
             const cumPnl    = cumMktVal - cumAmount;
             const cumRate   = cumAmount > 0 ? (cumPnl / cumAmount * 100) : 0;
-            return { lot, cumShares, cumAmount, avgCost, rowPnl, rowRate, pnlColor, cumPnl, cumRate, tag };
+            const hasSplitAdj = effShares !== lot.shares;
+            return { lot, effShares, cumShares, cumAmount, avgCost, rowPnl, rowRate, pnlColor, cumPnl, cumRate, tag, hasSplitAdj };
         });
+
         tbody.innerHTML = rows.map(r => {
             const amtDisplay = r.lot.amount === 0 ? '—' :
                 (r.lot.amount < 0 ? `<span style="color:#22d3ee;">${Math.round(r.lot.amount).toLocaleString()}</span>` : Math.round(r.lot.amount).toLocaleString());
             const pnlDisplay  = r.rowPnl  !== null ? `<span style="color:${r.pnlColor};">${r.rowPnl  >= 0 ? '+' : ''}${Math.round(r.rowPnl).toLocaleString()}</span>` : `<span style="color:#475569;">—</span>`;
             const rateDisplay = r.rowRate !== null ? `<span style="color:${r.pnlColor};">${r.rowRate >= 0 ? '+' : ''}${r.rowRate.toFixed(2)}%</span>` : `<span style="color:#475569;">—</span>`;
             const tagHtml = r.tag ? `<span style="font-size:9px;background:rgba(255,255,255,0.08);color:${r.tag.color};border-radius:4px;padding:1px 4px;margin-left:4px;">${r.tag.label}</span>` : '';
+            const effSharesDisplay = r.hasSplitAdj
+                ? `<span style="color:#fbbf24;">${r.effShares.toLocaleString()}</span>`
+                : `<span style="color:#94a3b8;">—</span>`;
             return `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
                 <td style="padding:7px 4px;color:#cbd5e1;white-space:nowrap;">${r.lot.date}${tagHtml}</td>
                 <td style="padding:7px 4px;text-align:right;color:#f1f5f9;">${r.lot.shares.toLocaleString()}</td>
+                <td style="padding:7px 4px;text-align:right;">${effSharesDisplay}</td>
                 <td style="padding:7px 4px;text-align:right;color:#f1f5f9;">${amtDisplay}</td>
                 <td style="padding:7px 4px;text-align:right;color:#94a3b8;">${r.cumAmount > 0 ? Math.round(r.cumAmount).toLocaleString() : '—'}</td>
                 <td style="padding:7px 4px;text-align:right;color:#fbbf24;">${r.avgCost > 0 ? r.avgCost.toFixed(2) : '—'}</td>
@@ -4559,12 +4622,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td style="padding:7px 4px;text-align:center;"><button onclick="deleteLot('${r.lot.id}')" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:13px;">✕</button></td>
             </tr>`;
         }).join('');
+
         if (rows.length > 0) {
             const last = rows[rows.length - 1];
             const totColor = last.cumPnl >= 0 ? '#4ade80' : '#f87171';
             tfoot.innerHTML = `<tr>
                 <td style="padding:8px 4px;color:#94a3b8;font-weight:700;">合計</td>
-                <td style="padding:8px 4px;text-align:right;color:#f1f5f9;font-weight:700;">${last.cumShares.toLocaleString()}</td>
+                <td style="padding:8px 4px;text-align:right;color:#f1f5f9;font-weight:700;">${lots.reduce((s,l)=>s+l.shares,0).toLocaleString()}</td>
+                <td style="padding:8px 4px;text-align:right;color:#fbbf24;font-weight:700;">${last.cumShares.toLocaleString()}</td>
                 <td style="padding:8px 4px;"></td>
                 <td style="padding:8px 4px;text-align:right;color:#94a3b8;font-weight:700;">${last.cumAmount > 0 ? Math.round(last.cumAmount).toLocaleString() : '—'}</td>
                 <td style="padding:8px 4px;text-align:right;color:#fbbf24;font-weight:700;">${last.avgCost > 0 ? last.avgCost.toFixed(2) : '—'}</td>
@@ -4573,18 +4638,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td></td>
             </tr>`;
         } else { tfoot.innerHTML = ''; }
+
         const annualEl = document.getElementById('lotsAnnualVal');
         const detailEl = document.getElementById('lotsAnnualDetail');
         if (lots.length === 0 || currentPrice <= 0) {
-            annualEl.textContent = '—';
-            detailEl.textContent = lots.length === 0 ? '尚無明細' : '無現價資料';
-            return;
+            annualEl.textContent = '—'; detailEl.textContent = lots.length === 0 ? '尚無明細' : '無現價資料'; return;
         }
-        const today = new Date();
-        const netCost     = lots.reduce((s, l) => s + l.amount, 0);
-        const totalShares = lots.reduce((s, l) => s + l.shares, 0);
-        const mktVal      = currentPrice * totalShares;
-        const firstReal   = [...lots].find(l => l.amount > 0);
+        const today          = new Date();
+        const netCost        = lots.reduce((s, l) => s + l.amount, 0);
+        const totalEffShares = lots.reduce((s, l) => s + calcEffectiveShares(l.date, l.shares, splits), 0);
+        const mktVal         = currentPrice * totalEffShares;
+        const firstReal      = [...lots].find(l => l.amount > 0);
         if (!firstReal || netCost <= 0) { annualEl.textContent = '—'; detailEl.textContent = '成本不足以計算年化'; return; }
         const days         = Math.max(1, Math.floor((today - new Date(firstReal.date)) / 86400000));
         const totalReturn  = (mktVal - netCost) / netCost;
@@ -4595,17 +4659,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const note = days < 365 ? '　⚠️ 未滿一年，年化僅供參考' : '';
         detailEl.textContent = `最早持倉 ${firstReal.date}，已持有 ${days} 天${note}`;
     }
-
-    window.lotDateFormat = function(input) {
-        let v = input.value.replace(/\D/g, '');
-        if (v.length > 8) v = v.slice(0, 8);
-        let display = v;
-        if (v.length > 6)      display = v.slice(0,4) + '/' + v.slice(4,6) + '/' + v.slice(6);
-        else if (v.length > 4) display = v.slice(0,4) + '/' + v.slice(4);
-        input.value = display;
-        if (v.length === 8) document.getElementById('lotSharesInput').focus();
-    };
-
     function bindLotsButtons() {} // no-op
 
 });  
@@ -4915,7 +4968,8 @@ document.addEventListener('DOMContentLoaded', () => {
         <thead>
           <tr style="color:#64748b; border-bottom:1px solid rgba(255,255,255,0.08);">
             <th style="padding:6px 4px; text-align:left; font-weight:600;">買入日期</th>
-            <th style="padding:6px 4px; text-align:right; font-weight:600;">股數</th>
+            <th style="padding:6px 4px; text-align:right; font-weight:600;">原始股數</th>
+            <th style="padding:6px 4px; text-align:right; font-weight:600;">有效股數</th>
             <th style="padding:6px 4px; text-align:right; font-weight:600;">金額(元)</th>
             <th style="padding:6px 4px; text-align:right; font-weight:600;">累加成本</th>
             <th style="padding:6px 4px; text-align:right; font-weight:600;">均成本</th>
@@ -4928,6 +4982,31 @@ document.addEventListener('DOMContentLoaded', () => {
         <!-- 合計列 -->
         <tfoot id="lotsTFoot" style="border-top:1px solid rgba(255,255,255,0.12); font-weight:700;"></tfoot>
       </table>
+    </div>
+
+    <!-- 股票分割記錄 -->
+    <div style="background:rgba(251,191,36,0.05); border:1px solid rgba(251,191,36,0.2); border-radius:10px; padding:12px; margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div style="font-size:12px; color:#fbbf24; font-weight:600;">✂️ 股票分割記錄</div>
+        <div style="font-size:10px; color:#64748b;">分割後歷史股數自動調整</div>
+      </div>
+      <div id="splitsList" style="margin-bottom:8px;"></div>
+      <div style="display:grid; grid-template-columns:1fr 1fr auto; gap:8px; align-items:end;">
+        <div>
+          <div style="font-size:10px; color:#64748b; margin-bottom:4px;">分割日期</div>
+          <input id="splitDateInput" type="text" inputmode="numeric" placeholder="20240301"
+            style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); border-radius:6px; color:#f1f5f9; padding:6px 8px; font-size:12px; box-sizing:border-box;"
+            oninput="lotDateFormat(this)"
+            onkeydown="if(event.key==='Enter'||event.key==='Tab'){event.preventDefault();document.getElementById('splitRatioInput').focus();}">
+        </div>
+        <div>
+          <div style="font-size:10px; color:#64748b; margin-bottom:4px;">分割比例（1股變幾股）</div>
+          <input id="splitRatioInput" type="number" min="2" step="1" placeholder="22"
+            style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); border-radius:6px; color:#f1f5f9; padding:6px 8px; font-size:12px; box-sizing:border-box;"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();addSplit();}">
+        </div>
+        <button onclick="addSplit()" style="padding:6px 14px; background:rgba(251,191,36,0.15); color:#fbbf24; border:1px solid rgba(251,191,36,0.3); border-radius:6px; font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap;">新增</button>
+      </div>
     </div>
 
     <!-- 新增一筆 -->
