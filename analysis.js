@@ -2343,7 +2343,11 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
             const ev = rawMarketCap > 0 ? (rawMarketCap + finDebt - cash) : 0;
             const evEbit = (ev > 0 && ttmOpIncome > 0) ? (ev / ttmOpIncome) : null;
             const investedCapital = equity + finDebt - cash;
-            const roic = (investedCapital > 0) ? (ttmOpIncome * 0.8 / investedCapital * 100) : null;
+            const effectiveTaxRate = (ttmPreTaxIncome > 0 && ttmNetIncome > 0 && ttmPreTaxIncome > ttmNetIncome)
+                ? (1 - ttmNetIncome / ttmPreTaxIncome)
+                : 0.20; // 預設台灣標準稅率 20%
+            const nopat = ttmOpIncome * (1 - effectiveTaxRate); // 稅後淨營業利益
+            const roic = (investedCapital > 0) ? (nopat / investedCapital * 100) : null;
 
             return {
                 quarter: latestDate,
@@ -2459,19 +2463,13 @@ async function fetchFinMindFinancial(symbol, currentPrice = 0, sharesFromChips =
                     const sData = getQData(jsonS.data, date);
                     return { date: date, eps: getVal(sData, 'EPS') || 0 };
                 }),
-                netDebt: liabilities - cash,
-                netDebtRatio: equity > 0 ? ((liabilities - cash) / equity * 100) : null,
+                netDebt: finDebt - (cash || 0),
+                netDebtRatio: equity > 0 ? ((finDebt - (cash || 0)) / equity * 100) : null,
                 netDebtEBITDA: (() => {
-                    // 有息淨負債 / TTM EBITDA
-                    // finDebt 已在下方 EV 計算段算出，此處採同邏輯內聯計算
-                    const fd = debtExactTypes.reduce((s, t) => {
-                        const item = latestB.find(x => x.type === t);
-                        return s + (item && item.value !== undefined ? Math.abs(item.value) : 0);
-                    }, 0) || getVal(latestB, ['Borrowings', 'LoansAndBorrowings']) || (liabilities * 0.4);
-                    const nd = fd - (cash || 0);                // 有息淨負債
-                    const ebitda = ttmOpIncome + (ttmDA || 0);  // TTM EBITDA = EBIT + D&A
-                    if (ebitda <= 0) return null;               // EBITDA 為負無意義
-                    return nd / ebitda;                          // 單位：倍
+                    const nd = finDebt - (cash || 0);               // 有息淨負債（與 EV 計算一致）
+                    const ebitda = ttmOpIncome + (ttmDA || 0);       // TTM EBITDA = EBIT + D&A
+                    if (ebitda <= 0) return null;
+                    return nd / ebitda;
                 })(),
                 revCAGR: (() => {
                     const revSyns = ['Revenue', 'revenue', 'OperatingRevenue', 'Total_Operating_Revenue', 'Operating_Revenue'];
@@ -3107,7 +3105,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
          'ROIC (投入資本回報)','存貨週轉天數 (DIO)','應收帳款天數 (DSO)','應付帳款天數 (DPO)',
          '現金週期 (CCC) 📈','存貨週轉率','5年累計自由現金流','FCF 連貫性 (5年)',
          '近四季自由現金流 (FCF)','近四季營業現金流 (OCF)','近四季投資現金流 (ICF)',
-         '淨負債 (總負債-現金)','流動比率','速動比率','負債比率','淨負債比率',
+         '淨負債 (有息負債-現金)','流動比率','速動比率','負債比率','淨負債比率',
          '利息保障倍數','獲利品質 (OCF/NI)','每股淨值 (BPS)',
          // ETF 估值相關欄位（無法計算個股本益比等）
          '市值營收比 (PS)','自由現金流殖利率','葛拉漢內在價值',
@@ -3922,10 +3920,24 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
 
                 <!-- 新增：Forward PE 成長預測區塊 -->
                 ${(() => {
-                    const revGrowth = revData?.avgYoY6m || revData?.yoy || 0;
-                    const forwardEPS = epsLTM * (1 + (revGrowth / 100));
+                    // Forward EPS：優先用 TTM EPS YoY 成長率，其次用近4季 EPS CAGR，最後才用營收成長率
+                    const ttmEpsGrowth = finData?.ttmEpsYoY;  // TTM EPS YoY（%）
+                    // 近4季 EPS CAGR（用 historicalTTM 最早與最新比較）
+                    const epsCAGR = (() => {
+                        const hist = finData?.historicalTTM;
+                        if (!hist || hist.length < 5) return null;
+                        const newest = hist[hist.length - 1].ttm;
+                        const oldest = hist[0].ttm;
+                        const years = (hist.length - 1) / 4;
+                        return (oldest > 0 && years > 0) ? (Math.pow(newest / oldest, 1 / years) - 1) * 100 : null;
+                    })();
+                    const growthRate = ttmEpsGrowth ?? epsCAGR ?? revData?.avgYoY6m ?? revData?.yoy ?? 0;
+                    const growthSource = ttmEpsGrowth !== null && ttmEpsGrowth !== undefined ? '依 TTM EPS 成長率'
+                        : epsCAGR !== null ? '依近期 EPS CAGR'
+                        : '依近半年營收動能';
+                    const forwardEPS = epsLTM * (1 + (growthRate / 100));
                     const forwardPE = forwardEPS > 0 ? (currentPrice / forwardEPS) : 0;
-                    const growthColor = revGrowth >= 0 ? '#f87171' : '#4ade80';
+                    const growthColor = growthRate >= 0 ? '#f87171' : '#4ade80';
                     const peComparison = forwardPE < (currentPE || twseBasic?.pe);
                     
                     return `
@@ -3933,12 +3945,12 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                         <div style="position:absolute; top:-10px; right:-10px; font-size:40px; opacity:0.05; transform:rotate(-15deg);">🚀</div>
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:6px;">
                             <span style="font-size:11px; color:#60a5fa; font-weight:bold;">🔭 未來 12 個月成長預測</span>
-                            <span style="font-size:9px; color:#94a3b8; background:rgba(255,255,255,0.05); padding:2px 6px; border-radius:4px;">依近半年營收動能</span>
+                            <span style="font-size:9px; color:#94a3b8; background:rgba(255,255,255,0.05); padding:2px 6px; border-radius:4px;">${growthSource}</span>
                         </div>
                         <div class="no-mobile-collapse" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
                             <div>
                                 <div style="font-size:9px; color:#cbd5e1; margin-bottom:2px;">預估 Forward EPS</div>
-                                <div style="font-size:16px; font-weight:800; color:#ffffff;">${safeFix(forwardEPS, 2)} <span style="font-size:10px; font-weight:400; color:${growthColor};">(${revGrowth >= 0 ? '+' : ''}${safeFix(revGrowth, 1)}%)</span></div>
+                                <div style="font-size:16px; font-weight:800; color:#ffffff;">${safeFix(forwardEPS, 2)} <span style="font-size:10px; font-weight:400; color:${growthColor};">(${growthRate >= 0 ? '+' : ''}${safeFix(growthRate, 1)}%)</span></div>
                             </div>
                             <div style="text-align:right;">
                                 <div style="font-size:9px; color:#cbd5e1; margin-bottom:2px;">預估 Forward PE</div>
@@ -3946,7 +3958,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                             </div>
                         </div>
                         <div style="margin-top:8px; font-size:10px; color:${peComparison ? '#4ade80' : '#94a3b8'};">
-                            ${peComparison ? '✅ 獲利成長中，預估本益比將進一步下降，目前具備長期潛力。' : '⚠️ 營收動能放緩，預期本益比可能墊高，需注意評價修正。'}
+                            ${peComparison ? '✅ 獲利成長中，預估本益比將進一步下降，目前具備長期潛力。' : '⚠️ 獲利動能放緩，預期本益比可能墊高，需注意評價修正。'}
                         </div>
                     </div>
                     `;
@@ -5132,7 +5144,7 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                 ${renderStatRow('近四季營業現金流 (OCF)', (finData?.opCashFlow !== undefined) ? formatCurrency(finData.opCashFlow) : 'N/A')}
                 ${renderStatRow('近四季投資現金流 (ICF)', (finData?.investingCashFlow !== undefined) ? formatCurrency(finData.investingCashFlow) : 'N/A')}
                 ${renderStatRow('近四季自由現金流 (FCF)', (finData?.freeCashFlow !== undefined) ? formatCurrency(finData.freeCashFlow) : 'N/A')}
-                ${renderStatRow('淨負債 (總負債-現金)', finData?.netDebt ? formatCurrency(finData.netDebt) : 'N/A')}
+                ${renderStatRow('淨負債 (有息負債-現金)', finData?.netDebt ? formatCurrency(finData.netDebt) : 'N/A')}
                 ${renderDiagnostic(
                     (zScore > 2.99 ? "財務體質極佳，短期無倒閉風險。" : (zScore < 1.8 ? "財務壓力較大，需警惕債務違約風險。" : "財務結構尚可，屬正常範圍。")) +
                     (finData?.earningsQuality > 100 ? " 獲利品質佳，現金回收能力強。" : "") +
