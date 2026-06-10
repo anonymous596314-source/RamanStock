@@ -4462,7 +4462,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const arr = _getLotsArray();
         const item = arr.find(i => i.id === _lotsItemId);
         if (!item) return;
-        const dateRaw = document.getElementById('splitDateInput').value.replace(/\//g, '-');
+        const rawValS = document.getElementById('splitDateInput').value.replace(/\//g, '').replace(/-/g, '');
+        const dateRaw = rawValS.length === 8
+            ? `${rawValS.slice(0,4)}-${rawValS.slice(4,6)}-${rawValS.slice(6,8)}`
+            : document.getElementById('splitDateInput').value.replace(/\//g, '-');
         const ratio   = parseFloat(document.getElementById('splitRatioInput').value);
         if (!dateRaw || !/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) { alert('請填寫正確分割日期'); return; }
         if (!ratio || ratio < 2) { alert('分割比例至少為 2（1股變2股）'); return; }
@@ -4540,7 +4543,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const arr = _getLotsArray();
         const item = arr.find(i => i.id === _lotsItemId);
         if (!item) return;
-        const dateRaw   = document.getElementById('lotDateInput').value.replace(/\//g, '-');
+        // 支援 20240701 或 2024/07/01 兩種格式
+        const rawVal  = document.getElementById('lotDateInput').value.replace(/\//g, '').replace(/-/g, '');
+        const dateRaw = rawVal.length === 8
+            ? `${rawVal.slice(0,4)}-${rawVal.slice(4,6)}-${rawVal.slice(6,8)}`
+            : document.getElementById('lotDateInput').value.replace(/\//g, '-');
         const shares    = parseInt(document.getElementById('lotSharesInput').value) || 0;
         const amountStr = document.getElementById('lotAmountInput').value;
         const amount    = amountStr === '' ? null : parseFloat(amountStr);
