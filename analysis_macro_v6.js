@@ -241,9 +241,10 @@ async function fetchMacroUrl(targetUrl, isJson = false, timeout = 8000) {
 
 // Yahoo Finance 專用 fetch（query1 / query2 雙域名互備）
 async function fetchYahooJson(symbol) {
+    const ts = Date.now();
     const urls = [
-        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=6mo&interval=1d`,
-        `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=6mo&interval=1d`,
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=6mo&interval=1d&_=${ts}`,
+        `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=6mo&interval=1d&_=${ts}`,
     ];
     for (const base of urls) {
         try { return await fetchMacroUrl(base, true, 9000); } catch {}
@@ -253,7 +254,7 @@ async function fetchYahooJson(symbol) {
 
 // Stooq 專用 fetch
 async function fetchStooqCsv(stooqSymbol) {
-    const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&i=d`;
+    const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&i=d&_=${Date.now()}`;
     return fetchMacroUrl(url, false, 9000);
 }
 
