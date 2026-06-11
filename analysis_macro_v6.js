@@ -326,6 +326,49 @@ function makeDailyMacroFromSeries(def, rawSeries, source) {
 
 // Yahoo Finance v7 quote API（即時報價，含 regularMarketChangePercent）
 // 這個 endpoint 回傳交易所提供的當日漲跌幅，不依賴歷史 CSV，解決 D+1 延遲問題
+// Worker /asia-quotes endpoint — server-side fetch Yahoo，不受 CORS/crumb 限制
+// Worker 網址從 fetchMacroUrl 使用的 WORKER_PROXY_URL 取得
+let _workerAsiaCache = null;
+let _workerAsiaCacheTs = 0;
+
+async function fetchWorkerAsiaAll() {
+    // 5 分鐘內重複呼叫直接用 cache，避免打太多次 Worker
+    if (_workerAsiaCache && Date.now() - _workerAsiaCacheTs < 5 * 60 * 1000) return _workerAsiaCache;
+
+    const workerBase = (typeof WORKER_PROXY_URL !== 'undefined' && WORKER_PROXY_URL)
+        ? WORKER_PROXY_URL.replace(/\/\?url=.*$/, '').replace(/\/$/, '')
+        : null;
+    if (!workerBase) throw new Error('no worker');
+
+    const resp = await fetch(`${workerBase}/asia-quotes`, { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`worker /asia-quotes: ${resp.status}`);
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+
+    _workerAsiaCache   = data;
+    _workerAsiaCacheTs = Date.now();
+    return data;
+}
+
+async function fetchWorkerAsiaQuote(def) {
+    if (!def.symbol) throw new Error('no symbol');
+    const all = await fetchWorkerAsiaAll();
+    const q   = all[def.symbol];
+    if (!q || q.price == null) throw new Error(`no data for ${def.symbol}`);
+
+    // 建立 2 點 series 讓 makeDailyMacroFromSeries 可以正常工作
+    const yesterday = new Date(q.date);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const series = [
+        { date: yesterday.toISOString().slice(0, 10), value: q.prevClose },
+        { date: q.date, value: q.price },
+    ];
+    const result = makeDailyMacroFromSeries(def, series, 'Worker/Yahoo Quote');
+    // 直接覆寫 changePct 為交易所提供的值（最準確）
+    if (q.changePct != null) result.changePct = q.changePct;
+    return result;
+}
+
 async function fetchYahooQuote(def) {
     if (!def.symbol) throw new Error('no symbol');
     const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(def.symbol)}&fields=regularMarketPrice,regularMarketPreviousClose,regularMarketChangePercent,regularMarketChange,regularMarketTime,shortName&_=${Date.now()}`;
@@ -476,9 +519,10 @@ async function fetchDailyMacro(def) {
         try { return await fn(); } catch (e) { lastErr = e; }
     }
 
-    // 2. 指數/外匯：優先用 Yahoo v7 quote API（當日即時，changePct 由交易所直接提供）
-    //    解決 Stooq / Yahoo chart API D+1 延遲問題
+    // 2. 指數/外匯：先試 Worker /asia-quotes（server-side fetch，最準確）
+    //    再試 Yahoo v7 quote（直連），最後才 Yahoo chart / Stooq（歷史 CSV，有 D+1 問題）
     if (def.symbol && (def.kind === 'index' || def.kind === 'fx')) {
+        try { return await fetchWorkerAsiaQuote(def); } catch (e) { lastErr = e; }
         try { return await fetchYahooQuote(def); } catch (e) { lastErr = e; }
     }
 
