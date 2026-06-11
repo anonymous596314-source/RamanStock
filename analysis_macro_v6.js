@@ -355,16 +355,19 @@ async function fetchWorkerAsiaQuote(def) {
     const all = await fetchWorkerAsiaAll();
     const q   = all[def.symbol];
     if (!q || q.price == null) throw new Error(`no data for ${def.symbol}`);
+    if (q.error) throw new Error(q.error);
 
     // 建立 2 點 series 讓 makeDailyMacroFromSeries 可以正常工作
-    const yesterday = new Date(q.date);
-    yesterday.setDate(yesterday.getDate() - 1);
+    // prevClose 若為 null 用 price 代替（changePct 仍由 Worker 直接提供，不依賴這個計算）
+    const prevVal = q.prevClose ?? q.price;
+    const yesterday = new Date(q.date + 'T00:00:00Z');
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
     const series = [
-        { date: yesterday.toISOString().slice(0, 10), value: q.prevClose },
+        { date: yesterday.toISOString().slice(0, 10), value: prevVal },
         { date: q.date, value: q.price },
     ];
-    const result = makeDailyMacroFromSeries(def, series, 'Worker/Yahoo Quote');
-    // 直接覆寫 changePct 為交易所提供的值（最準確）
+    const result = makeDailyMacroFromSeries(def, series, 'Worker/Yahoo Chart');
+    // 用 Worker 計算的漲跌幅覆寫（從 v8 chart prevClose 計算，最準確）
     if (q.changePct != null) result.changePct = q.changePct;
     return result;
 }
