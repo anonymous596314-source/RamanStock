@@ -324,6 +324,40 @@ function makeDailyMacroFromSeries(def, rawSeries, source) {
 
 //  各資料來源 fetch 
 
+// Yahoo Finance v7 quote API（即時報價，含 regularMarketChangePercent）
+// 這個 endpoint 回傳交易所提供的當日漲跌幅，不依賴歷史 CSV，解決 D+1 延遲問題
+async function fetchYahooQuote(def) {
+    if (!def.symbol) throw new Error('no symbol');
+    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(def.symbol)}&fields=regularMarketPrice,regularMarketPreviousClose,regularMarketChangePercent,regularMarketChange,regularMarketTime,shortName&_=${Date.now()}`;
+    let json;
+    try { json = await fetchMacroUrl(url, true, 8000); }
+    catch {
+        const url2 = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(def.symbol)}&fields=regularMarketPrice,regularMarketPreviousClose,regularMarketChangePercent,regularMarketChange,regularMarketTime,shortName&_=${Date.now()}`;
+        json = await fetchMacroUrl(url2, true, 8000);
+    }
+    const q = json?.quoteResponse?.result?.[0];
+    if (!q || q.regularMarketPrice == null) throw new Error('Yahoo quote: no data');
+
+    const price    = q.regularMarketPrice;
+    const prevClose= q.regularMarketPreviousClose;
+    const changePct= q.regularMarketChangePercent; // 交易所直接提供，最準確
+    const ts       = q.regularMarketTime ? new Date(q.regularMarketTime * 1000) : new Date();
+    const date     = ts.toISOString().slice(0, 10);
+
+    // 建立最近2點 series（今日 + 昨日），確保 makeDailyMacroFromSeries 可以正常工作
+    // 同時直接覆寫 changePct 為交易所提供的值（最準確）
+    const yesterday = new Date(ts); yesterday.setDate(yesterday.getDate() - 1);
+    const prevDate  = yesterday.toISOString().slice(0, 10);
+    const series    = [
+        { date: prevDate, value: prevClose },
+        { date, value: price }
+    ];
+    const result = makeDailyMacroFromSeries(def, series, 'Yahoo Quote');
+    // 用交易所直接提供的漲跌幅覆寫（最準確，避免日期跳空問題）
+    if (changePct != null) result.changePct = changePct;
+    return result;
+}
+
 async function fetchYahooMacro(def) {
     if (!def.symbol) throw new Error('no symbol');
     const json   = await fetchYahooJson(def.symbol);
@@ -419,19 +453,16 @@ async function fetchFrankfurterFX(def) {
 }
 
 async function fetchDailyMacro(def) {
-    // 順序改為：快速直連優先 → Frankfurter (CORS OK) → historyofmarket → Yahoo/Stooq 並聯 → FRED 最後備援
-    // 原本把 FRED 排第二，但 FRED CSV 需要過 CORS proxy，proxy 封鎖率極高，
-    // 每個指標都卡 10s 後才 timeout，導致 guardedFetch(10000) 砍掉整個 fetch。
     const fastSources = [];
     if (def.frankBase)  fastSources.push(() => fetchFrankfurterFX(def));
     if (def.historyUrl) fastSources.push(() => fetchHistoryMacro(def));
 
-    // Yahoo + Stooq 並聯搶快
+    // Yahoo + Stooq 並聯備援
     const parallelSources = [];
     if (def.symbol) parallelSources.push(() => fetchYahooMacro(def));
     if (def.stooq)  parallelSources.push(() => fetchStooqMacro(def));
 
-    // FRED 最後備援（慢、proxy 易失敗，但有時能過）
+    // FRED 最後備援
     const slowSources = [];
     if (def.fredSeries) slowSources.push(() => fetchFredDailyMacro(def));
 
@@ -440,19 +471,25 @@ async function fetchDailyMacro(def) {
 
     let lastErr;
 
-    // 1. 先跑快速直連
+    // 1. 快速直連（Frankfurter / historyofmarket）
     for (const fn of fastSources) {
         try { return await fn(); } catch (e) { lastErr = e; }
     }
 
-    // 2. Yahoo / Stooq 並聯（取最快成功者）
+    // 2. 指數/外匯：優先用 Yahoo v7 quote API（當日即時，changePct 由交易所直接提供）
+    //    解決 Stooq / Yahoo chart API D+1 延遲問題
+    if (def.symbol && (def.kind === 'index' || def.kind === 'fx')) {
+        try { return await fetchYahooQuote(def); } catch (e) { lastErr = e; }
+    }
+
+    // 3. Yahoo chart / Stooq 並聯（取最快成功者，作為備援）
     if (parallelSources.length) {
         try {
             return await Promise.any(parallelSources.map(fn => fn()));
         } catch (e) { lastErr = e?.errors?.[0] || e; }
     }
 
-    // 3. FRED 備援
+    // 4. FRED 備援
     for (const fn of slowSources) {
         try { return await fn(); } catch (e) { lastErr = e; }
     }
