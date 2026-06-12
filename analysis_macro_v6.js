@@ -357,8 +357,34 @@ async function fetchWorkerAsiaQuote(def) {
     if (!q || q.price == null) throw new Error(`no data for ${def.symbol}`);
     if (q.error) throw new Error(q.error);
 
-    // 建立 2 點 series 讓 makeDailyMacroFromSeries 可以正常工作
-    // prevClose 若為 null 用 price 代替（changePct 仍由 Worker 直接提供，不依賴這個計算）
+    // 1. 先取歷史 series（Yahoo chart 或 Stooq），保留完整歷史資料
+    let base;
+    try { base = await fetchYahooMacro(def); } catch {
+        try { base = await fetchStooqMacro(def); } catch { base = null; }
+    }
+
+    // 2. 把 Worker 當日資料插入/更新到 series 最末
+    const todayPoint = { date: q.date, value: q.price };
+    if (base) {
+        // 若 series 末端日期 < Worker 日期，補入當日資料
+        const lastDate = base.series?.[base.series.length - 1]?.date;
+        if (!lastDate || lastDate < q.date) {
+            base.series = [...(base.series || []), todayPoint];
+        } else {
+            // 更新最末點為 Worker 的即時價（更準確）
+            base.series[base.series.length - 1] = todayPoint;
+        }
+        // 覆寫最重要的顯示欄位
+        base.date      = q.date;
+        base.value     = q.price;
+        base.rawValue  = q.price;
+        // changePct：用 Worker 的 prevClose 重新計算，確保對比正確的前一日
+        base.changePct = q.changePct;
+        base.source    = 'Worker/Yahoo Chart';
+        return base;
+    }
+
+    // fallback：base 完全失敗，用 Worker 2 點建立最簡 result
     const prevVal = q.prevClose ?? q.price;
     const yesterday = new Date(q.date + 'T00:00:00Z');
     yesterday.setUTCDate(yesterday.getUTCDate() - 1);
@@ -367,7 +393,6 @@ async function fetchWorkerAsiaQuote(def) {
         { date: q.date, value: q.price },
     ];
     const result = makeDailyMacroFromSeries(def, series, 'Worker/Yahoo Chart');
-    // 用 Worker 計算的漲跌幅覆寫（從 v8 chart prevClose 計算，最準確）
     if (q.changePct != null) result.changePct = q.changePct;
     return result;
 }
