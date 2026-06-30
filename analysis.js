@@ -4193,6 +4193,11 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
 
                     // --- 成交量能特徵 (Volume Profile / POC) 計算 ---
                     // 每筆資料依【其自身價格】決定級距，確保跨區間52週資料各自正確分組
+                    // ⚠️ 注意：資料來源僅為「日線」(每日一筆 OHLCV，來自 FinMind/Yahoo Finance)，
+                    // 沒有盤中逐筆成交明細。因此每個交易日僅取「單一代表價格」(收盤價/typicalPrice)，
+                    // 並把該日「全部成交量」整包計入該價格所屬的級距，
+                    // 並非依照當日盤中實際各價位的真實成交量去拆分。
+                    // 此為近似估算，無法反映同一交易日內不同價位的真實籌碼分佈。
                     const getVPStep = (px) => { px = Math.max(0, px - 0.001);
                         if (px < 10)   return 0.1;
                         if (px < 50)   return 0.5;
@@ -4353,6 +4358,9 @@ function renderAnalysis(symbol, name, chartData, twseBasic, chipsData, revData, 
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                                     <div style="font-size:11px; color:#cbd5e1;">📊 價格量能分佈 (Volume Profile)</div>
                                     <div style="font-size:9px; color:#fbbf24;">🟡 籌碼密集區 (POC)</div>
+                                </div>
+                                <div style="font-size:9.5px; color:#64748b; line-height:1.4; margin-bottom:8px;">
+                                    ※ 因資料來源僅提供日線資訊，此處張數以「當日收盤價」歸入對應級距估算，並非依盤中實際成交價格逐筆統計，僅供參考。
                                 </div>
                                 <div id="vp-container">
                                     ${(() => {
