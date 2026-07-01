@@ -1392,7 +1392,7 @@ select option {
                             <span id="portfolioWeatherMain" style="margin:0; padding:0;">載入中...</span>
                         </p>
                         <p id="portfolioWeatherAQI" style="font-size:14px; color:var(--text-secondary); margin-top:1px;"></p>
-                        <p style="font-size:11px; color:var(--text-secondary); opacity:0.7; margin-top:2px;">博最後更新：2026/06/30</p>
+                        <p style="font-size:11px; color:var(--text-secondary); opacity:0.7; margin-top:2px;">博最後更新：2026/06/07</p>
                     </div>
                 </div>
                 <div style="display:flex; gap:10px; align-items:center;">
@@ -1934,11 +1934,26 @@ select option {
             <div class="modal-header">
                 <h2>📈 每日歷史統計</h2>
                 <div style="display:flex; gap:8px; align-items:center;">
+                    <button id="historyChartBtn" class="btn secondary-btn" style="padding:6px 14px; font-size:13px; background:rgba(99,102,241,0.15); border-color:rgba(99,102,241,0.4); color:#a5b4fc;" title="切換折線圖顯示">📈 趨勢圖</button>
                     <button id="historySnapshotBtn" class="btn secondary-btn" style="padding:6px 14px; font-size:13px; background:rgba(52,211,153,0.15); border-color:rgba(52,211,153,0.4); color:#6ee7b7;" title="更新今日損益與市值統計">🔄 立即更新</button>
                     <button class="close-btn" id="closeHistoryModalBtn">&times;</button>
                 </div>
             </div>
             <p style="font-size:12px; color:#94a3b8; margin:-8px 0 12px; padding:0 2px;">點擊任意數字欄位可直接修改，修改後自動儲存。</p>
+
+            <!-- 折線圖區塊（預設隱藏） -->
+            <div id="historyChartWrap" style="display:none; margin-bottom:16px;">
+                <div style="display:flex; gap:16px; justify-content:center; margin-bottom:8px; flex-wrap:wrap;">
+                    <span style="font-size:12px; color:#60a5fa;">─ 總庫存市值</span>
+                    <span style="font-size:12px; color:#f87171;">─ 總未實現損益</span>
+                    <span style="font-size:12px; color:#34d399;">─ 總淨資產</span>
+                </div>
+                <div style="position:relative;">
+                    <canvas id="historyLineChart" style="width:100%; border-radius:10px; display:block;"></canvas>
+                    <div id="historyChartTooltip" style="display:none; position:absolute; pointer-events:none; background:rgba(15,23,42,0.92); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 14px; font-size:12px; color:#f8fafc; white-space:nowrap; box-shadow:0 4px 20px rgba(0,0,0,0.5); z-index:10;"></div>
+                </div>
+            </div>
+
             <div class="modal-body" style="overflow-x: auto; max-height: 60vh;">
                 <table class="history-table" style="width: 100%; text-align: right; border-collapse: collapse;">
                     <thead>
@@ -3838,6 +3853,173 @@ document.addEventListener('DOMContentLoaded', () => {
             historyTableBody.appendChild(tr);
         }
     }
+
+    // ── 折線圖 ──────────────────────────────────────────────
+    (function () {
+        const chartWrap    = document.getElementById('historyChartWrap');
+        const canvas       = document.getElementById('historyLineChart');
+        const tooltip      = document.getElementById('historyChartTooltip');
+        const chartBtn     = document.getElementById('historyChartBtn');
+        if (!chartWrap || !canvas || !chartBtn) return;
+
+        let chartVisible = false;
+
+        function fmt(n) {
+            if (Math.abs(n) >= 1e8) return (n / 1e8).toFixed(2) + '億';
+            if (Math.abs(n) >= 1e4) return (n / 1e4).toFixed(1) + '萬';
+            return n.toLocaleString();
+        }
+
+        function drawChart() {
+            const data = [...dailyStats].sort((a, b) => a.date > b.date ? 1 : -1);
+            if (data.length < 2) {
+                canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+                return;
+            }
+
+            const dpr    = window.devicePixelRatio || 1;
+            const W      = chartWrap.clientWidth || 800;
+            const H      = 300;
+            canvas.width  = W * dpr;
+            canvas.height = H * dpr;
+            canvas.style.height = H + 'px';
+            const ctx = canvas.getContext('2d');
+            ctx.scale(dpr, dpr);
+
+            const PAD = { top: 20, right: 20, bottom: 40, left: 70 };
+            const gW  = W - PAD.left - PAD.right;
+            const gH  = H - PAD.top  - PAD.bottom;
+
+            // 背景
+            ctx.fillStyle = 'rgba(15,23,42,0.6)';
+            ctx.roundRect(0, 0, W, H, 10);
+            ctx.fill();
+
+            const series = [
+                { key: 'totalMarket', color: '#60a5fa' },
+                { key: 'totalProfit', color: '#f87171' },
+                { key: 'totalAsset',  color: '#34d399' },
+            ];
+
+            const allVals = data.flatMap(d => series.map(s => d[s.key] || 0));
+            let minV = Math.min(...allVals);
+            let maxV = Math.max(...allVals);
+            if (minV === maxV) { minV -= 1; maxV += 1; }
+            const pad = (maxV - minV) * 0.08;
+            minV -= pad; maxV += pad;
+
+            const xOf = i  => PAD.left + (i / (data.length - 1)) * gW;
+            const yOf = v  => PAD.top  + (1 - (v - minV) / (maxV - minV)) * gH;
+
+            // 格線
+            ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+            ctx.lineWidth = 1;
+            for (let t = 0; t <= 4; t++) {
+                const y = PAD.top + (t / 4) * gH;
+                ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + gW, y); ctx.stroke();
+                const val = maxV - (t / 4) * (maxV - minV);
+                ctx.fillStyle = 'rgba(148,163,184,0.7)';
+                ctx.font = '10px sans-serif';
+                ctx.textAlign = 'right';
+                ctx.fillText(fmt(val), PAD.left - 6, y + 4);
+            }
+
+            // X 軸日期（最多顯示 8 個）
+            const step = Math.max(1, Math.floor(data.length / 8));
+            ctx.fillStyle = 'rgba(148,163,184,0.7)';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'center';
+            data.forEach((d, i) => {
+                if (i % step === 0 || i === data.length - 1) {
+                    ctx.fillText(d.date.slice(5), xOf(i), H - PAD.bottom + 16);
+                }
+            });
+
+            // 折線
+            series.forEach(s => {
+                ctx.beginPath();
+                ctx.strokeStyle = s.color;
+                ctx.lineWidth   = 2;
+                ctx.lineJoin    = 'round';
+                data.forEach((d, i) => {
+                    const x = xOf(i), y = yOf(d[s.key] || 0);
+                    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+                });
+                ctx.stroke();
+
+                // 端點圓點
+                const last = data[data.length - 1];
+                ctx.beginPath();
+                ctx.arc(xOf(data.length - 1), yOf(last[s.key] || 0), 3, 0, Math.PI * 2);
+                ctx.fillStyle = s.color;
+                ctx.fill();
+            });
+
+            // ── Hover tooltip ──
+            canvas._chartData = data;
+            canvas._gW = gW; canvas._PAD = PAD; canvas._xOf = xOf; canvas._yOf = yOf;
+            canvas._series = series; canvas._W = W; canvas._H = H; canvas._dpr = dpr;
+        }
+
+        function handleMove(e) {
+            const data = canvas._chartData;
+            if (!data || data.length < 2) return;
+            const rect   = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX || (e.touches && e.touches[0].clientX)) - rect.left;
+            const PAD    = canvas._PAD;
+            const gW     = canvas._gW;
+            const xOf    = canvas._xOf;
+
+            // 找最近的資料點
+            let nearIdx = 0, minDist = Infinity;
+            data.forEach((_, i) => {
+                const d = Math.abs(xOf(i) - mouseX);
+                if (d < minDist) { minDist = d; nearIdx = i; }
+            });
+
+            const d    = data[nearIdx];
+            const tipX = xOf(nearIdx);
+            const tipY = 30;
+
+            tooltip.innerHTML =
+                `<div style="color:#94a3b8;margin-bottom:5px;font-weight:600;">${d.date}</div>` +
+                `<div style="color:#60a5fa;">庫存市值：${fmt(d.totalMarket || 0)}</div>` +
+                `<div style="color:#f87171;">未實現損益：${fmt(d.totalProfit || 0)}</div>` +
+                `<div style="color:#34d399;">總淨資產：${fmt(d.totalAsset  || 0)}</div>`;
+
+            tooltip.style.display = 'block';
+            const tw = tooltip.offsetWidth;
+            const cw = canvas.getBoundingClientRect().width;
+            let left = tipX + 12;
+            if (left + tw > cw - 8) left = tipX - tw - 12;
+            tooltip.style.left = left + 'px';
+            tooltip.style.top  = tipY + 'px';
+        }
+
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('touchmove',  e => { e.preventDefault(); handleMove(e); }, { passive: false });
+        canvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+        canvas.addEventListener('touchend',   () => { tooltip.style.display = 'none'; });
+
+        chartBtn.addEventListener('click', () => {
+            chartVisible = !chartVisible;
+            chartWrap.style.display = chartVisible ? 'block' : 'none';
+            chartBtn.style.background    = chartVisible ? 'rgba(99,102,241,0.35)' : 'rgba(99,102,241,0.15)';
+            chartBtn.style.borderColor   = chartVisible ? 'rgba(99,102,241,0.7)'  : 'rgba(99,102,241,0.4)';
+            if (chartVisible) { setTimeout(drawChart, 50); }
+        });
+
+        // 每次 renderHistoryTable 後若圖表可見就重繪
+        const _origRender = window._origRenderHistoryTable;
+        const observer = new MutationObserver(() => {
+            if (chartVisible) drawChart();
+        });
+        const tbody = document.getElementById('historyTableBody');
+        if (tbody) observer.observe(tbody, { childList: true });
+
+        window.addEventListener('resize', () => { if (chartVisible) drawChart(); });
+    })();
+    // ────────────────────────────────────────────────────────
 
     if (openHistoryStatsBtn) {
         openHistoryStatsBtn.addEventListener('click', async () => {
