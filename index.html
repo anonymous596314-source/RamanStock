@@ -2773,9 +2773,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const misBase = 'https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=';
             const timestamp = Date.now();
 
-            const [tseRes, otcRes] = await Promise.all([
-                fetch(`${misBase}${encodeURIComponent(tseSymbols)}&_=${timestamp}`).catch(() => null),
-                fetch(`${misBase}${encodeURIComponent(otcSymbols)}&_=${timestamp}`).catch(() => null),
+            const [tseJson, otcJson] = await Promise.all([
+                fetchWithProxy(`${misBase}${encodeURIComponent(tseSymbols)}&_=${timestamp}`, true).catch(() => null),
+                fetchWithProxy(`${misBase}${encodeURIComponent(otcSymbols)}&_=${timestamp}`, true).catch(() => null),
             ]);
 
             const parseMIS = (json) => {
@@ -2789,8 +2789,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             };
 
-            if (tseRes?.ok) parseMIS(await tseRes.json());
-            if (otcRes?.ok) parseMIS(await otcRes.json());
+            if (tseJson) parseMIS(tseJson);
+            if (otcJson) parseMIS(otcJson);
 
             console.log(`[MIS] 取得 ${Object.keys(marketDataMap).length} 檔即時報價`);
         } catch(e) {
@@ -2799,22 +2799,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // --- Step 1: Bulk Fetch from Official OpenData (收盤後備援，不覆蓋 Step 0 已抓到的盤中價) ---
         try {
-            const [twseRes, tpexRes] = await Promise.all([
-                fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL').catch(() => null),
-                fetch('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes').catch(() => null)
+            const [twseData, tpexData] = await Promise.all([
+                fetchWithProxy('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL', true).catch(() => null),
+                fetchWithProxy('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes', true).catch(() => null)
             ]);
 
-            if (twseRes && twseRes.ok) {
-                const data = await twseRes.json();
-                data.forEach(dt => {
+            if (twseData) {
+                twseData.forEach(dt => {
                     const p = validatePrice(dt.ClosingPrice);
                     // 只填補 Step 0 沒抓到的，不覆蓋盤中即時價
                     if (p !== null && !marketDataMap[dt.Code]) marketDataMap[dt.Code] = p;
                 });
             }
-            if (tpexRes && tpexRes.ok) {
-                const data = await tpexRes.json();
-                data.forEach(dt => {
+            if (tpexData) {
+                tpexData.forEach(dt => {
                     const p = validatePrice(dt.Close);
                     if (p !== null && dt.SecuritiesCompanyCode && !marketDataMap[dt.SecuritiesCompanyCode])
                         marketDataMap[dt.SecuritiesCompanyCode] = p;
@@ -3664,13 +3662,10 @@ document.addEventListener('DOMContentLoaded', () => {
             tsmcPrice = tsmcItem.currentPrice;
         } else {
             try {
-                const twseRes = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
-                if (twseRes.ok) {
-                    const twseData = await twseRes.json();
-                    const target = twseData.find(x => x.Code === '2330');
-                    if (target && target.ClosingPrice) {
-                        tsmcPrice = window.parseFloat(String(target.ClosingPrice).replace(/,/g, ''));
-                    }
+                const twseData = await fetchWithProxy('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL', true);
+                const target = twseData.find(x => x.Code === '2330');
+                if (target && target.ClosingPrice) {
+                    tsmcPrice = window.parseFloat(String(target.ClosingPrice).replace(/,/g, ''));
                 }
             } catch(e) {}
         }

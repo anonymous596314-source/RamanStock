@@ -548,10 +548,10 @@ async function fetchDailyMacro(def) {
     }
 
     // 2. 指數/外匯：先試 Worker /asia-quotes（server-side fetch，最準確）
-    //    再試 Yahoo v7 quote（直連），最後才 Yahoo chart / Stooq（歷史 CSV，有 D+1 問題）
+    //    Yahoo v7 quote 已停用（需要登入 cookie/crumb，固定回傳 401，無論直連或代理皆同），已跳過避免浪費時間
+    //    直接進入 Yahoo chart / Stooq（歷史 CSV，有 D+1 問題）
     if (def.symbol && (def.kind === 'index' || def.kind === 'fx')) {
         try { return await fetchWorkerAsiaQuote(def); } catch (e) { lastErr = e; }
-        try { return await fetchYahooQuote(def); } catch (e) { lastErr = e; }
     }
 
     // 3. Yahoo chart / Stooq 並聯（取最快成功者，作為備援）
