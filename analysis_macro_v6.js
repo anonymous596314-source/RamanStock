@@ -227,7 +227,7 @@ async function fetchMacroUrl(targetUrl, isJson = false, timeout = 8000) {
     try {
         return await Promise.any([
             tryOne(targetUrl),
-            tryOne(`https://corsproxy.io/?${enc}`),
+            tryOne(`https://corsproxy.io/?url=${enc}`),
         ]);
     } catch {}
 
@@ -625,7 +625,7 @@ async function fetchFredJsonApi(def) {
     let obs;
     // 批次 1：Worker 優先 + 公共 proxy 並聯
     const batch1 = [
-        tryFredProxy(`https://corsproxy.io/?${encodeURIComponent(fredUrl)}`),
+        tryFredProxy(`https://corsproxy.io/?url=${encodeURIComponent(fredUrl)}`),
         tryFredProxy(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fredUrl)}`),
         tryAllorigins(),
     ];
@@ -643,7 +643,7 @@ async function fetchFredJsonApi(def) {
     if (!obs) {
         try {
             obs = await Promise.any([
-                tryFredProxy(`https://corsproxy.io/?${encodeURIComponent(fredUrl)}`),
+                tryFredProxy(`https://corsproxy.io/?url=${encodeURIComponent(fredUrl)}`),
                 tryFredProxy(`https://proxy.cors.sh/${fredUrl}`),
             ]);
         } catch {}
@@ -686,7 +686,7 @@ async function fetchFredCsvProxy(def) {
     // 批次 1：3 個並聯
     try {
         csv = await Promise.any([
-            tryProxy(`https://corsproxy.io/?${encodeURIComponent(fredUrl)}`),
+            tryProxy(`https://corsproxy.io/?url=${encodeURIComponent(fredUrl)}`),
             tryProxy(`https://api.allorigins.win/raw?url=${encodeURIComponent(fredUrl)}`),
             tryProxy(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fredUrl)}`),
         ]);

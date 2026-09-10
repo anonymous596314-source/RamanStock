@@ -2698,14 +2698,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Network helper for CORS Proxies ---
     async function fetchWithProxy(targetUrl, isJson = false) {
         const proxies = [
+            // 自建 Cloudflare Worker（已在 analysis_macro_v6.js 使用，最穩定）
+            { url: (u) => `https://young-unit-cf65.anonymous596314.workers.dev/?url=${encodeURIComponent(u)}`, allorigins: false },
             // allorigins - supports null origin, wraps in {contents:...}
             { url: (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, allorigins: true },
             // allorigins raw - direct content
             { url: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, allorigins: false },
             // corsproxy.io
-            { url: (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`, allorigins: false },
-            // thingproxy
-            { url: (u) => `https://thingproxy.freeboard.io/fetch/${u}`, allorigins: false },
+            { url: (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`, allorigins: false },
             // codetabs (有流量限制)
             { url: (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`, allorigins: false },
         ];
@@ -2714,7 +2714,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const proxyUrl = proxy.url(targetUrl);
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 5000); // 5秒 timeout
+                const timeoutId = setTimeout(() => controller.abort(), 8000); // 8秒 timeout
                 const res = await fetch(proxyUrl, { signal: controller.signal });
                 clearTimeout(timeoutId);
 

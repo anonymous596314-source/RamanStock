@@ -102,8 +102,10 @@ async function analysisFetchProxy(url, isJson = false) {
     };
 
     const proxies = [
+        // 自建 Cloudflare Worker（已在 analysis_macro_v6.js 使用，最穩定）
+        (u) => `https://young-unit-cf65.anonymous596314.workers.dev/?url=${encodeURIComponent(u)}`,
         (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-        (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+        (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
         (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
         (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
         (u) => `https://yacdn.org/proxy/${encodeURIComponent(u)}`,
